@@ -1,5 +1,7 @@
 #ifndef _SYSCALL_ENTRY_
 #define _SYSCALL_ENTRY_
+#include <rendezvos/task/tcb.h>
+
 #include <arch/x86_64/trap/trap.h>
 
 void init_syscall_entry();
