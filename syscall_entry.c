@@ -8,12 +8,11 @@ void syscall(struct trap_frame* syscall_ctx)
                 syscall_ctx->ARCH_SYSCALL_ARG_1);
         switch (syscall_ctx->ARCH_SYSCALL_ID) {
         case 60:
-                schedule(percpu(core_tm));
                 break;
-
         default:
                 break;
         }
+        schedule(percpu(core_tm));
         return;
 }
 static inline void

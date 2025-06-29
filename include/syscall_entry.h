@@ -2,7 +2,7 @@
 #define _SYSCALL_ENTRY_
 #include <rendezvos/task/tcb.h>
 
-#include <arch/x86_64/trap/trap.h>
+#include <rendezvos/trap.h>
 
 void init_syscall_entry();
 void syscall(struct trap_frame* syscall_ctx);
