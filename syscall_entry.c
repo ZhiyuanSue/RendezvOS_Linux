@@ -7,6 +7,7 @@ void syscall(struct trap_frame* syscall_ctx)
         pr_info("Syscall with id %d arg1: %d\n",
                 syscall_ctx->ARCH_SYSCALL_ID,
                 syscall_ctx->ARCH_SYSCALL_ARG_1);
+        Thread_Base* curr = get_cpu_current_thread();
         switch (syscall_ctx->ARCH_SYSCALL_ID) {
         case 60:
                 // Thread_Base* curr_thread = percpu(core_tm)->current_thread;
@@ -14,10 +15,11 @@ void syscall(struct trap_frame* syscall_ctx)
                 // Tcb_Base* curr_tcb = percpu(core_tm)->current_task;
                 // if(!(curr_tcb->thread_number))
                 //         delete_task(curr_tcb);
-                Thread_Base* curr = get_cpu_current_thread();
-                thread_set_status(curr,thread_status_zombie);
+                thread_set_status(curr, thread_status_zombie);
                 break;
         default:
+                pr_error("[ Syscall ] get a undefined syscall id %d\n",syscall_ctx->ARCH_SYSCALL_ID);
+                thread_set_status(curr,thread_status_zombie);
                 break;
         }
         schedule(percpu(core_tm));
