@@ -1,6 +1,7 @@
 #include <modules/RendezvOS_Linux/syscall_entry.h>
 #include <modules/log/log.h>
 #include <rendezvos/task/tcb.h>
+#include <modules/RendezvOS_Linux/syscall.h>
 
 void syscall(struct trap_frame* syscall_ctx)
 {
@@ -10,11 +11,7 @@ void syscall(struct trap_frame* syscall_ctx)
         Thread_Base* curr = get_cpu_current_thread();
         switch (syscall_ctx->ARCH_SYSCALL_ID) {
         case __NR_exit:
-                // Thread_Base* curr_thread = percpu(core_tm)->current_thread;
-                // delete_thread(curr_thread);
-                // Tcb_Base* curr_tcb = percpu(core_tm)->current_task;
-                // if(!(curr_tcb->thread_number))
-                //         delete_task(curr_tcb);
+                sys_exit(syscall_ctx->ARCH_SYSCALL_ARG_1);
                 thread_set_status(curr, thread_status_zombie);
                 break;
         default:
