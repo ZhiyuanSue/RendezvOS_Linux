@@ -27,6 +27,7 @@ ROOT_SOURCES :=
 endif
 ROOT_OBJECTS := $(patsubst $(ROOT_DIR)/%.c,$(ROOT_OBJ_DIR)/%.o,$(ROOT_SOURCES))
 ROOT_USER_OBJECT := $(ROOT_BUILD_DIR)/link_app.o
+ROOT_USER_ARCH_FILE := $(ROOT_BUILD_DIR)/link_app.arch
 ROOT_EXTRA_OBJECTS := $(abspath $(ROOT_OBJECTS)) $(abspath $(ROOT_USER_OBJECT))
 
 ROOT_COMMON_CFLAGS := -Werror -Wall -Wextra -Werror=return-type -Werror=format -Wmissing-field-initializers -Wunused-result -Os -nostdlib -nostdinc -fno-stack-protector -std=c11 -DNR_CPUS=$(SMP)
@@ -37,6 +38,7 @@ CORE_BUILD_ARGS += EXTRA_OBJECTS="$(ROOT_EXTRA_OBJECTS)"
 CORE_BUILD_ARGS += QEMU_LOG="$(ROOT_QEMU_LOG)"
 CORE_BUILD_ARGS += DUMPFILE="$(ROOT_OBJDUMP_LOG)"
 CORE_CONFIG_ARCH := $(shell if [ -f "$(CORE_DIR)/Makefile.env" ]; then awk -F ':=[[:space:]]*' '/^ARCH[[:space:]]*:=/{print $$2; exit}' "$(CORE_DIR)/Makefile.env"; fi)
+CORE_CONFIG_SMP := $(shell if [ -f "$(CORE_DIR)/Makefile.env" ]; then awk -F ':=[[:space:]]*' '/^SMP[[:space:]]*:=/{print $$2; exit}' "$(CORE_DIR)/Makefile.env"; fi)
 ARCH ?= $(CORE_CONFIG_ARCH)
 CC := $(CROSS_COMPLIER)gcc
 LD := $(CROSS_COMPLIER)ld
@@ -65,9 +67,20 @@ have_user_payload:
 		echo "No user payload found, please run 'make user ARCH=$(ARCH)' first"; \
 		exit 2; \
 	fi
+	@if [ ! -f "$(ROOT_USER_ARCH_FILE)" ]; then \
+		echo "User payload arch file missing: $(ROOT_USER_ARCH_FILE)"; \
+		echo "Please re-generate user payload: make user ARCH=$(ARCH)"; \
+		exit 2; \
+	fi
+	@if [ "$$(cat "$(ROOT_USER_ARCH_FILE)")" != "$(ARCH)" ]; then \
+		echo "User payload ARCH mismatch: have=$$(cat "$(ROOT_USER_ARCH_FILE)") want=$(ARCH)"; \
+		echo "Please re-generate user payload: make user ARCH=$(ARCH)"; \
+		exit 2; \
+	fi
 
 build: root_dirs
-	@if [ -z "$(CORE_CONFIG_ARCH)" ] || [ "$(CORE_CONFIG_ARCH)" != "$(ARCH)" ]; then \
+	@if [ -z "$(CORE_CONFIG_ARCH)" ] || [ "$(CORE_CONFIG_ARCH)" != "$(ARCH)" ] || [ -z "$(CORE_CONFIG_SMP)" ] || [ "$(CORE_CONFIG_SMP)" != "$(SMP)" ]; then \
+		$(MAKE) -C $(CORE_DIR) mrproper; \
 		$(MAKE) config ARCH=$(ARCH) SMP=$(SMP) MEM_SIZE=$(MEM_SIZE) DBG=$(DBG) && \
 		$(MAKE) build ARCH=$(ARCH) SMP=$(SMP) MEM_SIZE=$(MEM_SIZE) DBG=$(DBG); \
 	else \

@@ -125,6 +125,10 @@ if __name__ == "__main__":
             link_app_obj = os.path.join(user_dir, "link_app.o")
             target_link_app_obj = os.path.join(build_dir, "link_app.o")
             shutil.copy2(link_app_obj, target_link_app_obj)
+            # Record the arch used to produce build/link_app.o so the top-level
+            # build can detect stale payloads when ARCH changes.
+            with open(os.path.join(build_dir, "link_app.arch"), "w") as f:
+                f.write(arch + "\n")
             os.chdir(pwd)
         else:
             # using file system to test
