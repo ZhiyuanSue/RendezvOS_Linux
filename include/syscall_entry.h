@@ -5,9 +5,9 @@
 #include <rendezvos/trap.h>
 
 #ifdef _AARCH64_
-#include <modules/RendezvOS_Linux/arch/aarch64/syscall_ids.h>
+#include <arch/aarch64/syscall_ids.h>
 #elif defined _X86_64_
-#include <modules/RendezvOS_Linux/arch/x86_64/syscall_ids.h>
+#include <arch/x86_64/syscall_ids.h>
 #endif
 
 void init_syscall_entry();

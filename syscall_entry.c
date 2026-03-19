@@ -1,7 +1,7 @@
-#include <modules/RendezvOS_Linux/syscall_entry.h>
+#include <syscall_entry.h>
 #include <modules/log/log.h>
 #include <rendezvos/task/tcb.h>
-#include <modules/RendezvOS_Linux/syscall.h>
+#include <syscall.h>
 
 void syscall(struct trap_frame* syscall_ctx)
 {
