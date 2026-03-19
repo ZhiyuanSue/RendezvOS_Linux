@@ -1,14 +1,14 @@
-#include <syscall_entry.h>
 #include <modules/log/log.h>
 #include <rendezvos/task/tcb.h>
 #include <syscall.h>
+#include <syscall_entry.h>
 
-void syscall(struct trap_frame* syscall_ctx)
+void syscall(struct trap_frame *syscall_ctx)
 {
         pr_info("Syscall with id %d arg1: %d\n",
                 syscall_ctx->ARCH_SYSCALL_ID,
                 syscall_ctx->ARCH_SYSCALL_ARG_1);
-        Thread_Base* curr = get_cpu_current_thread();
+        Thread_Base *curr = get_cpu_current_thread();
         switch (syscall_ctx->ARCH_SYSCALL_ID) {
         case __NR_exit:
                 sys_exit(syscall_ctx->ARCH_SYSCALL_ARG_1);
@@ -24,7 +24,7 @@ void syscall(struct trap_frame* syscall_ctx)
         return;
 }
 static inline void
-set_syscall_entry(void (*syscall_entry)(struct trap_frame* syscall_ctx))
+set_syscall_entry(void (*syscall_entry)(struct trap_frame *syscall_ctx))
 {
         if (!syscall_entry) {
                 pr_error("[Error] no syscall entry is defined\n");

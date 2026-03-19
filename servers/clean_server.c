@@ -1,36 +1,36 @@
-#include <rendezvos/task/thread_loader.h>
+#include <modules/log/log.h>
+#include <rendezvos/mm/allocator.h>
+#include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/initcall.h>
 #include <rendezvos/task/ipc.h>
 #include <rendezvos/task/message.h>
 #include <rendezvos/task/port.h>
 #include <rendezvos/task/tcb.h>
-#include <rendezvos/mm/allocator.h>
-#include <rendezvos/smp/percpu.h>
-#include <modules/log/log.h>
+#include <rendezvos/task/thread_loader.h>
 
 typedef struct {
-        Thread_Base* thread;
+        Thread_Base *thread;
         i64 exit_code;
 } thread_exit_req_t;
 
-DEFINE_PER_CPU(Message_Port_t*, clean_server_port);
-DEFINE_PER_CPU(Thread_Base*, clean_server_thread_ptr);
+DEFINE_PER_CPU(Message_Port_t *, clean_server_port);
+DEFINE_PER_CPU(Thread_Base *, clean_server_thread_ptr);
 
 static char clean_server_thread_name[] = "clean_server_thread";
 static char clean_server_port_name[] = "clean_server_port";
 
-static void clean_handle_message(Message_t* msg)
+static void clean_handle_message(Message_t *msg)
 {
         if (!msg || !msg->data)
                 return;
         if (msg->data->msg_type != 1)
                 return;
-        thread_exit_req_t* req = (thread_exit_req_t*)msg->data->data;
+        thread_exit_req_t *req = (thread_exit_req_t *)msg->data->data;
         if (!req || !req->thread)
                 return;
 
-        Thread_Base* target = req->thread;
-        Thread_Base* curr = get_cpu_current_thread();
+        Thread_Base *target = req->thread;
+        Thread_Base *curr = get_cpu_current_thread();
         if (target == curr)
                 return;
         if (target == percpu(init_thread_ptr)
@@ -39,7 +39,7 @@ static void clean_handle_message(Message_t* msg)
         if (thread_get_status(target) != thread_status_zombie)
                 return;
 
-        Tcb_Base* task = target->belong_tcb;
+        Tcb_Base *task = target->belong_tcb;
         delete_thread(target);
         if (task && task->thread_number == 0) {
                 /*we might now in the vspace that need to clean, we must change
@@ -66,7 +66,7 @@ void clean_server_thread(void)
         }
 
         while (1) {
-                Message_Port_t* port = percpu(clean_server_port);
+                Message_Port_t *port = percpu(clean_server_port);
                 if (!port) {
                         schedule(percpu(core_tm));
                         continue;
@@ -75,7 +75,7 @@ void clean_server_thread(void)
                 (void)recv_msg(port);
 
                 while (1) {
-                        Message_t* msg = dequeue_recv_msg();
+                        Message_t *msg = dequeue_recv_msg();
                         if (!msg)
                                 break;
                         clean_handle_message(msg);

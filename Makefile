@@ -21,7 +21,7 @@ DBG ?= false
 
 ROOT_COMPAT_ARCHS := x86_64 aarch64
 ifneq ($(filter $(ARCH),$(ROOT_COMPAT_ARCHS)),)
-ROOT_SOURCES := $(wildcard $(ROOT_DIR)/*.c) $(wildcard $(ROOT_DIR)/servers/*.c)
+ROOT_SOURCES := $(wildcard $(ROOT_DIR)/linux_layer/*/*.c) $(wildcard $(ROOT_DIR)/servers/*.c)
 else
 ROOT_SOURCES :=
 endif
@@ -34,7 +34,6 @@ ROOT_COMMON_CFLAGS += -I $(ROOT_DIR)/include -I $(CORE_DIR)/include
 
 CORE_BUILD_ARGS := ARCH=$(ARCH) SMP=$(SMP) MEM_SIZE=$(MEM_SIZE) DBG=$(DBG) DUMP=$(DUMP)
 CORE_BUILD_ARGS += EXTRA_OBJECTS="$(ROOT_EXTRA_OBJECTS)"
-CORE_BUILD_ARGS += EXTRA_CFLAGS="-DTOP_LEVEL_BUILD"
 CORE_BUILD_ARGS += QEMU_LOG="$(ROOT_QEMU_LOG)"
 CORE_BUILD_ARGS += DUMPFILE="$(ROOT_OBJDUMP_LOG)"
 CORE_CONFIG_ARCH := $(shell if [ -f "$(CORE_DIR)/Makefile.env" ]; then awk -F ':=[[:space:]]*' '/^ARCH[[:space:]]*:=/{print $$2; exit}' "$(CORE_DIR)/Makefile.env"; fi)
@@ -45,7 +44,7 @@ AR := $(CROSS_COMPLIER)ar
 OBJCOPY := $(CROSS_COMPLIER)objcopy
 OBJDUMP := $(CROSS_COMPLIER)objdump
 
-.PHONY: all root_dirs config build build_lib run clean mrproper dump show_config user have_user_payload
+.PHONY: all root_dirs config build build_lib run clean mrproper dump show_config fmt user have_user_payload
 
 all: build
 
@@ -83,6 +82,15 @@ run: build
 
 show_config:
 	@$(MAKE) -C $(CORE_DIR) show_config ARCH=$(ARCH) SMP=$(SMP) MEM_SIZE=$(MEM_SIZE) DBG=$(DBG)
+
+fmt:
+	@if ! command -v clang-format >/dev/null 2>&1; then echo "clang-format not found"; exit 1; fi
+	@{ \
+		git ls-files '*.c' '*.h'; \
+		git ls-files --others --exclude-standard '*.c' '*.h'; \
+	} | sort -u | while IFS= read -r f; do \
+		if [ -f "$$f" ]; then clang-format -i -style=file "$$f"; fi; \
+	done
 
 dump: build
 	@$(MAKE) -C $(CORE_DIR) dump $(CORE_BUILD_ARGS)

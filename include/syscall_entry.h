@@ -11,6 +11,6 @@
 #endif
 
 void init_syscall_entry();
-void syscall(struct trap_frame* syscall_ctx);
+void syscall(struct trap_frame *syscall_ctx);
 
 #endif
