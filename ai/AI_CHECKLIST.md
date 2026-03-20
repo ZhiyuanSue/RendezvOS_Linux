@@ -19,6 +19,26 @@ If any section is missing, review is incomplete.
 
 ## Core Checklist
 
+### 0) Abstraction / Non-Overfitting Policy (meta-rule)
+- [ ] Each checklist entry describes a reusable *pattern* (symmetry, ownership, lock context, rollback strategy), not a one-off local implementation detail.
+- [ ] If a rule mentions a concrete function/module name, it must be explicitly marked as an example, and the invariant/pattern must still be checkable without that name.
+- [ ] Prefer 1 general rule that covers many cases over many narrow rules; if multiple bullets overlap, merge them and keep only the most actionable check.
+- [ ] Every bullet must answer: "What can go wrong, and how do I check it?"
+- [ ] When learning a new failure mode, update the closest existing category (invariants/teardown/failure/lookup/etc.) before adding a new category.
+
+### 0b) Error-Reporting Layering (meta-rule)
+- [ ] Lower layers return `error_t` (or equivalent status) and do not unconditionally print internal details.
+- [ ] Higher layers decide whether/how to log (and can include context like request/thread/vspace ids).
+- [ ] If an error is ignored on purpose, the code must document why and what remains safe.
+
+### 0c) Low-Overhead Reviewability (meta-rule)
+- [ ] Avoid extra temporary variables if the existing value can be reused for the decision and/or logging.
+- [ ] Prefer linear control flow: do not refactor into additional scopes/identifiers without a correctness gain.
+
+### 0d) Primary Error Preservation (meta-rule)
+- [ ] If an earlier operation fails, do not overwrite its error status with later best-effort cleanup results.
+- [ ] Cleanup errors must be either logged separately or aggregated, but the primary failure cause remains visible.
+
 ### 1) Data Structure Invariants
 
 - [ ] State fields have clear meaning (`used`, `gen`, `free_head`, `live_count`).
@@ -63,12 +83,25 @@ If any section is missing, review is incomplete.
 - [ ] `fini` policy is explicit: require empty or drain.
 - [ ] Allocator ownership is consistent across alloc/grow/free/free(table).
 - [ ] Destroy path does not null allocator before final free(table).
+- [ ] Teardown must use the recorded owner metadata and the correct
+  synchronization context (no "best-effort" fallbacks).
+- [ ] If teardown relies on a per-CPU/per-thread scratch window (e.g.,
+  self-mapping region used to edit frames), it must run in the context
+  that owns that window.
 
 ### 7) API/Type Discipline
 
 - [ ] Header/source signatures match exactly.
 - [ ] Type width choices are intentional for target architectures.
 - [ ] Comments match actual behavior (no stale comment drift).
+- [ ] Naming consistency as an auditability constraint:
+  - For symmetric / dual operations (e.g., alloc<->free, map<->unmap,
+    enqueue<->dequeue, lock<->unlock), keep the same identifier vocabulary
+    for shared concepts across the pair (e.g., `entry_flags`, `table`,
+    `handler`, `lock`).
+  - Avoid single-letter names for non-trivial struct members/fields.
+    If a one-letter temporary is unavoidable, scope it tightly and add a
+    short explanatory comment.
 
 ### 8) Validation
 

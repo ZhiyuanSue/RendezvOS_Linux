@@ -54,7 +54,13 @@ static void clean_handle_message(Message_t *msg)
                 percpu(current_vspace) = percpu(core_tm)->root_task->vs;
                 arch_set_current_user_vspace_root(
                         percpu(core_tm)->root_task->vs->vspace_root_addr);
-                delete_task(task);
+                error_t e = delete_task(task);
+                if (e) {
+                        pr_error(
+                                "[ Error ] delete_task failed (task=%p, e=%d)\n",
+                                (void *)task,
+                                (int)e);
+                }
         }
 }
 
