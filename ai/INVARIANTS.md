@@ -8,7 +8,8 @@ If a change breaks or modifies an invariant, update this file in the same commit
 - `Port_Table.lock` protects all table mutations (`slots`, `ht`, `live_ports`, freelist).
 - `port_slots_lookup/resolve` success returns with one valid ref (`ref_get_not_zero`).
 - `port_slots_free_slot` must bump `slot.gen` before slot reuse.
-- `PORT_TABLE_SLOT_TOKEN_INVALID` must be type-consistent with `slot_index` width.
+- Freelist empty sentinel must be type-consistent with `free_head` (`u64`).
+- Token invalidation must be type-consistent with `port_table_slot_token_t.slot_index` (`u32`).
 - `unregister` path must: remove hash mapping, unlink port, clear slot, decrement live count, free slot.
 - `fini` must not leave registered ports silently alive.
 - Rehash must be two-phase: build new table fully, then swap.

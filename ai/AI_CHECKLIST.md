@@ -23,6 +23,8 @@ If any section is missing, review is incomplete.
 
 - [ ] State fields have clear meaning (`used`, `gen`, `free_head`, `live_count`).
 - [ ] Sentinel values are type-consistent (`U64_MAX` for `u64` index invalid).
+- [ ] Sentinel/constant names match their actual semantics (e.g., `free_head`
+  sentinel is not reused as token/cache invalidation).
 - [ ] Capacity/index arithmetic has overflow checks before allocation math.
 - [ ] Token/cached handle invalidation is explicit (e.g., generation bump on free).
 
@@ -72,6 +74,8 @@ If any section is missing, review is incomplete.
 
 - [ ] Lints checked for modified files.
 - [ ] Build/tests run where possible (or explicit blocker stated).
+- [ ] Repo-wide usage checked for any symbol/function you remove (especially
+  deprecated wrappers/macros) and public header API is preserved.
 - [ ] Residual risks listed if verification is partial.
 
 ---
