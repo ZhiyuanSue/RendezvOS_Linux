@@ -49,6 +49,15 @@ If blocked, state blocker explicitly in review output/history.
   - sentinel comparisons still valid
   - no signature mismatch across headers/sources
 
+## F) MM / Map / Page-table–adjacent API Changes
+
+- Minimum:
+  - build/lint for changed translation units
+- Required checks:
+  - `AI_CHECKLIST.md` §7: no parameter/local shadowing of typenames used in
+    casts or macro arguments; address role (kernel vs user VA, etc.) still obvious
+    from names or comments.
+
 ---
 
 ## Result Recording Template

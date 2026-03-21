@@ -34,6 +34,8 @@ No style-only comments until correctness risks are exhausted.
 - "Assume hash collision under cache lookup. Any false-negative/false-positive path?"
 - "Assume teardown starts with non-empty table. Are refs and indices drained safely?"
 - "Assume rehash fails mid-way. Is old table still fully valid?"
+- "Assume a parameter or local reuses a typedef/tag token still needed for casts
+  or for reading a macro expansion. Does the source still mean what it appears to mean?"
 
 ## Stop-Ship Conditions
 
