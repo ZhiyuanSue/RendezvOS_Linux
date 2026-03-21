@@ -18,6 +18,8 @@ SMP ?= 4
 MEM_SIZE ?= 128M
 DUMP ?= false
 DBG ?= false
+# User payload: set to 1 to skip git pull/fetch repair (offline).
+USER_SKIP_GIT ?=
 
 ROOT_COMPAT_ARCHS := x86_64 aarch64
 ifneq ($(filter $(ARCH),$(ROOT_COMPAT_ARCHS)),)
@@ -59,7 +61,8 @@ config: mrproper root_dirs
 
 user: root_dirs
 	@if [ -z "$(ARCH)" ]; then echo "ARCH is required, for example: make ARCH=x86_64 user"; exit 1; fi
-	@python3 $(SCRIPT_CONFIG_DIR)/user.py $(ARCH) $(ROOT_DIR) $(SCRIPT_CONFIG_DIR)/user.json
+	@export RENDEZVOS_USER_SKIP_GIT="$(USER_SKIP_GIT)"; \
+	python3 $(SCRIPT_CONFIG_DIR)/user.py $(ARCH) $(ROOT_DIR) $(SCRIPT_CONFIG_DIR)/user.json
 	@echo "User payload generated at $(ROOT_USER_OBJECT)"
 
 have_user_payload:
