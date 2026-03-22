@@ -258,7 +258,7 @@ Append one entry for each user-approved commit.
 - Pattern: duplicate pointer + typed address for one logical key (checklist §7).
 - Checklist update: yes (§7 bullet + Pattern Log).
 
-## 2026-03-21 | Cross-CPU teardown risk review (Task_Manager) | commit 0308af6
+## 2026-03-21 | Cross-CPU teardown risk review (Task_Manager) | commit 53adc0b
 
 - Scope: `ai/AI_CHECKLIST.md` (§2 + Pattern Log), `ai/INVARIANTS.md` (Task_Manager).
 - Why: kmem/nexus routing for remote `kfree`/`del_vspace` does not by itself
