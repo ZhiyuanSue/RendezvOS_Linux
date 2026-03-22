@@ -65,6 +65,21 @@ If a change breaks or modifies an invariant, update this file in the same commit
   until the list is empty — so lock order never inverts with
   `nexus_vspace_lock` (no fixed cap on how many mappings share a physical page).
 
+## Task_Manager / teardown (SMP)
+
+- `Task_Manager` is **per CPU** (`percpu(core_tm)`). `thread->tm` / `task->tm`
+  point at the manager that owns `sched_thread_list` / `sched_task_list` for
+  that thread/task.
+- `schedule()` walks `sched_thread_list` without a lock. Any path that
+  **removes** a thread/task from those lists or mutates `current_thread` /
+  `current_task` must not run concurrently with the **owner CPU’s** scheduler
+  on the same lists—unless a dedicated lock or owner-CPU-only execution is
+  established.
+- Default `sys_exit` sends cleanup work to **`percpu(clean_server_port)`** (same
+  CPU as the exiting thread). A design that tears down another CPU’s thread/task
+  from a remote CPU must explicitly synchronize with that CPU’s `Task_Manager`
+  (and any IPC/port references), not rely on kmem routing alone.
+
 ## Maintenance Rule
 
 - Any bug that reveals a missing invariant here must add a new bullet in the same fix commit.

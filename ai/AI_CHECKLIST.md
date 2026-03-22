@@ -68,6 +68,13 @@ If any section is missing, review is incomplete.
   CPU): if only one queue is drained from allocation/free hot paths, the other
   can **starve**. Prefer one documented drain entry (fixed order or fair batching)
   so all queues make progress under skewed load.
+- [ ] **Per-CPU scheduler / `Task_Manager` lists:** `sched_thread_list` /
+  `sched_task_list` are owned by one CPU’s `Task_Manager`. Mutations
+  (`list_del_init`, `add_*_to_manager`, `current_thread` / `current_task`
+  updates) must not race the owner’s `schedule()` walking those lists—use an
+  explicit per-TM lock, run the detach on the **owner CPU** (IPI / work item),
+  or prove the thread is never concurrently scheduled. **Check:** does teardown
+  run on the same CPU as `thread->tm` / `task->tm`?
 
 ### 3) Refcount and Lifetime
 
@@ -279,6 +286,11 @@ When a new bug pattern appears during review/debug:
   `void*` and `vaddr` for the same page/object key should use one parameter and
   cast internally when both representations are needed—avoids redundant locals
   and mismatched pairs at call sites. Checklist: §7 + Pattern Log.
+
+- 2026-03: **Cross-CPU teardown vs per-CPU `Task_Manager`:** freeing or unlinking
+  a `Thread_Base` / `Tcb_Base` from another CPU’s scheduler lists without
+  synchronization races `schedule()` on the owner CPU. Fix: owner-CPU execution,
+  per-TM lock, or quiesce scheduler. Checklist: §2 + `INVARIANTS.md` (Task_Manager).
 
 - 2026-03: **Rmap multi-role, wrong owner:** when one physical page’s reverse map
   lists several logical roles (e.g. kernel vs user paths), do not use a

@@ -258,3 +258,20 @@ Append one entry for each user-approved commit.
 - Pattern: duplicate pointer + typed address for one logical key (checklist §7).
 - Checklist update: yes (§7 bullet + Pattern Log).
 
+## 2026-03-21 | Cross-CPU teardown risk review (Task_Manager) | commit 0308af6
+
+- Scope: `ai/AI_CHECKLIST.md` (§2 + Pattern Log), `ai/INVARIANTS.md` (Task_Manager).
+- Why: kmem/nexus routing for remote `kfree`/`del_vspace` does not by itself
+  serialize with per-CPU scheduler lists or IPC references when cleanup is
+  initiated from another CPU.
+- Design decision(s):
+  - document invariant: `thread->tm`/`task->tm` list mutations vs owner `schedule()`.
+  - prefer owner-CPU detach or per-`Task_Manager` lock over ad hoc cross-CPU free.
+- Data structure/API impact: documentation only in this commit batch.
+- Failure-path strategy: n/a (review).
+- Verification: reasoning + code path review (`clean_server.c`, `tcb.c`,
+  `task_manager.c`, `thread_syscall.c`); full build not re-run here.
+- Pattern: cross-CPU teardown vs per-CPU `Task_Manager` (§2 + Pattern Log +
+  INVARIANTS).
+- Checklist update: yes.
+
