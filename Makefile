@@ -15,7 +15,7 @@ ROOT_OBJDUMP_LOG ?= $(ROOT_DIR)/objdump.log
 -include $(CORE_DIR)/arch/Makefile.env
 
 SMP ?= 4
-MEM_SIZE ?= 128M
+MEM_SIZE ?= 256M
 DUMP ?= false
 DBG ?= false
 # User payload: set to 1 to skip git pull/fetch repair (offline).
@@ -32,7 +32,7 @@ ROOT_USER_OBJECT := $(ROOT_BUILD_DIR)/link_app.o
 ROOT_USER_ARCH_FILE := $(ROOT_BUILD_DIR)/link_app.arch
 ROOT_EXTRA_OBJECTS := $(abspath $(ROOT_OBJECTS)) $(abspath $(ROOT_USER_OBJECT))
 
-ROOT_COMMON_CFLAGS := -Werror -Wall -Wextra -Werror=return-type -Werror=format -Wmissing-field-initializers -Wunused-result -Os -nostdlib -nostdinc -fno-stack-protector -std=c11 -DNR_CPUS=$(SMP)
+ROOT_COMMON_CFLAGS := -Werror -Wall -Wextra -Werror=return-type -Werror=format -Wmissing-field-initializers -Wunused-result -Os -nostdlib -nostdinc -fno-builtin -fno-stack-protector -std=c11 -DNR_CPUS=$(SMP)
 ROOT_COMMON_CFLAGS += -I $(ROOT_DIR)/include -I $(CORE_DIR)/include
 
 CORE_BUILD_ARGS := ARCH=$(ARCH) SMP=$(SMP) MEM_SIZE=$(MEM_SIZE) DBG=$(DBG) DUMP=$(DUMP)
