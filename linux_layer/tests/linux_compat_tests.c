@@ -9,11 +9,11 @@ extern int elf_read_test(void);
 static void linux_compat_test_init(void)
 {
         pr_info("[ Linux compat ] running payload tests\n");
-        if (task_test() != REND_SUCCESS) {
-                pr_error("[ Linux compat ] task_test failed\n");
-        }
         if (elf_read_test() != REND_SUCCESS) {
                 pr_error("[ Linux compat ] elf_read_test failed\n");
+        }
+        if (task_test() != REND_SUCCESS) {
+                pr_error("[ Linux compat ] task_test failed\n");
         }
 }
 

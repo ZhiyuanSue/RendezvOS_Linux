@@ -25,6 +25,7 @@ If any section is missing, review is incomplete.
 - [ ] Prefer 1 general rule that covers many cases over many narrow rules; if multiple bullets overlap, merge them and keep only the most actionable check.
 - [ ] Every bullet must answer: "What can go wrong, and how do I check it?"
 - [ ] When learning a new failure mode, update the closest existing category (invariants/teardown/failure/lookup/etc.) before adding a new category.
+- [ ] **Layer boundary discipline:** core modules must not call into service/server modules (even if link-time symbols exist). Cross-layer startup uses initcall (`DEFINE_INIT` + per-CPU `do_init_call()`), and each service decides BSP-only vs per-CPU behavior internally (e.g., one global registration + per-CPU workers).
 
 ### 0b) Error-Reporting Layering (meta-rule)
 - [ ] Lower layers return `error_t` (or equivalent status) and do not unconditionally print internal details.
@@ -287,6 +288,12 @@ When a new bug pattern appears during review/debug:
   cast internally when both representations are needed—avoids redundant locals
   and mismatched pairs at call sites. Checklist: §7 + Pattern Log.
 
+- 2026-03: **Layering violation (core calls server):** low-level core modules
+  must not directly invoke service/server entry points (even if link-time symbols
+  exist). Fix by running per-CPU `do_init_call()` on secondary CPUs, and making
+  each server init decide BSP-only global registration vs per-CPU worker spawn.
+  Checklist: §0 (layer boundary discipline) + Pattern Log.
+
 - 2026-03: **Cross-CPU teardown vs per-CPU `Task_Manager`:** freeing or unlinking
   a `Thread_Base` / `Tcb_Base` from another CPU’s scheduler lists without
   synchronization races `schedule()` on the owner CPU. Fix: owner-CPU execution,
@@ -297,4 +304,3 @@ When a new bug pattern appears during review/debug:
   non-authoritative entry to infer **subsystem-specific** ownership (e.g. kmem
   CPU from a user mapping). Filter by the role that matches the invariant.
   Checklist: §1 + Pattern Log.
-

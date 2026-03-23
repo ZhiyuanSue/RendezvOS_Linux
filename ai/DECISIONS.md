@@ -21,6 +21,14 @@ Format: Context / Decision / Consequences.
   - saves per-thread cache memory.
   - collision handling relies on trying all same-hash candidates.
 
+## 2026-03 | Kernel IPC messages use a common envelope (`kmsg`)
+
+- Context: multiple in-kernel server threads communicate via lock-free IPC; ad-hoc per-service payload structs make validation/versioning hard.
+- Decision: reserve a kernel message `msg_type` and wrap payloads in a versioned `kmsg` header with `kind + payload_len`.
+- Consequences:
+  - message receivers can validate `magic/version/len` before casting.
+  - new services add new `kind` values without changing the base IPC layer.
+
 ## 2026-03 | 64-bit index/capacity/token fields in port table path
 
 - Context: target architectures are 64-bit; alignment/consistency favored.
@@ -91,4 +99,3 @@ Format: Context / Decision / Consequences.
   - <good>
   - <trade-off/risk>
 ```
-
