@@ -64,6 +64,13 @@ If a change breaks or modifies an invariant, update this file in the same commit
   entry under that lock (`list_del_init`), drops the lock, then unmaps — repeat
   until the list is empty — so lock order never inverts with
   `nexus_vspace_lock` (no fixed cap on how many mappings share a physical page).
+- **MCS waiter node (`me`):** the second argument to `lock_mcs` / `unlock_mcs` must
+  be **this CPU’s** `percpu(pmm_spin_lock[zone_id])`, never
+  `per_cpu(pmm_spin_lock[zone_id], handler->cpu_id)`. The global queue head is
+  `pmm_ptr->spin_ptr`; `me` is per **acquirer** CPU. Reusing another CPU’s
+  per‑CPU slot as `me` on a different CPU corrupts the MCS queue, breaks mutual
+  exclusion on `rmap_list` / buddy metadata, and can surface as page faults in
+  `list_add_head` / `list_del_init`.
 
 ## Task_Manager / teardown (SMP)
 

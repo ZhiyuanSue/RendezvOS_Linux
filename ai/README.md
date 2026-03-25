@@ -17,11 +17,13 @@ This folder stores persistent AI collaboration artifacts for the whole repositor
 
 ## Workflow
 
-1. Implement code changes.
-2. Run review using `AI_CHECKLIST.md`.
-3. Before commit, append one entry to `ASSIST_HISTORY.md`.
-4. If a new bug pattern appears, update `AI_CHECKLIST.md` (including the **Pattern Log** section) in the **same commit**—do **not** introduce a separate parallel “rules” file for every lesson unless no existing checklist section can hold it.
-5. If history exceeds rotation threshold, archive old entries per `ARCHIVE_POLICY.md`.
+1. Implement or propose code changes (prefer **local edits + diff for review**; the result is not “correct” until verified or reviewed).
+2. Run review using `AI_CHECKLIST.md` (and `TEST_MATRIX.md` when applicable).
+3. **Verification gate:** record what was run (`make …`, tests, boot) or explicitly **not run** (toolchain missing, etc.). Do **not** imply correctness without verification or maintainer review.
+4. **Commit gate:** **do not `git commit` unless the user explicitly asked to commit** or confirmed the batch is ready. If the user asked only for analysis, a plan, or a patch to try, leave changes **uncommitted** or deliver a diff/summary for them to apply and test.
+5. When the user **does** approve a commit: append one entry to `ASSIST_HISTORY.md` **in that commit** (or immediately after, per team habit), with the verification field accurate.
+6. If a new bug pattern appears, update `AI_CHECKLIST.md` (including the **Pattern Log** section) in the **same commit** as the fix—do **not** introduce a separate parallel “rules” file for every lesson unless no existing checklist section can hold it.
+7. If history exceeds rotation threshold, archive old entries per `ARCHIVE_POLICY.md`.
 
 ## Rules for assistants (read first)
 
@@ -29,6 +31,7 @@ This folder stores persistent AI collaboration artifacts for the whole repositor
 - **Checklist hygiene (§0):** when a lesson applies broadly (e.g. naming), fold it into **one** checkable pattern (role, symmetry, ownership)—cite in-repo code as **examples only**. Do **not** expand `AI_CHECKLIST.md` into a growing table of mandatory identifier spellings; that fights the meta-rule “prefer 1 general rule over many narrow rules.”
 - Keep `INVARIANTS.md` for **runtime/design** truths; cross-reference the checklist for auditability/naming, do not duplicate long explanations there.
 - After substantive AI-assisted work, the user expects checklist/history updates **before** the change is considered “closed,” not a one-off doc dropped elsewhere.
+- **Commits:** assistants must not push or commit by default without explicit maintainer approval; verification and review come first (see Workflow §3–4).
 
 ## Goal
 

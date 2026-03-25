@@ -76,6 +76,10 @@ If any section is missing, review is incomplete.
   explicit per-TM lock, run the detach on the **owner CPU** (IPI / work item),
   or prove the thread is never concurrently scheduled. **Check:** does teardown
   run on the same CPU as `thread->tm` / `task->tm`?
+- [ ] **MCS lock `me` pointer:** for `lock_mcs` / `unlock_mcs`, the second
+  argument is the **per-acquirer** waiter node (see `spin_lock.h`). It must be
+  `percpu(...)` on the executing CPU, not `per_cpu(..., handler->cpu_id)` or
+  any other CPU’s per-CPU slot.
 
 ### 3) Refcount and Lifetime
 
@@ -298,6 +302,12 @@ When a new bug pattern appears during review/debug:
   a `Thread_Base` / `Tcb_Base` from another CPU’s scheduler lists without
   synchronization races `schedule()` on the owner CPU. Fix: owner-CPU execution,
   per-TM lock, or quiesce scheduler. Checklist: §2 + `INVARIANTS.md` (Task_Manager).
+
+- 2026-03: **MCS `me` must be current CPU:** `lock_mcs(&pmm->spin_ptr, me)` —
+  `me` must be `percpu(pmm_spin_lock[z])` on the executing CPU. Using
+  `per_cpu(pmm_spin_lock[z], handler->cpu_id)` lets two CPUs share one waiter
+  node (`me`), corrupting the MCS queue and `rmap_list` / PMM invariants. See
+  `INVARIANTS.md` (kmem / rmap). Checklist: §2 + Pattern Log.
 
 - 2026-03: **Rmap multi-role, wrong owner:** when one physical page’s reverse map
   lists several logical roles (e.g. kernel vs user paths), do not use a

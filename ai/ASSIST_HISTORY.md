@@ -275,3 +275,34 @@ Append one entry for each user-approved commit.
   INVARIANTS).
 - Checklist update: yes.
 
+## 2026-03-22 | Fix MCS pmm lock waiter node (rmap_list corruption) | commit 826f00f
+
+- Scope: `core/kernel/mm/nexus.c`, `core/kernel/mm/map_handler.c`,
+  `ai/AI_CHECKLIST.md`, `ai/INVARIANTS.md`, `ai/ASSIST_HISTORY.md`.
+- Why: `lock_mcs` second arg (`me`) must be **current CPU** `percpu(pmm_spin_lock[zone])`.
+  Using `per_cpu(..., handler->cpu_id)` allowed two CPUs to share one MCS node
+  (`me`), corrupting the queue and breaking exclusion on `Page.rmap_list` (symptom:
+  #PF in `list_add_head` / `list_del_init`).
+- Design decision(s):
+  - keep global head `pmm_ptr->spin_ptr`; only `me` is per **executing** CPU.
+- Failure-path strategy: n/a (lock API correctness).
+- Verification: code review + grep for remaining `per_cpu(pmm_spin_lock`); build
+  not run (toolchain may be absent in CI).
+- Pattern: MCS `me` must be current CPU (checklist §2 + Pattern Log + INVARIANTS).
+- Checklist update: yes.
+
+## 2026-03-22 | Workflow: verification + commit gates for assistants | commit <pending>
+
+- Scope: `ai/README.md`, `AGENTS.md`, `ai/ASSIST_HISTORY.md` (this entry).
+- Why: assistants must not treat unverified code as correct or commit without
+  maintainer confirmation; align docs with that expectation.
+- Design decision(s):
+  - default: diff / uncommitted changes; commit only when the maintainer asks
+    or explicitly approves the batch.
+  - verification must be recorded (or “not run”) before calling a change done.
+- Data structure/API impact: documentation / process only.
+- Failure-path strategy: n/a.
+- Verification: doc consistency read; no code execution required for this entry.
+- Pattern: n/a (process).
+- Checklist update: no (workflow meta; checklist already has §8 validation).
+
