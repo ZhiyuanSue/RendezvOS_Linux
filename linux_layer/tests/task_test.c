@@ -7,10 +7,9 @@
 extern u64 _num_app;
 #define NR_MAX_TEST NEXUS_PER_PAGE * 3
 extern void* test_ptrs[NR_MAX_TEST];
-
 int task_test(void)
 {
-        if (percpu(cpu_number) == 0) {
+        // if (percpu(cpu_number) == 0) {
                 // pr_info("%x apps\n", _num_app);
                 // u64* app_start_ptr;
                 // u64* app_end_ptr;
@@ -27,8 +26,8 @@ int task_test(void)
                 //         if (e)
                 //                 continue;
                 // }
-        }
-        if (percpu(cpu_number) == 0) {
+        // }
+        if (percpu(cpu_number) == 1) {
                 pr_info("start task test\n");
                 error_t e = REND_SUCCESS;
                 VS_Common* vs = new_vspace();
@@ -54,9 +53,9 @@ int task_test(void)
                               vs,
                               PAGE_ENTRY_READ | PAGE_ENTRY_VALID
                                       | PAGE_ENTRY_WRITE);
-                e = del_vspace(&vs);
-                if(e)
-                        return e;
+                // e = del_vspace(&vs);
+                // if(e)
+                //         return e;
         }
         return REND_SUCCESS;
 }
