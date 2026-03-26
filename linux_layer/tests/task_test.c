@@ -14,15 +14,15 @@ int task_test(void)
                 // u64* app_start_ptr;
                 // u64* app_end_ptr;
                 // for (u64 i = 0; i < _num_app; i++) {
-                //         app_start_ptr = (u64*)((vaddr)(&_num_app)
-                //                                + (i * 2 + 1) * sizeof(u64));
-                //         app_end_ptr = (u64*)((vaddr)(&_num_app)
-                //                              + (i * 2 + 2) * sizeof(u64));
+                //         app_start_ptr =
+                //                 (u64*)((vaddr)(&_num_app) + (i * 2 + 1) * sizeof(u64));
+                //         app_end_ptr =
+                //                 (u64*)((vaddr)(&_num_app) + (i * 2 + 2) * sizeof(u64));
                 //         u64 app_start = *(app_start_ptr);
                 //         u64 app_end = *(app_end_ptr);
 
-                //         error_t e = gen_task_from_elf(
-                //                 NULL, 0, 0, app_start, app_end, NULL);
+                //         error_t e =
+                //                 gen_task_from_elf(NULL, 0, 0, app_start, app_end, NULL);
                 //         if (e)
                 //                 continue;
                 // }
@@ -53,9 +53,9 @@ int task_test(void)
                               vs,
                               PAGE_ENTRY_READ | PAGE_ENTRY_VALID
                                       | PAGE_ENTRY_WRITE);
-                // e = del_vspace(&vs);
-                // if(e)
-                //         return e;
+                e = del_vspace(&vs);
+                if (e)
+                        return e;
         }
         return REND_SUCCESS;
 }
