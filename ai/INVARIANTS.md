@@ -82,10 +82,11 @@ If a change breaks or modifies an invariant, update this file in the same commit
   `current_task` must not run concurrently with the **owner CPU’s** scheduler
   on the same lists—unless a dedicated lock or owner-CPU-only execution is
   established.
-- Default `sys_exit` sends cleanup work to **`percpu(clean_server_port)`** (same
-  CPU as the exiting thread). A design that tears down another CPU’s thread/task
-  from a remote CPU must explicitly synchronize with that CPU’s `Task_Manager`
-  (and any IPC/port references), not rely on kmem routing alone.
+- Default `sys_exit` sends cleanup work to **global clean server port** (looked up
+  via `thread_lookup_port("clean_server_port")`). Clean server threads on each CPU
+  receive messages from the shared port via `recv_msg`. A design that tears down
+  another CPU’s thread/task from a remote CPU must explicitly synchronize with that
+  CPU’s `Task_Manager` (and any IPC/port references), not rely on kmem routing alone.
 
 ## Maintenance Rule
 

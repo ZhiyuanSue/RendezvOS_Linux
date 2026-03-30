@@ -9,7 +9,7 @@ extern u64 _num_app;
 extern void* test_ptrs[NR_MAX_TEST];
 int task_test(void)
 {
-        pr_info("%x apps\n", _num_app);
+        pr_info("%lx apps\n", _num_app);
         u64* app_start_ptr;
         u64* app_end_ptr;
         for (u64 i = 0; i < _num_app; i++) {

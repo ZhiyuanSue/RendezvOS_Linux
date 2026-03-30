@@ -40,7 +40,7 @@ static void elf_read(vaddr elf_start)
 
 int elf_read_test(void)
 {
-        pr_info("%x apps\n", _num_app);
+        pr_info("%lx apps\n", _num_app);
         u64* app_start_ptr;
         u64* app_end_ptr;
         for (u64 i = 0; i < _num_app; i++) {
@@ -50,7 +50,7 @@ int elf_read_test(void)
                         (u64*)((vaddr)(&_num_app) + (i * 2 + 2) * sizeof(u64));
                 u64 app_start = *(app_start_ptr);
                 u64 app_end = *(app_end_ptr);
-                pr_info("app %d start:%x end:%x\n", i, app_start, app_end);
+                pr_info("app %d start:%lx end:%lx\n", i, app_start, app_end);
                 elf_read((vaddr)app_start);
         }
         return REND_SUCCESS;

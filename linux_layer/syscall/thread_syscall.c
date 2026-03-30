@@ -1,11 +1,25 @@
 #include <modules/log/log.h>
 #include <rendezvos/task/ipc.h>
 #include <rendezvos/task/tcb.h>
-extern Message_Port_t *clean_server_port;
+#include <rendezvos/task/port.h>
+
+#define CLEAN_SERVER_PORT_NAME "clean_server_port"
+
 void sys_exit(i64 exit_code)
 {
         Thread_Base *self = get_cpu_current_thread();
-        if (self && percpu(clean_server_port)) {
+        Message_Port_t *clean_port = NULL;
+        
+        if (self) {
+                /* Look up clean server port via global port table */
+                clean_port = thread_lookup_port(CLEAN_SERVER_PORT_NAME);
+                if (!clean_port) {
+                        pr_error("[ Syscall ] thread %s: clean_server_port not found in global table",
+                                 self->name);
+                }
+        }
+        
+        if (self && clean_port) {
                 struct allocator *a = percpu(kallocator);
                 typedef struct {
                         Thread_Base *thread;
@@ -28,8 +42,7 @@ void sys_exit(i64 exit_code)
                                 if (msg) {
                                         if (enqueue_msg_for_send(msg)
                                             == REND_SUCCESS) {
-                                                (void)send_msg(percpu(
-                                                        clean_server_port));
+                                                (void)send_msg(clean_port);
                                         } else {
                                                 ref_put(&msg->ms_queue_node
                                                                  .refcount,
@@ -40,9 +53,8 @@ void sys_exit(i64 exit_code)
                                 a->m_free(a, req);
                         }
                 }
-        } else {
-                pr_error("[ Syscall ] thread %s not found clean_server_port",
-                         self->name);
+                /* Release the reference acquired by thread_lookup_port */
+                ref_put(&clean_port->refcount, free_message_port_ref);
         }
 
         if (self) {
@@ -52,4 +64,9 @@ void sys_exit(i64 exit_code)
         while (1) {
                 schedule(percpu(core_tm));
         }
+        
+        /* Note: thread_lookup_port returns a reference that we hold.
+         * We release the reference after sending the message (or if sending fails).
+         * The port remains valid because clean server threads hold their own references.
+         */
 }
