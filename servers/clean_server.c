@@ -1,4 +1,5 @@
 #include <modules/log/log.h>
+#include <common/types.h>
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/initcall.h>
@@ -36,12 +37,28 @@ static void clean_handle_message(Message_t *msg)
         if (target == percpu(init_thread_ptr)
             || target == percpu(idle_thread_ptr))
                 return;
-        if (thread_get_status(target) != thread_status_zombie)
+        /* Wait for owner CPU to mark ZOMBIE (exit intent is THREAD_FLAG_…
+         * only). */
+        if (target->flags & THREAD_FLAG_EXIT_REQUESTED) {
+                while (thread_get_status(target) != thread_status_zombie) {
+                        schedule(percpu(core_tm));
+                }
+        }
+        u64 status = thread_get_status(target);
+        if (status != thread_status_zombie) {
+                pr_error("no zombie\n");
                 return;
+        }
 
         Tcb_Base *task = target->belong_tcb;
         delete_thread(target);
-        if (task && task->thread_number == 0) {
+        bool task_empty = false;
+        if (task) {
+                lock_cas(&task->thread_list_lock);
+                task_empty = (task->thread_number == 0);
+                unlock_cas(&task->thread_list_lock);
+        }
+        if (task && task_empty) {
                 /*we might now in the vspace that need to clean, we must change
                  * the vspace to the root and we must ensure that the task's
                  * vspace is not the root vspace*/
@@ -67,8 +84,8 @@ static void clean_handle_message(Message_t *msg)
 void clean_server_thread(void)
 {
         Message_Port_t *port = NULL;
-        
-        /* Lookup clean server port via thread port cache / global table */
+
+        /* Lookup global clean server port via global table */
         while (!port) {
                 port = thread_lookup_port(clean_server_port_name);
                 if (!port) {
@@ -77,13 +94,24 @@ void clean_server_thread(void)
                         continue;
                 }
         }
-        
+
         /* We hold a reference to the port via thread_lookup_port */
         while (1) {
                 error_t ret = recv_msg(port);
                 if (ret) {
-                        /* recv_msg failed, maybe port deleted? */
-                        schedule(percpu(core_tm));
+                        /* recv_msg failed, maybe port deleted?
+                         * Release reference and re-lookup port.
+                         */
+                        ref_put(&port->refcount, free_message_port_ref);
+                        port = NULL;
+                        while (!port) {
+                                port = thread_lookup_port(
+                                        clean_server_port_name);
+                                if (!port) {
+                                        schedule(percpu(core_tm));
+                                        continue;
+                                }
+                        }
                         continue;
                 }
 
@@ -95,8 +123,9 @@ void clean_server_thread(void)
                         ref_put(&msg->ms_queue_node.refcount, free_message_ref);
                 }
         }
-        
-        /* Should never reach here, but for completeness: release port reference */
+
+        /* Should never reach here, but for completeness: release port reference
+         */
         if (port) {
                 ref_put(&port->refcount, free_message_port_ref);
         }
@@ -107,30 +136,31 @@ extern cpu_id_t BSP_ID;
 static void clean_server_init(void)
 {
         cpu_id_t cpu = percpu(cpu_number);
-        
+
         /* On BSP: create and register global clean server port */
         if (cpu == BSP_ID) {
-                /* Ensure global port table is initialized */
                 if (!global_port_table) {
-                        pr_error("[clean_server] global_port_table not initialized\n");
+                        pr_error(
+                                "[clean_server] global_port_table not initialized\n");
                         return;
                 }
-                
-                Message_Port_t *port = create_message_port(clean_server_port_name);
+                Message_Port_t *port =
+                        create_message_port(clean_server_port_name);
                 if (!port) {
-                        pr_error("[clean_server] failed to create message port\n");
+                        pr_error(
+                                "[clean_server] failed to create message port\n");
                         return;
                 }
-                
+
                 error_t err = register_port(global_port_table, port);
                 if (err) {
-                        pr_error("[clean_server] failed to register port: %d\n", (int)err);
+                        pr_error("[clean_server] failed to register port: %d\n",
+                                 (int)err);
                         delete_message_port_structure(port);
                         return;
                 }
-                /* Port registered successfully, will be found via thread_lookup_port */
         }
-        
+
         /* On all CPUs (including BSP): create clean server thread */
         error_t e = gen_thread_from_func(&percpu(clean_server_thread_ptr),
                                          (kthread_func)clean_server_thread,

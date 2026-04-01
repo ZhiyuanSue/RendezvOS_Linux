@@ -1,4 +1,6 @@
 #include <modules/log/log.h>
+#include <common/types.h>
+#include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/ipc.h>
 #include <rendezvos/task/tcb.h>
 #include <rendezvos/task/port.h>
@@ -10,16 +12,25 @@ void sys_exit(i64 exit_code)
         Thread_Base *self = get_cpu_current_thread();
         Message_Port_t *clean_port = NULL;
         
-        if (self) {
-                /* Look up clean server port via global port table */
-                clean_port = thread_lookup_port(CLEAN_SERVER_PORT_NAME);
-                if (!clean_port) {
-                        pr_error("[ Syscall ] thread %s: clean_server_port not found in global table",
-                                 self->name);
-                }
+        if (!self)
+                goto out;
+
+        /*
+         * Exit intent: THREAD_FLAG_EXIT_REQUESTED (survives IPC status changes).
+         * Owner CPU scheduler moves running -> zombie on switch-away.
+         */
+        thread_or_flags(self, THREAD_FLAG_EXIT_REQUESTED);
+
+        /* Look up global clean server port via global port table */
+        clean_port = thread_lookup_port(CLEAN_SERVER_PORT_NAME);
+        if (!clean_port) {
+                pr_error("[ Syscall ] thread %s: %s not found in global table",
+                         self->name,
+                         CLEAN_SERVER_PORT_NAME);
+                goto out;
         }
         
-        if (self && clean_port) {
+        if (clean_port) {
                 struct allocator *a = percpu(kallocator);
                 typedef struct {
                         Thread_Base *thread;
@@ -56,10 +67,7 @@ void sys_exit(i64 exit_code)
                 /* Release the reference acquired by thread_lookup_port */
                 ref_put(&clean_port->refcount, free_message_port_ref);
         }
-
-        if (self) {
-                thread_set_status(self, thread_status_zombie);
-        }
+out:
         schedule(percpu(core_tm));
         while (1) {
                 schedule(percpu(core_tm));

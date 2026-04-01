@@ -12,7 +12,6 @@ void syscall(struct trap_frame *syscall_ctx)
         switch (syscall_ctx->ARCH_SYSCALL_ID) {
         case __NR_exit:
                 sys_exit(syscall_ctx->ARCH_SYSCALL_ARG_1);
-                thread_set_status(curr, thread_status_zombie);
                 break;
         default:
                 pr_error("[ Syscall ] get a undefined syscall id %d\n",
