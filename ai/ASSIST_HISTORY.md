@@ -43,6 +43,33 @@ Append one entry for each user-approved commit.
 
 ---
 
+## 2026-04-01 | ipc/lifetime: refcount symmetry + exit intent flag + teardown hardening | commit c030dc8
+
+- Scope: IPC request lifetime (`core/kernel/task/ipc.c`, `core/include/rendezvos/task/ipc.h`);
+  exit/clean server (`linux_layer/syscall/thread_syscall.c`, `servers/clean_server.c`,
+  scheduler `core/kernel/task/task_manager.c`, `core/include/rendezvos/task/tcb.h`);
+  thread final free (`core/kernel/task/thread.c`, `core/kernel/task/tcb.c`,
+  `core/include/common/dsa/list.h`); MSQ teardown (`core/include/common/dsa/ms_queue.h`,
+  `core/kernel/task/message.c`); port teardown (`core/kernel/task/port.c`).
+- Why: Fix a major refcount asymmetry (IPC request held `Thread_Base*` but only ref_put on free),
+  prevent cross-CPU reaper deleting a still-executing thread (exit intent overwritten by IPC),
+  and ensure last-ref free paths drain owned resources + defensively unlink from lists.
+- Design decision(s):
+  - Use monotonic flag (`THREAD_FLAG_EXIT_REQUESTED`) for exit intent instead of a dedicated
+    status enum that can be overwritten by IPC states.
+  - Centralize MSQ teardown via `msq_clean_queue` to avoid duplicated drain logic.
+- Data structure/API impact:
+  - Public: add `msq_clean_queue` helper; add `ipc_clean_port_thread_queue` for port teardown.
+  - Invariants: final free must detach list nodes; wrapper objects must ref_get/ref_put symmetrically.
+- Failure-path strategy:
+  - `create_ipc_request` ref_get fails: Fail-fast -> free request and return NULL.
+  - Thread/port/message teardown: Drain/Cleanup -> drain queues (incl. dummy), then free.
+- Verification:
+  - Blocked locally: cross toolchain missing (`aarch64-linux-gnu-gcc`), cannot build here.
+  - Runtime smoke performed by maintainer during debug (reported “now runs through”).
+- Pattern: refcount symmetry; exit intent flag; final free defensive unlink; MSQ double-drain hang.
+- Checklist update: yes (`ai/AI_CHECKLIST.md` Pattern Log).
+
 ## 2026-03-21 | nexus: `nexus_kernel_page_owner_cpu` only KERNEL_HEAP_REF rmap | commit <pending>
 
 - Scope: `core/kernel/mm/nexus.c`, `ai/INVARIANTS.md`, `ai/AI_CHECKLIST.md`

@@ -87,6 +87,13 @@ If any section is missing, review is incomplete.
 - [ ] Remove/unregister drops ownership ref exactly once.
 - [ ] Destroy/fini does not silently leak live objects.
 - [ ] Final free path does not mutate index structures unexpectedly.
+- [ ] **Wrapper holds pointer:** if a wrapper stores `T*` and its finalizer does
+  `ref_put(T)`, then the bind/constructor path must `ref_get_not_zero(T)` before
+  publishing that pointer (symmetry); on ref_get failure, fail-fast without
+  publishing a half-initialized wrapper.
+- [ ] **Last-ref rule:** owned heap resources (queues, buffers, stacks) must be
+  drained/freed only on the **last ref** path, or the API must be explicitly
+  queue-aware/guarded so calling teardown twice is safe.
 
 ### 4) Failure and Rollback
 
@@ -114,6 +121,14 @@ If any section is missing, review is incomplete.
 - [ ] If teardown relies on a per-CPU/per-thread scratch window (e.g.,
   self-mapping region used to edit frames), it must run in the context
   that owns that window.
+- [ ] **Final free defensive unlink:** before freeing an object, ensure it is no
+  longer linked in any traversable structure (task thread list, scheduler ring,
+  hash/table, MSQ, etc.). If still linked, unlink under correct lock/context (or
+  last-chance `list_del_init` + diagnostics) to prevent list walks from touching
+  freed memory.
+- [ ] **Intent vs state overwrite:** if a “teardown intent” signal can be
+  overwritten by unrelated state transitions (IPC blocking, etc.), represent
+  intent in a monotonic flag/field, not only as a transient status enum.
 
 ### 7) API/Type Discipline
 
@@ -314,3 +329,15 @@ When a new bug pattern appears during review/debug:
   non-authoritative entry to infer **subsystem-specific** ownership (e.g. kmem
   CPU from a user mapping). Filter by the role that matches the invariant.
   Checklist: §1 + Pattern Log.
+
+- 2026-04: **Wrapper refcount symmetry:** finalizer `ref_put(T)` implies creator
+  must `ref_get_not_zero(T)` at bind time. Checklist: §3.
+
+- 2026-04: **Intent survives state changes:** teardown/exit intent must not be
+  representable only by a status enum that IPC can overwrite. Checklist: §6.
+
+- 2026-04: **Final free defensive unlink:** last ref must not free a node still
+  linked in any list/ring. Checklist: §6 + §2.
+
+- 2026-04: **MSQ drain is single-shot (or guarded):** avoid double-drain of the
+  same queue lifetime; prefer one shared drain helper. Checklist: §3 + §6.

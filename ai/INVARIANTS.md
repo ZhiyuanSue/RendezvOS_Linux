@@ -88,6 +88,16 @@ If a change breaks or modifies an invariant, update this file in the same commit
   another CPU’s thread/task from a remote CPU must explicitly synchronize with that
   CPU’s `Task_Manager` (and any IPC/port references), not rely on kmem routing alone.
 
+- **Teardown split:** logical unlink (task list + scheduler ring) happens before
+  dropping the last ref; final free drains owned resources and frees the object.
+
+- **Intent survives IPC:** exit/teardown intent uses a monotonic flag (not a
+  transient status) so IPC/blocking cannot erase it; owner CPU proves quiescence
+  via `thread_status_zombie` before reaping.
+
+- **No freed nodes in traversable structures:** before freeing an object, it must
+  be detached from any list/ring/queue that other code may traverse.
+
 ## Maintenance Rule
 
 - Any bug that reveals a missing invariant here must add a new bullet in the same fix commit.
