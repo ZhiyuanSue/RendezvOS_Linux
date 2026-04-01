@@ -50,6 +50,13 @@ static void clean_handle_message(Message_t *msg)
                 return;
         }
 
+        /* Debug output: show which thread is being cleaned up on which core */
+        pr_debug("[clean_server] CPU %lu: cleaning up thread %s (tid=%lu, exit_code=%ld)\n",
+                (u64)percpu(cpu_number),
+                target->name ? target->name : "(unnamed)",
+                (u64)target->tid,
+                req->exit_code);
+
         Tcb_Base *task = target->belong_tcb;
         delete_thread(target);
         bool task_empty = false;

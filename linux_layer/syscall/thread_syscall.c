@@ -30,6 +30,13 @@ void sys_exit(i64 exit_code)
                 goto out;
         }
         
+        /* Debug output: show which thread on which core is requesting exit */
+        pr_debug("[sys_exit] CPU %lu: thread %s (tid=%lu) requesting exit with code %ld\n",
+                (u64)percpu(cpu_number),
+                self->name ? self->name : "(unnamed)",
+                (u64)self->tid,
+                exit_code);
+        
         if (clean_port) {
                 struct allocator *a = percpu(kallocator);
                 typedef struct {
