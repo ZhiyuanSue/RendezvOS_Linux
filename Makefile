@@ -118,7 +118,6 @@ clean:
 mrproper:
 	@$(MAKE) -C $(CORE_DIR) mrproper
 	@-rm -rf $(ROOT_BUILD_DIR)
-	@-rm -rf $(ROOT_BUILD_DIR)/user_payload
 
 $(ROOT_OBJ_DIR)/%.o: $(ROOT_DIR)/%.c
 	@mkdir -p $(dir $@)

@@ -1,10 +1,10 @@
 # This script is only used by the top-level build target `make user`.
 # It generates/copies `build/link_app.o` that gets linked into the kernel image.
 #
-# Layout (after clone): $(ROOT)/build/user_payload/ = git root of user payload repo
+# Layout (after clone): $(ROOT)/user_payload/ = git root of user payload repo
 # Inner build directory (must contain Makefile):
-#   - default: build/user_payload/user/
-#   - or repo root: build/user_payload/ if Makefile is at top level
+#   - default: user_payload/user/
+#   - or repo root: user_payload/ if Makefile is at top level
 #   - or set "inner" in user.json (e.g. "." for repo root, or "user")
 #
 # Environment:
@@ -16,7 +16,7 @@ import json
 import shutil
 from typing import Optional
 
-target_dir = "build/user_payload"
+target_dir = "user_payload"
 target_config_arch_list = [
     "aarch64",
     "loongarch",

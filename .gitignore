@@ -6,4 +6,5 @@
 .vscode/*
 build/
 core/build/
+user_payload/
 *.log

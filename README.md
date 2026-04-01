@@ -49,7 +49,7 @@ make ARCH=x86_64 build
 make ARCH=x86_64 run
 ```
 
-`make user` clones or updates the user test repository under `build/user_payload/`, and produces the payload object that will be linked into the `.user` section.
+`make user` clones or updates the user test repository under `user_payload/`, and produces the payload object that will be linked into the `.user` section.
 
 When running through the top-level wrapper (`make ... run` / `make ... dump`):
 
