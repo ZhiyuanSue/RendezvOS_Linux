@@ -66,18 +66,19 @@ static void clean_handle_message(Message_t *msg)
                 unlock_cas(&task->thread_list_lock);
         }
         if (task && task_empty) {
-                /*we might now in the vspace that need to clean, we must change
-                 * the vspace to the root and we must ensure that the task's
-                 * vspace is not the root vspace*/
+                /*
+                         * Active refcount teardown is expected to be safe:
+                         * `schedule()` switches hardware roots (CR3/TTBR0) on context
+                         * switches, so by the time this task is empty (all threads
+                         * removed and thread marked ZOMBIE), this CPU should have
+                         * dropped its active ref to the user vspace. Other CPUs
+                         * follow their own schedule switches and the vspace is
+                         * freed only on the last ref.
+                 */
                 if (task->vs == &root_vspace) {
                         pr_error(
                                 "[ Error ] a user task should not use root vspace as its vspace\n");
                 }
-
-                percpu(core_tm)->current_task = percpu(core_tm)->root_task;
-                percpu(current_vspace) = percpu(core_tm)->root_task->vs;
-                arch_set_current_user_vspace_root(
-                        percpu(core_tm)->root_task->vs->vspace_root_addr);
                 error_t e = delete_task(task);
                 if (e) {
                         pr_error(

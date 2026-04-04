@@ -98,6 +98,16 @@ If a change breaks or modifies an invariant, update this file in the same commit
 - **No freed nodes in traversable structures:** before freeing an object, it must
   be detached from any list/ring/queue that other code may traverse.
 
+- **User `VS_Common` teardown vs SMP (CR3 / `current_vspace`):** `delete_task` may
+  call `del_vspace`, which tears down page tables. No CPU may still execute with
+  that task’s page tables loaded: if another CPU faults while `CR3` (or the
+  kernel’s `current_vspace` / map-handler view) still targets a `VS_Common` that
+  is already being freed, you can get `CR2 ≈ RIP` and recursive `#PF` / triple
+  fault. Moving only the clean-server CPU to `root_task` is **not** sufficient;
+  cross-CPU quiescence (e.g. remote threads stopped, IPI + switch all CPUs to a
+  safe kernel vspace, or a vspace refcount / deferred free) must be designed
+  explicitly.
+
 ## Maintenance Rule
 
 - Any bug that reveals a missing invariant here must add a new bullet in the same fix commit.

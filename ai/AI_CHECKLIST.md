@@ -340,4 +340,6 @@ When a new bug pattern appears during review/debug:
   linked in any list/ring. Checklist: §6 + §2.
 
 - 2026-04: **MSQ drain is single-shot (or guarded):** avoid double-drain of the
-  same queue lifetime; prefer one shared drain helper. Checklist: §3 + §6.
+  same queue lifetime; prefer one shared drain helper. The MSQ dummy’s final
+  `ref_put` happens inside `msq_dequeue`’s empty-queue path—do not `ref_put` the
+  dummy again in a “delete dummy” tail. Checklist: §3 + §6.
