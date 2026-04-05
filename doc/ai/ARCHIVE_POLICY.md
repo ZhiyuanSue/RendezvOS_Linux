@@ -1,6 +1,6 @@
 # Assist History Archive Policy
 
-This policy keeps `ai/ASSIST_HISTORY.md` compact while preserving full history.
+This policy keeps `doc/ai/ASSIST_HISTORY.md` compact while preserving full history.
 
 ## Rotation Trigger
 
@@ -13,7 +13,7 @@ Rotate when either condition is met:
 
 1. Keep recent entries (about last 30-50) in `ASSIST_HISTORY.md`.
 2. Move older entries into monthly archive files:
-   - `ai/archive/ASSIST_HISTORY_YYYY-MM.md`
+   - `doc/ai/archive/ASSIST_HISTORY_YYYY-MM.md`
 3. Do not rewrite historical meaning; only allow factual typo fixes.
 4. Add/update an index section in `ASSIST_HISTORY.md` linking archives.
 5. Rotation should be done in the same commit that crosses threshold (or immediately next commit).

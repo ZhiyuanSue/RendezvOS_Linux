@@ -7,7 +7,7 @@ Append one entry for each user-approved commit.
 
 - No archive yet.
 - When rotation starts, list files here, e.g.
-  - `ai/archive/ASSIST_HISTORY_2026-03.md`
+  - `doc/ai/archive/ASSIST_HISTORY_2026-03.md`
 
 ## Entry Rules (Mandatory)
 
@@ -17,7 +17,7 @@ Append one entry for each user-approved commit.
 - If a new bug pattern was discovered, include `Pattern:` and confirm checklist update.
 - If entries become too large:
   - keep this file as rolling index for recent 30-50 entries
-  - move older entries to `ai/archive/ASSIST_HISTORY_YYYY-MM.md` and leave links
+  - move older entries to `doc/ai/archive/ASSIST_HISTORY_YYYY-MM.md` and leave links
 
 ## Entry Template
 
@@ -68,20 +68,20 @@ Append one entry for each user-approved commit.
   - Blocked locally: cross toolchain missing (`aarch64-linux-gnu-gcc`), cannot build here.
   - Runtime smoke performed by maintainer during debug (reported “now runs through”).
 - Pattern: refcount symmetry; exit intent flag; final free defensive unlink; MSQ double-drain hang.
-- Checklist update: yes (`ai/AI_CHECKLIST.md` Pattern Log).
+- Checklist update: yes (`doc/ai/AI_CHECKLIST.md` Pattern Log).
 
 ## 2026-03-21 | nexus: `nexus_kernel_page_owner_cpu` only KERNEL_HEAP_REF rmap | commit <pending>
 
-- Scope: `core/kernel/mm/nexus.c`, `ai/INVARIANTS.md`, `ai/AI_CHECKLIST.md`
-  (Pattern Log), `ai/ASSIST_HISTORY.md`.
+- Scope: `core/kernel/mm/nexus.c`, `doc/ai/INVARIANTS.md`, `doc/ai/AI_CHECKLIST.md`
+  (Pattern Log), `doc/ai/ASSIST_HISTORY.md`.
 - Why: User `VS_Common` rmap entries cannot define kmem whole-page owner; same PPN
   may have multiple user mappings or order-dependent walks.
 - Checklist update: yes (INVARIANTS + Pattern Log).
 
 ## 2026-03-21 | kmalloc: drain `buffer_msq` + `kfree_page_msq` on all kalloc/kfree | commit <pending>
 
-- Scope: `core/kernel/mm/kmalloc.c`, `ai/INVARIANTS.md`, `ai/AI_CHECKLIST.md`
-  (Pattern Log), `ai/ASSIST_HISTORY.md`.
+- Scope: `core/kernel/mm/kmalloc.c`, `doc/ai/INVARIANTS.md`, `doc/ai/AI_CHECKLIST.md`
+  (Pattern Log), `doc/ai/ASSIST_HISTORY.md`.
 - Why: Page alloc path only drained page MSQ; merge into
   `mem_allocator_remote_frees` so object + page cross-CPU frees both run on
   every kalloc/kfree; remove redundant inner `clean_buffer_msq` calls.
@@ -89,7 +89,7 @@ Append one entry for each user-approved commit.
 
 ## 2026-03-21 | ai: §7 — C idiom (`void* p`, string APIs) vs multi-role naming | commit <pending>
 
-- Scope: `ai/AI_CHECKLIST.md` (§7 + Pattern Log), `ai/ASSIST_HISTORY.md`.
+- Scope: `doc/ai/AI_CHECKLIST.md` (§7 + Pattern Log), `doc/ai/ASSIST_HISTORY.md`.
 - Why: Single-letter params are acceptable when mirroring libc/allocator mental
   models; distinguish from opaque letters that hide role in one-type-many-roles
   APIs.
@@ -97,7 +97,7 @@ Append one entry for each user-approved commit.
 
 ## 2026-03-21 | ai: abstract §7 / Pattern Log (multi-role naming); tighten INVARIANTS | commit <pending>
 
-- Scope: `ai/AI_CHECKLIST.md`, `ai/INVARIANTS.md`, `ai/ASSIST_HISTORY.md`,
+- Scope: `doc/ai/AI_CHECKLIST.md`, `doc/ai/INVARIANTS.md`, `doc/ai/ASSIST_HISTORY.md`,
   `core/include/rendezvos/mm/nexus.h` (comment), `core/kernel/mm/vmm.c`,
   `core/kernel/mm/nexus.c` (`com`→`user_vs` / `heap_ref`).
 - Why: Checklist must state **patterns** (§0), not a mandatory nexus-specific
@@ -107,8 +107,8 @@ Append one entry for each user-approved commit.
 
 ## 2026-03-21 | nexus.h: rename inline params `n`→`nexus_node` + doc node roles | commit <pending>
 
-- Scope: `core/include/rendezvos/mm/nexus.h`, `ai/AI_CHECKLIST.md` (§7 + Pattern Log),
-  `ai/INVARIANTS.md`, `ai/ASSIST_HISTORY.md`.
+- Scope: `core/include/rendezvos/mm/nexus.h`, `doc/ai/AI_CHECKLIST.md` (§7 + Pattern Log),
+  `doc/ai/INVARIANTS.md`, `doc/ai/ASSIST_HISTORY.md`.
 - Why: `struct nexus_node*` has multiple roles; single-letter parameters hurt
   readability and invite wrong invariants.
 - Checklist update: yes (§7 + Pattern Log).
@@ -116,7 +116,7 @@ Append one entry for each user-approved commit.
 ## 2026-03-21 | mm: `VS_Common` anonymous union (drop `payload` field name) | commit <pending>
 
 - Scope: `core/include/rendezvos/mm/vmm.h`, `vmm.c`, `nexus.{h,c}`, `map_handler.c`,
-  `task_manager.c`, `kmalloc.c`, `ai/INVARIANTS.md`, `ai/ASSIST_HISTORY.md`.
+  `task_manager.c`, `kmalloc.c`, `doc/ai/INVARIANTS.md`, `doc/ai/ASSIST_HISTORY.md`.
 - Why: No domain need for a `payload` member; C11 anonymous union — access
   `vs->vspace_root_addr`, `vs->vs`, `vs->cpu_id`, etc., per `type`.
 - Verification: build with cross-gcc when available.
@@ -124,8 +124,8 @@ Append one entry for each user-approved commit.
 
 ## 2026-03-21 | fix: `struct VS_Common*` self-reference in `vmm.h` + checklist §7 | commit <pending>
 
-- Scope: `core/include/rendezvos/mm/vmm.h`, `ai/AI_CHECKLIST.md` (§7 + Pattern Log),
-  `ai/ASSIST_HISTORY.md`.
+- Scope: `core/include/rendezvos/mm/vmm.h`, `doc/ai/AI_CHECKLIST.md` (§7 + Pattern Log),
+  `doc/ai/ASSIST_HISTORY.md`.
 - Why: `VS_Common* vs` inside `typedef struct VS_Common { ... } VS_Common` is not
   valid in standard C (typedef incomplete during struct body); gcc: unknown type,
   cascaded bogus pointer types in `nexus_node_vspace`.
@@ -136,7 +136,7 @@ Append one entry for each user-approved commit.
 
 - Scope: `core/include/rendezvos/mm/vmm.h`, `map_handler.{h,c}`, `vmm.c`, `nexus.{h,c}`,
   `kmalloc.c`, `tcb.h`, `thread_loader.{h,c}`, `task_manager.c`, tests, `LocalAPIC.c`,
-  `ai/INVARIANTS.md`, `ai/ASSIST_HISTORY.md`.
+  `doc/ai/INVARIANTS.md`, `doc/ai/ASSIST_HISTORY.md`.
 - Why: Unify page-table fields and kernel-heap ref in one `VS_Common` (anonymous
   union: `vs`/`cpu_id` vs table fields). All former `VSpace*` APIs are `VS_Common*`.
 - Verification: full build not run here (cross `gcc` may be missing).
@@ -145,15 +145,15 @@ Append one entry for each user-approved commit.
 ## 2026-03-21 | Naming: `cpu_kallocator` + kmalloc locals | commit <pending>
 
 - Scope: `core/kernel/task/thread.c`, `tcb.c`, `port.c`, `task_manager.c`,
-  `core/kernel/mm/vmm.c`, `core/kernel/mm/kmalloc.c`, `ai/AI_CHECKLIST.md`.
+  `core/kernel/mm/vmm.c`, `core/kernel/mm/kmalloc.c`, `doc/ai/AI_CHECKLIST.md`.
 - Why: Unify `percpu(kallocator)` locals to `cpu_kallocator` (not `ka`/`a`/`ma`);
   `kmalloc.c` uses `k_allocator_p`, `owner_mem_allocator`, `src_cpu_kallocator`.
 - Checklist update: yes (§7).
 
 ## 2026-03-21 | Review: kmem cross-CPU pages + `rmap_list` locking + owner_cpu | commit <pending>
 
-- Scope: `core/kernel/mm/nexus.c`, `core/kernel/mm/kmalloc.c`, `ai/INVARIANTS.md`,
-  `ai/AI_CHECKLIST.md`.
+- Scope: `core/kernel/mm/nexus.c`, `core/kernel/mm/kmalloc.c`, `doc/ai/INVARIANTS.md`,
+  `doc/ai/AI_CHECKLIST.md`.
 - Why: Align whole-page `kfree` routing (`nexus_kernel_page_owner_cpu`) with
   per-CPU kernel heap identity (`payload.kernel_heap_ref.cpu_id`); protect
   `Page.rmap_list` with zone `pmm` MCS lock on link/unlink/scan; `unfill_phy_page`
@@ -166,8 +166,8 @@ Append one entry for each user-approved commit.
 ## 2026-03-21 | mm: `VS_Common` in `vmm.h` (replaces `nexus_vs_common`) | commit <pending>
 
 - Scope: `core/include/rendezvos/mm/vmm.h`, `core/include/rendezvos/mm/nexus.h`,
-  `core/kernel/mm/vmm.c`, `core/kernel/mm/nexus.c`, `ai/INVARIANTS.md`,
-  `ai/ASSIST_HISTORY.md`.
+  `core/kernel/mm/vmm.c`, `core/kernel/mm/nexus.c`, `doc/ai/INVARIANTS.md`,
+  `doc/ai/ASSIST_HISTORY.md`.
 - Why: one typedef `VS_Common` (`type` + `payload`) with `VSpace` and
   `kernel_address_space_ref` lives next to vspace helpers; `nexus_node.vs_common`
   stays a pointer. Enum `vs_common_kind` / `VS_COMMON_*`; helper
@@ -179,7 +179,7 @@ Append one entry for each user-approved commit.
 ## 2026-03-21 | thread_loader: correct nexus_delete_vspace root + delete_task detach | commit <pending>
 
 - Scope: `core/kernel/task/thread_loader.c`, `core/kernel/task/tcb.c`,
-  `core/kernel/mm/nexus.c`, `core/include/rendezvos/mm/nexus.h`, `ai/*`.
+  `core/kernel/mm/nexus.c`, `core/include/rendezvos/mm/nexus.h`, `doc/ai/*`.
 - Why: ELF / clean-server teardown logged “no such a vspace in nexus” and task
   manager errors; `nexus_delete_vspace` was called with the per-vspace node
   from `nexus_create_vspace_root_node` instead of `percpu(nexus_root)`.
@@ -194,8 +194,8 @@ Append one entry for each user-approved commit.
 
 ## 2026-03-21 | Nexus `vs` union fix + virt_mm_init kinit errors | commit <pending>
 
-- Scope: `core/kernel/mm/nexus.c`, `core/kernel/mm/vmm.c`, `ai/AI_CHECKLIST.md`,
-  `ai/INVARIANTS.md`.
+- Scope: `core/kernel/mm/nexus.c`, `core/kernel/mm/vmm.c`, `doc/ai/AI_CHECKLIST.md`,
+  `doc/ai/INVARIANTS.md`.
 - Why: boot failed with `get free page fail` / kmalloc bootstrap; root nexus
   `vs.kref` was cleared by a subsequent `vs.uvs = NULL` (same union storage).
 - Design decision(s):
@@ -213,7 +213,7 @@ Append one entry for each user-approved commit.
 ## 2026-03-20 | Named sentinels for nexus owner cpu + kfree_page dummy | commit <pending>
 
 - Scope: `core/include/rendezvos/mm/nexus.h`, `core/kernel/mm/nexus.c`,
-  `core/kernel/mm/kmalloc.c`, `ai/AI_CHECKLIST.md`.
+  `core/kernel/mm/kmalloc.c`, `doc/ai/AI_CHECKLIST.md`.
 - Why: avoid raw `-1` / `0` as undocumented API sentinels; align with checklist.
 - Verification: grep for remaining owner-cpu `-1` in this path (none).
 - Pattern: magic sentinel without macro (Pattern Log + §1 bullet).
@@ -221,24 +221,24 @@ Append one entry for each user-approved commit.
 
 ## 2026-03-20 | Root AGENTS.md for Cursor Agent discovery | commit <pending>
 
-- Scope: `AGENTS.md` (new), `ai/README.md` (one-line cross-link).
-- Why: give Agent automatic entry to `ai/` workflow without manual `@` each session.
+- Scope: `AGENTS.md` (new), `doc/ai/README.md` (one-line cross-link).
+- Why: give Agent automatic entry to `doc/ai/` workflow without manual `@` each session.
 - Verification: n/a (docs).
 - Pattern: n/a.
 - Checklist update: no.
 
 ## 2026-03-20 | AI docs: naming lesson merged into checklist | commit <pending>
 
-- Scope: `ai/README.md`, `ai/AI_CHECKLIST.md`, `ai/INVARIANTS.md`,
-  `ai/RED_TEAM_REVIEW.md`, `ai/TEST_MATRIX.md`; removed `ai/NAMING_PATTERNS.md`.
+- Scope: `doc/ai/README.md`, `doc/ai/AI_CHECKLIST.md`, `doc/ai/INVARIANTS.md`,
+  `doc/ai/RED_TEAM_REVIEW.md`, `doc/ai/TEST_MATRIX.md`; removed `doc/ai/NAMING_PATTERNS.md`.
 - Why: align with mandatory mechanism (patterns live in checklist + Pattern Log);
   keep lessons abstract and avoid duplicate, example-heavy topic files.
 - Design decision(s):
   - single authoritative checkable source: `AI_CHECKLIST.md` §7 + Pattern Log.
-  - other `ai/*.md` only cross-reference or add matrix/red-team hooks.
+  - other `doc/ai/*.md` only cross-reference or add matrix/red-team hooks.
 - Data structure/API impact: none (documentation only).
 - Failure-path strategy: n/a.
-- Verification: manual consistency read of `ai/` tree.
+- Verification: manual consistency read of `doc/ai/` tree.
 - Pattern: typedef/tag shadowing + macro formal-name collision (documented in Pattern Log).
 - Checklist update: yes (§7 bullets + Pattern Log; TEST_MATRIX §F; RED_TEAM prompt).
 
@@ -269,7 +269,7 @@ Append one entry for each user-approved commit.
 
 ## 2026-03-21 | kfree page/free API tightening | commit d65b984
 
-- Scope: `core/kernel/mm/kmalloc.c`, `core/kernel/mm/nexus.c`, `core/include/rendezvos/mm/kmalloc.h`, `ai/AI_CHECKLIST.md` (§7 + Pattern Log).
+- Scope: `core/kernel/mm/kmalloc.c`, `core/kernel/mm/nexus.c`, `core/include/rendezvos/mm/kmalloc.h`, `doc/ai/AI_CHECKLIST.md` (§7 + Pattern Log).
 - Why: `page_vaddr` duplicated `(vaddr)p` at every call site; `pv` in `kfree` only
   mirrored `p` for the same lookups.
 - Design decision(s):
@@ -287,7 +287,7 @@ Append one entry for each user-approved commit.
 
 ## 2026-03-21 | Cross-CPU teardown risk review (Task_Manager) | commit 53adc0b
 
-- Scope: `ai/AI_CHECKLIST.md` (§2 + Pattern Log), `ai/INVARIANTS.md` (Task_Manager).
+- Scope: `doc/ai/AI_CHECKLIST.md` (§2 + Pattern Log), `doc/ai/INVARIANTS.md` (Task_Manager).
 - Why: kmem/nexus routing for remote `kfree`/`del_vspace` does not by itself
   serialize with per-CPU scheduler lists or IPC references when cleanup is
   initiated from another CPU.
@@ -305,7 +305,7 @@ Append one entry for each user-approved commit.
 ## 2026-03-22 | Fix MCS pmm lock waiter node (rmap_list corruption) | commit 826f00f
 
 - Scope: `core/kernel/mm/nexus.c`, `core/kernel/mm/map_handler.c`,
-  `ai/AI_CHECKLIST.md`, `ai/INVARIANTS.md`, `ai/ASSIST_HISTORY.md`.
+  `doc/ai/AI_CHECKLIST.md`, `doc/ai/INVARIANTS.md`, `doc/ai/ASSIST_HISTORY.md`.
 - Why: `lock_mcs` second arg (`me`) must be **current CPU** `percpu(pmm_spin_lock[zone])`.
   Using `per_cpu(..., handler->cpu_id)` allowed two CPUs to share one MCS node
   (`me`), corrupting the queue and breaking exclusion on `Page.rmap_list` (symptom:
@@ -320,7 +320,7 @@ Append one entry for each user-approved commit.
 
 ## 2026-03-22 | Workflow: verification + commit gates for assistants | commit <pending>
 
-- Scope: `ai/README.md`, `AGENTS.md`, `ai/ASSIST_HISTORY.md` (this entry).
+- Scope: `doc/ai/README.md`, `AGENTS.md`, `doc/ai/ASSIST_HISTORY.md` (this entry).
 - Why: assistants must not treat unverified code as correct or commit without
   maintainer confirmation; align docs with that expectation.
 - Design decision(s):

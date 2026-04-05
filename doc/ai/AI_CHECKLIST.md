@@ -71,8 +71,8 @@ If any section is missing, review is incomplete.
   so all queues make progress under skewed load.
 - [ ] **Per-CPU scheduler / `Task_Manager` lists:** `sched_thread_list` /
   `sched_task_list` are owned by one CPU’s `Task_Manager`. Mutations
-  (`list_del_init`, `add_*_to_manager`, `current_thread` / `current_task`
-  updates) must not race the owner’s `schedule()` walking those lists—use an
+  (`list_del_init`, `add_*_to_manager`, `current_thread` updates) must not race
+  the owner’s `schedule()` walking those lists—use an
   explicit per-TM lock, run the detach on the **owner CPU** (IPI / work item),
   or prove the thread is never concurrently scheduled. **Check:** does teardown
   run on the same CPU as `thread->tm` / `task->tm`?
@@ -229,7 +229,7 @@ When a new bug pattern appears during review/debug:
 
 1. Update this checklist in the same commit.
 2. Append a new pattern entry in this file.
-3. Append a short change summary in `ASSIST_HISTORY.md`.
+3. Append a short change summary in `doc/ai/ASSIST_HISTORY.md`.
 4. Review is not complete unless steps 1-3 are done.
 
 ---

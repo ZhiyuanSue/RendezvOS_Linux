@@ -78,8 +78,8 @@ If a change breaks or modifies an invariant, update this file in the same commit
   point at the manager that owns `sched_thread_list` / `sched_task_list` for
   that thread/task.
 - `schedule()` walks `sched_thread_list` without a lock. Any path that
-  **removes** a thread/task from those lists or mutates `current_thread` /
-  `current_task` must not run concurrently with the **owner CPU’s** scheduler
+  **removes** a thread/task from those lists or mutates `current_thread` must
+  not run concurrently with the **owner CPU’s** scheduler
   on the same lists—unless a dedicated lock or owner-CPU-only execution is
   established.
 - Default `sys_exit` sends cleanup work to **global clean server port** (looked up
@@ -97,6 +97,18 @@ If a change breaks or modifies an invariant, update this file in the same commit
 
 - **No freed nodes in traversable structures:** before freeing an object, it must
   be detached from any list/ring/queue that other code may traverse.
+
+- **`current_thread` / `belong_tcb` / vspace:** The runnable identity is
+  `current_thread`; the logical task is **`get_cpu_current_task()`** =
+  `current_thread->belong_tcb` when set, else `root_task` (covers threads
+  detached from a task but still current briefly). There is no separate
+  `Task_Manager::current_task` field. After each successful switch to a
+  **user** thread, `schedule` updates CR3 / `current_vspace` when
+  `prev_tcb != next_tcb`; when the **next** thread is **kernel-only**, if the
+  **previous** thread was user, drop the active vspace ref and point
+  `current_vspace` at `root_vspace`. Without dropping user vspace on kernel
+  idle, kernel code can keep a user CR3. `gen_thread_from_func` attaches new
+  kernel threads to `root_task` when present, else `get_cpu_current_task()`.
 
 - **User `VS_Common` teardown vs SMP (CR3 / `current_vspace`):** `delete_task` may
   call `del_vspace`, which tears down page tables. No CPU may still execute with

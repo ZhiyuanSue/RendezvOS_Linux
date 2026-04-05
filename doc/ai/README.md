@@ -1,6 +1,6 @@
 # AI Collaboration Docs
 
-This folder stores persistent AI collaboration artifacts for the whole repository.
+This folder stores persistent AI collaboration artifacts for the whole repository (under `doc/ai/`).
 
 **Discovery:** the repo root `AGENTS.md` points Cursor Agent here; keep that file short and link-focused so this folder stays canonical.
 
