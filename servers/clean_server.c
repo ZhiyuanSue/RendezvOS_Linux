@@ -1,36 +1,45 @@
 #include <modules/log/log.h>
 #include <common/types.h>
+#include <rendezvos/ipc/ipc_serial.h>
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/initcall.h>
-#include <rendezvos/task/ipc.h>
-#include <rendezvos/task/message.h>
-#include <rendezvos/task/port.h>
+#include <rendezvos/ipc/ipc.h>
+#include <rendezvos/ipc/kmsg.h>
+#include <rendezvos/ipc/message.h>
+#include <rendezvos/ipc/port.h>
 #include <rendezvos/task/tcb.h>
 #include <rendezvos/task/thread_loader.h>
-
-typedef struct {
-        Thread_Base *thread;
-        i64 exit_code;
-} thread_exit_req_t;
 
 /* Per-CPU clean server thread pointers */
 DEFINE_PER_CPU(Thread_Base *, clean_server_thread_ptr);
 
 static char clean_server_thread_name[] = "clean_server_thread";
-static char clean_server_port_name[] = "clean_server_port";
+#define CLEAN_SERVER_PORT_NAME "clean_server_port"
+#define CLEAN_KMSG_FMT_THREAD_REAP "p q"
 
 static void clean_handle_message(Message_t *msg)
 {
         if (!msg || !msg->data)
                 return;
-        if (msg->data->msg_type != 1)
-                return;
-        thread_exit_req_t *req = (thread_exit_req_t *)msg->data->data;
-        if (!req || !req->thread)
+        const kmsg_t *km = kmsg_from_msg(msg);
+        if (!km || km->hdr.module != KMSG_MOD_CORE
+            || km->hdr.opcode != KMSG_OP_CORE_THREAD_REAP)
                 return;
 
-        Thread_Base *target = req->thread;
+        void *vthread;
+        i64 exit_code;
+        if (ipc_serial_decode(km->payload,
+                              km->hdr.payload_len,
+                              CLEAN_KMSG_FMT_THREAD_REAP,
+                              &vthread,
+                              &exit_code)
+            != REND_SUCCESS)
+                return;
+
+        Thread_Base *target = (Thread_Base *)vthread;
+        if (!target)
+                return;
         Thread_Base *curr = get_cpu_current_thread();
         if (target == curr)
                 return;
@@ -55,7 +64,7 @@ static void clean_handle_message(Message_t *msg)
                 (u64)percpu(cpu_number),
                 target->name ? target->name : "(unnamed)",
                 (u64)target->tid,
-                req->exit_code);
+                exit_code);
 
         Tcb_Base *task = target->belong_tcb;
         delete_thread(target);
@@ -95,7 +104,7 @@ void clean_server_thread(void)
 
         /* Lookup global clean server port via global table */
         while (!port) {
-                port = thread_lookup_port(clean_server_port_name);
+                port = thread_lookup_port(CLEAN_SERVER_PORT_NAME);
                 if (!port) {
                         /* Port not yet registered, sleep and retry */
                         schedule(percpu(core_tm));
@@ -114,7 +123,7 @@ void clean_server_thread(void)
                         port = NULL;
                         while (!port) {
                                 port = thread_lookup_port(
-                                        clean_server_port_name);
+                                        CLEAN_SERVER_PORT_NAME);
                                 if (!port) {
                                         schedule(percpu(core_tm));
                                         continue;
@@ -153,7 +162,7 @@ static void clean_server_init(void)
                         return;
                 }
                 Message_Port_t *port =
-                        create_message_port(clean_server_port_name);
+                        create_message_port(CLEAN_SERVER_PORT_NAME);
                 if (!port) {
                         pr_error(
                                 "[clean_server] failed to create message port\n");

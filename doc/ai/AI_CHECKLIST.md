@@ -343,3 +343,21 @@ When a new bug pattern appears during review/debug:
   same queue lifetime; prefer one shared drain helper. The MSQ dummy’s final
   `ref_put` happens inside `msq_dequeue`’s empty-queue path—do not `ref_put` the
   dummy again in a “delete dummy” tail. Checklist: §3 + §6.
+
+- 2026-04: **`kmsg_t` wire length vs flexible array:** use
+  `offsetof(kmsg_t, payload)` for the header-prefix size when allocating,
+  passing `data_len` to `create_message_data`, and validating
+  `payload_len` in `kmsg_from_msg`; do not assume `sizeof(kmsg_t)` equals that
+  prefix on all toolchains. Slim header has no `version` field: changing
+  `kmsg_hdr_t` requires bumping `KMSG_MAGIC` and updating all encoders/decoders.
+  Checklist: §7 + `doc/ai/IPC_MESSAGE.md`.
+
+- 2026-04: **IPC serialization format vs `va_list`:** pack and unpack must use the same
+  format string and argument types/order; mismatches are undefined behavior (like
+  `printf`). Prefer one shared `fmt` literal per `(module, opcode)` for client
+  and server. Checklist: §7 + `doc/ai/IPC_MESSAGE.md`.
+
+- 2026-04: **`kmsg` payload entry point:** use `kmsg_create(module, opcode, fmt,
+  ...)` only; it uses `ipc_serial_measure_va` + `ipc_serial_encode_into_va` into the
+  allocated `kmsg` (no extra TLV allocation + copy). Checklist: §7 +
+  `doc/ai/IPC_MESSAGE.md`.

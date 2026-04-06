@@ -8,3 +8,4 @@ build/
 core/build/
 user_payload/
 *.log
+__pycache__/

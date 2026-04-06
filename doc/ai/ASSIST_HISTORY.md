@@ -45,12 +45,12 @@ Append one entry for each user-approved commit.
 
 ## 2026-04-01 | ipc/lifetime: refcount symmetry + exit intent flag + teardown hardening | commit c030dc8
 
-- Scope: IPC request lifetime (`core/kernel/task/ipc.c`, `core/include/rendezvos/task/ipc.h`);
+- Scope: IPC request lifetime (`core/kernel/ipc/ipc.c`, `core/include/rendezvos/ipc/ipc.h`);
   exit/clean server (`linux_layer/syscall/thread_syscall.c`, `servers/clean_server.c`,
   scheduler `core/kernel/task/task_manager.c`, `core/include/rendezvos/task/tcb.h`);
   thread final free (`core/kernel/task/thread.c`, `core/kernel/task/tcb.c`,
   `core/include/common/dsa/list.h`); MSQ teardown (`core/include/common/dsa/ms_queue.h`,
-  `core/kernel/task/message.c`); port teardown (`core/kernel/task/port.c`).
+  `core/kernel/ipc/message.c`); port teardown (`core/kernel/ipc/port.c`).
 - Why: Fix a major refcount asymmetry (IPC request held `Thread_Base*` but only ref_put on free),
   prevent cross-CPU reaper deleting a still-executing thread (exit intent overwritten by IPC),
   and ensure last-ref free paths drain owned resources + defensively unlink from lists.
@@ -244,8 +244,8 @@ Append one entry for each user-approved commit.
 
 ## 2026-03-20 | Port table slots hardening | commit <pending>
 
-- Scope: `core/kernel/task/port_table_slots.c`, `core/kernel/task/port.c`,
-  `core/include/rendezvos/task/port.h`, `core/include/rendezvos/task/tcb.h`,
+- Scope: `core/kernel/ipc/port_table_slots.c`, `core/kernel/ipc/port.c`,
+  `core/include/rendezvos/ipc/port.h`, `core/include/rendezvos/task/tcb.h`,
   `core/kernel/task/thread.c`.
 - Why: stabilize slot+hash backend, tighten lifecycle/teardown safety, improve cache memory/use pattern.
 - Design decision(s):
