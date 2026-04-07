@@ -18,12 +18,14 @@ static char clean_server_thread_name[] = "clean_server_thread";
 #define CLEAN_SERVER_PORT_NAME "clean_server_port"
 #define CLEAN_KMSG_FMT_THREAD_REAP "p q"
 
+static u16 clean_server_service_id;
+
 static void clean_handle_message(Message_t *msg)
 {
         if (!msg || !msg->data)
                 return;
         const kmsg_t *km = kmsg_from_msg(msg);
-        if (!km || km->hdr.module != KMSG_MOD_CORE
+        if (!km || km->hdr.module != clean_server_service_id
             || km->hdr.opcode != KMSG_OP_CORE_THREAD_REAP)
                 return;
 
@@ -169,12 +171,21 @@ static void clean_server_init(void)
                         return;
                 }
 
+                clean_server_service_id = port->service_id;
                 error_t err = register_port(global_port_table, port);
                 if (err) {
                         pr_error("[clean_server] failed to register port: %d\n",
                                  (int)err);
                         delete_message_port_structure(port);
                         return;
+                }
+        }
+
+        if (clean_server_service_id == 0) {
+                Message_Port_t* p = thread_lookup_port(CLEAN_SERVER_PORT_NAME);
+                if (p) {
+                        clean_server_service_id = p->service_id;
+                        ref_put(&p->refcount, free_message_port_ref);
                 }
         }
 

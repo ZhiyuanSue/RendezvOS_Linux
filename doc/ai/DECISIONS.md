@@ -13,6 +13,14 @@ Format: Context / Decision / Consequences.
   - simpler hot lookup path and token-based cache resolve.
   - requires careful rehash rollback discipline and teardown handling.
 
+## 2026-04 | Generic string-keyed index named `name_index` (not “named_slot_table”)
+
+- Context: the reusable backend is “index string name → stored value (+ row generation for cache tokens)”; the old name sounded like an implementation detail (“slot”) rather than the role.
+- Decision: expose it as `name_index` (`name_index_t`, `name_index_token_t` with `row_index` / `row_gen`); port table embeds `name_index_t by_name`.
+- Consequences:
+  - clearer mental model at call sites; internal storage remains a row array + open-addressing hash.
+  - `name_index_token_t` stays as a typedef alias for `name_index_token_t` (IPC-facing name unchanged).
+
 ## 2026-03 | Thread cache stores hash + token, no name copy
 
 - Context: avoid duplicate string compare/storage in thread cache entries.

@@ -38,7 +38,7 @@ void sys_exit(i64 exit_code)
                 goto out;
         }
 
-        Msg_Data_t* md = kmsg_create(KMSG_MOD_CORE,
+        Msg_Data_t* md = kmsg_create(port->service_id,
                                      KMSG_OP_CORE_THREAD_REAP,
                                      CLEAN_KMSG_FMT_THREAD_REAP,
                                      self,

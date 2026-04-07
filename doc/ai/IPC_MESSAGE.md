@@ -12,7 +12,7 @@ This repository uses in-kernel server threads that communicate via the lock-free
 Header (`kmsg_hdr_t`) — slim, no in-band version field (layout changes bump `KMSG_MAGIC` and all producers/consumers together):
 
 - `magic`: `KMSG_MAGIC` (`0x47534d4c`, ASCII `LMSG` in little-endian byte order) — distinguishes this wire shape from older experiments.
-- `module`: subsystem id (e.g. `KMSG_MOD_CORE`)
+- `module`: **service id** bound to the destination `Message_Port_t` (fast validation only)
 - `opcode`: operation within that module (e.g. `KMSG_OP_CORE_THREAD_REAP`)
 - `payload_len`: bytes of TLV payload after the fixed header prefix (`offsetof(kmsg_t, payload)` through end of buffer)
 
@@ -61,7 +61,7 @@ Today, many paths are **one-way** (e.g. clean server reaps a thread; no reply `M
 
 **Alternatives to negotiate later:**
 
-- **Slot token** (`port_table_slot_token_t`): compact, but `port_table_resolve_token` still needs the **name** for validation today — so a token-only wire format would require API or table changes.
+- **Cache token** (`name_index_token_t`, alias of `name_index_token_t`): compact, but `port_table_resolve_token` still needs the **name** for validation today — so a token-only wire format would require API or table changes.
 - **Opaque `Message_Port_t*` in TLV**: forbidden as a stable wire type across address spaces / reboots; names or tokens are safer.
 
 **Complexity note:** reply correlation (request id), back-pressure, cancellation, and “which thread holds the reply port” need explicit rules; this doc only fixes the **payload envelope** and the **`t`** hook. Implement reply flows incrementally when you add a concrete opcode that needs them.
@@ -79,10 +79,15 @@ Today, many paths are **one-way** (e.g. clean server reaps a thread; no reply `M
 
 ## Call-site façade (clean server)
 
-- Current call site is in `linux_layer/syscall/thread_syscall.c` (`sys_exit`): it looks up the clean server port by name and sends a `kmsg_create(KMSG_MOD_CORE, KMSG_OP_CORE_THREAD_REAP, "p q", thread, exit_code)`.\n+- Server: `kmsg_from_msg` + `ipc_serial_decode(..., "p q", ...)`.
+- Current call site is in `linux_layer/syscall/thread_syscall.c` (`sys_exit`): it looks up the clean server port by name, then sends `kmsg_create(port->service_id, KMSG_OP_CORE_THREAD_REAP, "p q", thread, exit_code)` (`service_id` is bound to the port; see below).
+- Server: `clean_handle_message` checks `km->hdr.module == clean_server_service_id` (cached from the registered port) before decoding.
 
 ## Init and layering
 
 - Servers are registered via `DEFINE_INIT` and are started by `do_init_call()`.
 - On SMP systems, `do_init_call()` is executed on the BSP and on every secondary CPU.
 - A server init function must decide what is BSP-only (e.g., registering one global port) and what is per-CPU (e.g., spawning one worker thread).
+
+## Service id and port name binding
+
+Discovery/routing uses the **port name string** (global port table lookup). For fast “is this for me?” validation, each `Message_Port_t` also carries a `u16 service_id` derived from its name. Senders set `kmsg_hdr.module = port->service_id` after resolving the destination port; receivers compare `hdr.module` against their own `port->service_id` (or a cached copy).

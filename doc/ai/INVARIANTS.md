@@ -3,15 +3,15 @@
 Keep this file short and operational.
 If a change breaks or modifies an invariant, update this file in the same commit.
 
-## Port Table / Slots
+## Port table / name index
 
-- `Port_Table.lock` protects all table mutations (`slots`, `ht`, `live_ports`, freelist).
-- `port_slots_lookup/resolve` success returns with one valid ref (`ref_get_not_zero`).
-- `port_slots_free_slot` must bump `slot.gen` before slot reuse.
+- `Port_Table.by_name.lock` protects all index mutations (`rows`, `ht`, `live`, freelist).
+- `port_table_lookup` / `port_table_resolve_token` success returns with one valid ref (`ref_get_not_zero`).
+- Row reuse must bump `row.gen` before the row is recycled.
 - Freelist empty sentinel must be type-consistent with `free_head` (`u64`).
-- Token invalidation must be type-consistent with `port_table_slot_token_t.slot_index` (`u32`).
-- `unregister` path must: remove hash mapping, unlink port, clear slot, decrement live count, free slot.
-- `fini` must not leave registered ports silently alive.
+- Token invalidation must be type-consistent with `name_index_token_t` / `name_index_token_t` (`row_index` is `u32`).
+- `unregister` path must: remove hash mapping, unlink value, clear row, decrement live count, recycle row.
+- `name_index_fini` must not leave registered values silently alive.
 - Rehash must be two-phase: build new table fully, then swap.
 
 ## Thread Port Cache
