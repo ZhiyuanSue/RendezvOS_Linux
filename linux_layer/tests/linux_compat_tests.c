@@ -2,20 +2,17 @@
 #include <rendezvos/error.h>
 #include <rendezvos/task/initcall.h>
 
-#ifdef TEST
-extern int task_test(void);
-extern int elf_read_test(void);
-
-static void linux_compat_test_init(void)
+#ifdef LINUX_COMPAT_TEST
+/*
+ * linux compat user tests are driven by `linux_layer/tests/user_test_runner.c`.
+ *
+ * Keep this file as a placeholder for additional non-user tests, but do not
+ * spawn all apps from every CPU: initcalls run on all CPUs.
+ */
+static void linux_compat_test_placeholder(void)
 {
-        pr_info("[ Linux compat ] running payload tests\n");
-        if (elf_read_test() != REND_SUCCESS) {
-                pr_error("[ Linux compat ] elf_read_test failed\n");
-        }
-        if (task_test() != REND_SUCCESS) {
-                pr_error("[ Linux compat ] task_test failed\n");
-        }
+        pr_debug("[ Linux compat ] placeholder initcall\n");
 }
 
-DEFINE_INIT_LEVEL(linux_compat_test_init, 6);
+DEFINE_INIT_LEVEL(linux_compat_test_placeholder, 6);
 #endif

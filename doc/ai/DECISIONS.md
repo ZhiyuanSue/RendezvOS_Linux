@@ -5,6 +5,14 @@ Format: Context / Decision / Consequences.
 
 ---
 
+## 2026-04 | Stdout/stderr `write` shim without VFS
+
+- Context: User tests and minimal libc need `write` on fd 1/2 before an fd table and filesystem exist.
+- Decision: Implement `sys_write` in `linux_layer/io/sys_write.c` as a **console/UART backend** for fd 1 and 2 only; reserve future dispatch through a per-process fd table to real files (documented in `doc/linux_compat/STDIO_SHIM.md`).
+- Consequences: No `read`/stdin in this step; user pointer copy is not yet full `copy_from_user` (documented).
+
+---
+
 ## 2026-03 | Port table backend uses slots + open-addressing hash
 
 - Context: read-mostly IPC port lookup; RB-based path was removed.

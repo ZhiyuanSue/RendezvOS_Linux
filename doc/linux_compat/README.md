@@ -10,6 +10,8 @@
 | [`DATA_MODEL.md`](DATA_MODEL.md) | 进程/线程组、append 区、`pid`/`tid`、登记簿演进 |
 | [`MM_AND_COW.md`](MM_AND_COW.md) | nexus 作为虚存真源、COW、页故障、core 变更清单 |
 | [`SYSCALLS.md`](SYSCALLS.md) | **推荐实现顺序**、逐步文件/函数清单、独立 server 条目 |
+| [`STDIO_SHIM.md`](STDIO_SHIM.md) | **无 VFS 阶段**：`write(1|2, …)` 控制台 shim、与后续 fd 表/VFS 的衔接 |
+| [`USER_TESTS.md`](USER_TESTS.md) | 用户态 ELF 测例：single/smp 分层、case 同步边界、输出乱序期望 |
 
 ## 与仓库规范的关系
 

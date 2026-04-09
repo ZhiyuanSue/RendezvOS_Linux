@@ -75,3 +75,9 @@ out:
                 schedule(percpu(core_tm));
         }
 }
+
+void sys_exit_group(i64 exit_code)
+{
+        /* Single-thread world for now: exit_group == exit. */
+        sys_exit(exit_code);
+}

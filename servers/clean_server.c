@@ -10,6 +10,10 @@
 #include <rendezvos/ipc/port.h>
 #include <rendezvos/task/tcb.h>
 #include <rendezvos/task/thread_loader.h>
+#ifdef LINUX_COMPAT_TEST
+#include <linux_compat/proc_compat.h>
+#include <linux_compat/test_runner.h>
+#endif
 
 /* Per-CPU clean server thread pointers */
 DEFINE_PER_CPU(Thread_Base *, clean_server_thread_ptr);
@@ -67,6 +71,16 @@ static void clean_handle_message(Message_t *msg)
                 target->name ? target->name : "(unnamed)",
                 (u64)target->tid,
                 exit_code);
+
+#ifdef LINUX_COMPAT_TEST
+        /* Notify linux compat user test runner (if this was a test-managed user thread). */
+        linux_thread_append_t *ta = linux_thread_append(target);
+        if (ta && ta->test_cookie != 0 && target->tm) {
+                linux_user_test_notify_exit((i32)target->tm->owner_cpu,
+                                            ta->test_cookie,
+                                            exit_code);
+        }
+#endif
 
         Tcb_Base *task = target->belong_tcb;
         delete_thread(target);

@@ -14,6 +14,7 @@
 | 顺序 | 项 | 类型 |
 |------|-----|------|
 | 0 | 返回值约定 + 分发骨架 | 前置 |
+| 0a | `write`（fd 1/2 控制台 shim） | syscall（见 [`STDIO_SHIM.md`](STDIO_SHIM.md)，可与其他早期项并行） |
 | 1 | `getpid` | syscall |
 | 2 | `brk` | syscall |
 | 3 | `mmap`（匿名） | syscall |
@@ -53,6 +54,24 @@
 - （可选）`linux_syscall_dispatch(struct trap_frame *tf)` — 从 `switch` 中拆出便于测试。
 
 **注意**：[`thread_syscall.c`](../../linux_layer/syscall/thread_syscall.c) 中 `sys_exit` 当前末尾自旋 `schedule`；与 Step 0 的「单出口调度策略」需 **统一设计**（文档层先记矛盾，实现时合并）。
+
+---
+
+## Step 0a：`write`（`__NR_write`：x86_64 为 1，aarch64 为 64）
+
+**目的**：满足 libc/测例对 **stdout/stderr** 的最小输出；在 VFS 之前不实现普通文件与管道。
+
+**依赖**：Step 0（返回值写入 `ARCH_SYSCALL_RET`）。
+
+**文件**
+
+| 文件 | 改动 |
+|------|------|
+| [`linux_layer/io/sys_write.c`](../../linux_layer/io/sys_write.c) | `sys_write`：仅 fd `1`/`2`，内核缓冲区分块 `memcpy` 后输出 |
+| [`linux_layer/syscall/syscall_entry.c`](../../linux_layer/syscall/syscall_entry.c) | `case __NR_write:`；参数顺序与 [`trap.h`](../../core/include/arch/x86_64/trap/trap.h) 中 `ARCH_SYSCALL_ARG_*` 一致 |
+| [`include/syscall.h`](../../include/syscall.h) | 声明 `sys_write` |
+
+**设计说明**：[`STDIO_SHIM.md`](STDIO_SHIM.md)（后续 fd 表与 VFS 接入点）。
 
 ---
 

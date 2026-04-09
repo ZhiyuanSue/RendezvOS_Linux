@@ -8,6 +8,8 @@
 #include <arch/aarch64/syscall_ids.h>
 #elif defined _X86_64_
 #include <arch/x86_64/syscall_ids.h>
+#else
+#include <arch/x86_64/syscall_ids.h>
 #endif
 
 void init_syscall_entry();

@@ -1,0 +1,6 @@
+{
+  "use": true,
+  "features": [
+    "LINUX_COMPAT_TEST"
+  ]
+}

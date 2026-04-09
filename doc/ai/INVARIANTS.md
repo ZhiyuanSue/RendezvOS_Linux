@@ -44,6 +44,10 @@ If a change breaks or modifies an invariant, update this file in the same commit
 - `map` / `unmap` / `have_mapped` take a **table** `VS_Common*` (kernel
   `root_vspace` or user object from `new_vspace`), not the KERNEL_HEAP_REF
   wrapper.
+- **Kernel SMP:** mutations / walks of `root_vspace` page tables must hold
+  `root_vspace.vspace_lock` (MCS, taken inside `map`/`unmap`/`have_mapped` via
+  the per-CPU `map_handler` waiter node). `KERNEL_HEAP_REF.nexus_vspace_lock`
+  only protects that CPU’s kernel nexus RB tree/metadata.
 - `nexus_delete_vspace(nexus_root, vs)` and `nexus_migrate_vspace` take the
   **per-CPU** `nexus_root` that owns `_vspace_rb_root`, not a per-vspace node.
 
@@ -97,6 +101,20 @@ If a change breaks or modifies an invariant, update this file in the same commit
 
 - **No freed nodes in traversable structures:** before freeing an object, it must
   be detached from any list/ring/queue that other code may traverse.
+
+## Linux compatibility (syscall ABI)
+
+- **User-visible errno discipline:** syscalls implemented under `linux_layer/`
+  must not return RendezvOS internal error codes (e.g. `-E_RENDEZVOS == -1024`)
+  to userspace. Return **Linux errno** (negative) or a Linux-defined value
+  (e.g. `brk` returns new program break). Keep Linux errno constants in
+  `include/linux_compat/errno.h`.
+
+- **`write` before VFS:** Until a per-process fd table and VFS exist, `write`
+  may handle **only stdout/stderr** (fd `1` and `2`) via the console/UART shim
+  in `linux_layer/io/sys_write.c`. Other fds return `-EBADF`; do not hard-code
+  console output only inside `syscall_entry.c`—keep `sys_write` as the
+  extension point (see `doc/linux_compat/STDIO_SHIM.md`).
 
 - **`current_thread` / `belong_tcb` / vspace:** The runnable identity is
   `current_thread`; the logical task is **`get_cpu_current_task()`** =

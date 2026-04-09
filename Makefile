@@ -13,6 +13,7 @@ ROOT_OBJDUMP_LOG ?= $(ROOT_DIR)/objdump.log
 -include $(CORE_DIR)/Makefile.env
 -include $(CORE_DIR)/kernel/Makefile.env
 -include $(CORE_DIR)/arch/Makefile.env
+-include $(ROOT_DIR)/Makefile.root.env
 
 SMP ?= 4
 MEM_SIZE ?= 256M
@@ -58,6 +59,7 @@ root_dirs:
 config: mrproper root_dirs
 	@if [ -z "$(ARCH)" ]; then echo "ARCH is required, for example: make ARCH=x86_64 config"; exit 1; fi
 	@$(MAKE) -C $(CORE_DIR) config ARCH=$(ARCH) SMP=$(SMP) MEM_SIZE=$(MEM_SIZE) DBG=$(DBG)
+	@python3 $(SCRIPT_CONFIG_DIR)/root_features.py $(ROOT_DIR) $(SCRIPT_CONFIG_DIR)/root.json
 
 user: root_dirs
 	@if [ -z "$(ARCH)" ]; then echo "ARCH is required, for example: make ARCH=x86_64 user"; exit 1; fi
@@ -122,4 +124,4 @@ mrproper:
 $(ROOT_OBJ_DIR)/%.o: $(ROOT_DIR)/%.c
 	@mkdir -p $(dir $@)
 	@echo "CC	" $@
-	@$(CC) $(CFLAGS) $(ROOT_COMMON_CFLAGS) -c $< -o $@
+	@$(CC) $(CFLAGS) $(ROOT_COMMON_CFLAGS) $(ROOT_EXTRA_CFLAGS) -c $< -o $@
