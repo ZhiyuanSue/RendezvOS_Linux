@@ -34,7 +34,8 @@ void syscall(struct trap_frame *syscall_ctx)
                                 (u64)syscall_ctx->ARCH_SYSCALL_ARG_3);
                 break;
         default:
-                /* Default policy: kill the calling thread to force visibility. */
+                /* Default policy: kill the calling thread to force visibility.
+                 */
                 if (curr) {
                         pr_error("[syscall] unimplemented id=%lu arg1=%lu\n",
                                  (u64)syscall_id,

@@ -16,4 +16,3 @@
 void linux_user_test_notify_exit(i32 owner_cpu, u64 cookie, i64 exit_code);
 
 #endif
-

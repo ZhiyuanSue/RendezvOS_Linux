@@ -8,12 +8,12 @@
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/tcb.h>
 
-#define CLEAN_SERVER_PORT_NAME "clean_server_port"
+#define CLEAN_SERVER_PORT_NAME     "clean_server_port"
 #define CLEAN_KMSG_FMT_THREAD_REAP "p q"
 
 void sys_exit(i64 exit_code)
 {
-        Thread_Base *self = get_cpu_current_thread();
+        Thread_Base* self = get_cpu_current_thread();
 
         if (!self)
                 goto out;

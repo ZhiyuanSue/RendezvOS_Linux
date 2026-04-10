@@ -5,7 +5,8 @@
 #include <modules/log/log.h>
 #include <rendezvos/task/tcb.h>
 
-void *linux_elf_init_handler(Arch_Task_Context *ctx, const elf_load_info_t *info)
+void *linux_elf_init_handler(Arch_Task_Context *ctx,
+                             const elf_load_info_t *info)
 {
         (void)ctx;
         if (!info)
@@ -27,4 +28,3 @@ void *linux_elf_init_handler(Arch_Task_Context *ctx, const elf_load_info_t *info
         pa->start_brk = brk0;
         return NULL;
 }
-

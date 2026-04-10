@@ -42,8 +42,7 @@
 #define LINUX_EPIPE   32
 #define LINUX_ERANGE  34
 
-#define LINUX_ESRCH   3
-#define LINUX_ENOSYS  38
+#define LINUX_ESRCH  3
+#define LINUX_ENOSYS 38
 
 #endif
-

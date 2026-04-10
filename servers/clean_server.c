@@ -19,7 +19,7 @@
 DEFINE_PER_CPU(Thread_Base *, clean_server_thread_ptr);
 
 static char clean_server_thread_name[] = "clean_server_thread";
-#define CLEAN_SERVER_PORT_NAME "clean_server_port"
+#define CLEAN_SERVER_PORT_NAME     "clean_server_port"
 #define CLEAN_KMSG_FMT_THREAD_REAP "p q"
 
 static u16 clean_server_service_id;
@@ -66,19 +66,20 @@ static void clean_handle_message(Message_t *msg)
         }
 
         /* Debug output: show which thread is being cleaned up on which core */
-        pr_debug("[clean_server] CPU %lu: cleaning up thread %s (tid=%lu, exit_code=%ld)\n",
+        pr_debug(
+                "[clean_server] CPU %lu: cleaning up thread %s (tid=%lu, exit_code=%ld)\n",
                 (u64)percpu(cpu_number),
                 target->name ? target->name : "(unnamed)",
                 (u64)target->tid,
                 exit_code);
 
 #ifdef LINUX_COMPAT_TEST
-        /* Notify linux compat user test runner (if this was a test-managed user thread). */
+        /* Notify linux compat user test runner (if this was a test-managed user
+         * thread). */
         linux_thread_append_t *ta = linux_thread_append(target);
         if (ta && ta->test_cookie != 0 && target->tm) {
-                linux_user_test_notify_exit((i32)target->tm->owner_cpu,
-                                            ta->test_cookie,
-                                            exit_code);
+                linux_user_test_notify_exit(
+                        (i32)target->tm->owner_cpu, ta->test_cookie, exit_code);
         }
 #endif
 
@@ -92,13 +93,13 @@ static void clean_handle_message(Message_t *msg)
         }
         if (task && task_empty) {
                 /*
-                         * Active refcount teardown is expected to be safe:
-                         * `schedule()` switches hardware roots (CR3/TTBR0) on context
-                         * switches, so by the time this task is empty (all threads
-                         * removed and thread marked ZOMBIE), this CPU should have
-                         * dropped its active ref to the user vspace. Other CPUs
-                         * follow their own schedule switches and the vspace is
-                         * freed only on the last ref.
+                 * Active refcount teardown is expected to be safe:
+                 * `schedule()` switches hardware roots (CR3/TTBR0) on context
+                 * switches, so by the time this task is empty (all threads
+                 * removed and thread marked ZOMBIE), this CPU should have
+                 * dropped its active ref to the user vspace. Other CPUs
+                 * follow their own schedule switches and the vspace is
+                 * freed only on the last ref.
                  */
                 if (task->vs == &root_vspace) {
                         pr_error(
@@ -196,7 +197,7 @@ static void clean_server_init(void)
         }
 
         if (clean_server_service_id == 0) {
-                Message_Port_t* p = thread_lookup_port(CLEAN_SERVER_PORT_NAME);
+                Message_Port_t *p = thread_lookup_port(CLEAN_SERVER_PORT_NAME);
                 if (p) {
                         clean_server_service_id = p->service_id;
                         ref_put(&p->refcount, free_message_port_ref);

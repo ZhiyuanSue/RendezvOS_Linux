@@ -19,7 +19,8 @@ typedef struct linux_proc_append {
 } linux_proc_append_t;
 
 typedef struct linux_thread_append {
-        u64 clear_tid; /* user pointer for set_tid_address/CLONE_CHILD_CLEARTID */
+        u64 clear_tid; /* user pointer for set_tid_address/CLONE_CHILD_CLEARTID
+                        */
         /*
          * Test runner cookie (TEST only): set by the linux compat test runner
          * to correlate thread exit with a waiting kernel runner thread.
@@ -47,4 +48,3 @@ static inline linux_thread_append_t* linux_thread_append(Thread_Base* thread)
 }
 
 #endif
-

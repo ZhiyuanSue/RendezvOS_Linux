@@ -28,4 +28,3 @@ u64 sys_brk(u64 new_brk)
         pa->brk = new_brk;
         return pa->brk;
 }
-

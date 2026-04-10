@@ -36,11 +36,12 @@ If a change breaks or modifies an invariant, update this file in the same commit
   struct: `type` (`enum vs_common_kind` as `u64`) + **anonymous** union (C11:
   members lifted to `VS_Common`). **Kernel heap ref:** `vs` points at the shared
   root `VS_Common` (table branch), `cpu_id` is the allocating CPU for kmem
-  routing. **User / table branch:** `vspace_root_addr`, locks, `_vspace_node`
-  (same union storage; never interpret without `type`).
+  routing. **Table vspace:** `vspace_root_addr`, locks, `_vspace_node` (kernel
+  `root_vspace` and per-task roots from `new_vspace()`; same union storage;
+  never interpret without `type`).
   Never infer role from pointer truthiness. Per-CPU `nexus_kernel_heap_vs_common`
-  holds the kernel-heap ref object; `new_vspace` returns a heap `VS_Common*`
-  with `type == USER_VSPACE`, freed whole in `del_vspace`.
+  is `KERNEL_HEAP_REF`. `new_vspace` returns `VS_COMMON_TABLE_VSPACE`, freed in
+  `del_vspace`.
 - `map` / `unmap` / `have_mapped` take a **table** `VS_Common*` (kernel
   `root_vspace` or user object from `new_vspace`), not the KERNEL_HEAP_REF
   wrapper.

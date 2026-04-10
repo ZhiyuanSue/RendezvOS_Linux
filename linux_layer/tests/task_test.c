@@ -22,13 +22,12 @@ int task_test(void)
                 u64 app_start = *(app_start_ptr);
                 u64 app_end = *(app_end_ptr);
 
-                error_t e =
-                        gen_task_from_elf(NULL,
-                                          LINUX_PROC_APPEND_BYTES,
-                                          LINUX_THREAD_APPEND_BYTES,
-                                          app_start,
-                                          app_end,
-                                          linux_elf_init_handler);
+                error_t e = gen_task_from_elf(NULL,
+                                              LINUX_PROC_APPEND_BYTES,
+                                              LINUX_THREAD_APPEND_BYTES,
+                                              app_start,
+                                              app_end,
+                                              linux_elf_init_handler);
                 if (e)
                         continue;
         }

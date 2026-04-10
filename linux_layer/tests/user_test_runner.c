@@ -224,4 +224,3 @@ static void linux_user_test_runner_init(void)
 DEFINE_INIT_LEVEL(linux_user_test_runner_init, 6);
 
 #endif
-

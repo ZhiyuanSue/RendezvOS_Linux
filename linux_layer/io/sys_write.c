@@ -19,8 +19,8 @@
  * stay wired to this backend.
  */
 
-#define LINUX_WRITE_MAX_CHUNK  (4096u)
-#define LINUX_WRITE_TOTAL_CAP  (0x100000u) /* 1 MiB per syscall */
+#define LINUX_WRITE_MAX_CHUNK (4096u)
+#define LINUX_WRITE_TOTAL_CAP (0x100000u) /* 1 MiB per syscall */
 
 static bool user_buf_range_ok(u64 user_buf, u64 count)
 {

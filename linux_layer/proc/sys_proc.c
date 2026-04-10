@@ -10,4 +10,3 @@ i64 sys_getpid(void)
                 return -(i64)LINUX_ESRCH;
         return (i64)t->pid;
 }
-
