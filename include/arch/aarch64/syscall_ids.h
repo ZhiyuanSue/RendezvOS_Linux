@@ -178,6 +178,9 @@
 #define __NR_getegid                 177
 #define __NR_gettid                  178
 #define __NR_sysinfo                 179
+#define __NR_fork                    220  /* Use clone syscall on aarch64 */
+#define __NR_vfork                   221  /* Use clone syscall on aarch64 */
+#define __NR_getppid                 173
 #define __NR_mq_open                 180
 #define __NR_mq_unlink               181
 #define __NR_mq_timedsend            182

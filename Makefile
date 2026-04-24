@@ -38,6 +38,7 @@ ROOT_COMMON_CFLAGS += -I $(ROOT_DIR)/include -I $(CORE_DIR)/include
 
 CORE_BUILD_ARGS := ARCH=$(ARCH) SMP=$(SMP) MEM_SIZE=$(MEM_SIZE) DBG=$(DBG) DUMP=$(DUMP)
 CORE_BUILD_ARGS += EXTRA_OBJECTS="$(ROOT_EXTRA_OBJECTS)"
+CORE_BUILD_ARGS += OVERRIDE_CFLAGS="$(CORE_OVERRIDE_CFLAGS)"
 CORE_BUILD_ARGS += QEMU_LOG="$(ROOT_QEMU_LOG)"
 CORE_BUILD_ARGS += DUMPFILE="$(ROOT_OBJDUMP_LOG)"
 CORE_CONFIG_ARCH := $(shell if [ -f "$(CORE_DIR)/Makefile.env" ]; then awk -F ':=[[:space:]]*' '/^ARCH[[:space:]]*:=/{print $$2; exit}' "$(CORE_DIR)/Makefile.env"; fi)
@@ -59,12 +60,15 @@ root_dirs:
 config: mrproper root_dirs
 	@if [ -z "$(ARCH)" ]; then echo "ARCH is required, for example: make ARCH=x86_64 config"; exit 1; fi
 	@$(MAKE) -C $(CORE_DIR) config ARCH=$(ARCH) SMP=$(SMP) MEM_SIZE=$(MEM_SIZE) DBG=$(DBG)
-	@python3 $(SCRIPT_CONFIG_DIR)/root_features.py $(ROOT_DIR) $(SCRIPT_CONFIG_DIR)/root.json
+	@python3 $(SCRIPT_CONFIG_DIR)/configure_root.py $(ROOT_DIR) $(ARCH)
+	@python3 $(CORE_DIR)/script/config/config_summary.py $(CORE_DIR) $(ROOT_BUILD_DIR) $(ROOT_DIR)/Makefile.root.env >/dev/null
 
 user: root_dirs
 	@if [ -z "$(ARCH)" ]; then echo "ARCH is required, for example: make ARCH=x86_64 user"; exit 1; fi
 	@export RENDEZVOS_USER_SKIP_GIT="$(USER_SKIP_GIT)"; \
 	python3 $(SCRIPT_CONFIG_DIR)/user.py $(ARCH) $(ROOT_DIR) $(SCRIPT_CONFIG_DIR)/user.json
+	@cp user_payload/link_app.o $(ROOT_USER_OBJECT)
+	@echo "$(ARCH)" > $(ROOT_USER_ARCH_FILE)
 	@echo "User payload generated at $(ROOT_USER_OBJECT)"
 
 have_user_payload:
@@ -99,7 +103,7 @@ run: build
 	@$(MAKE) -C $(CORE_DIR) run $(CORE_BUILD_ARGS)
 
 show_config:
-	@$(MAKE) -C $(CORE_DIR) show_config ARCH=$(ARCH) SMP=$(SMP) MEM_SIZE=$(MEM_SIZE) DBG=$(DBG)
+	@ARCH=$(ARCH) ./show_config.sh
 
 fmt:
 	@if ! command -v clang-format >/dev/null 2>&1; then echo "clang-format not found"; exit 1; fi

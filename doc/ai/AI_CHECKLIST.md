@@ -1,7 +1,8 @@
 # AI Change Checklist (Repository-wide)
 
-This checklist is for AI-assisted code changes in this repository.
-Primary target: prevent hidden regressions in concurrency, lifetime, teardown, and failure paths.
+This checklist provides **abstract patterns** for AI-assisted code changes in this repository.
+**Primary target**: prevent hidden regressions in concurrency, lifetime, teardown, and failure paths.
+**Philosophy**: prefer general patterns over specific rules; examples illustrate patterns but don't define them.
 
 ## Required Output Per Change
 
@@ -42,93 +43,60 @@ If any section is missing, review is incomplete.
 
 ### 1) Data Structure Invariants
 
-- [ ] State fields have clear meaning (`used`, `gen`, `free_head`, `live_count`).
-- [ ] Sentinel values are type-consistent (`U64_MAX` for `u64` index invalid).
-- [ ] **Unions:** only one member is active at a time; assigning member B after
-  member A overwrites A (same address). Do not write a “cleanup” or NULL to a
-  second member after setting the intended member unless that is deliberately
-  switching the active member.
-- [ ] **Union of same-width pointers:** two `void*`/`uintptr_t`-sized fields in a
-  union cannot be distinguished by “is non-NULL?” — both roles use non-NULL
-  addresses. Use an explicit tag bit, enum, or separate field.
-- [ ] **Named sentinels:** API return values that mean “invalid / not found”
-  (e.g. owner id, queue dummy marker) use a **macro or enum** in a public header;
-  call sites must not compare against undocumented numeric literals (`-1`, `0`, …).
-- [ ] Sentinel/constant names match their actual semantics (e.g., `free_head`
-  sentinel is not reused as token/cache invalidation).
-- [ ] Capacity/index arithmetic has overflow checks before allocation math.
-- [ ] Token/cached handle invalidation is explicit (e.g., generation bump on free).
+- [ ] **State clarity**: State fields have clear, single-purpose meanings.
+- [ ] **Type consistency**: Sentinel values match their type's width and semantics.
+- [ ] **Union discipline**: Only one union member is active at a time; assigning one member overwrites others. Use explicit tags or enums when union members need disambiguation.
+- [ ] **Named constants**: Use named constants/macros for sentinel values; avoid undocumented numeric literals.
+- [ ] **Overflow safety**: Capacity/index arithmetic has overflow checks before allocation.
+- [ ] **Lifetime validity**: Token/cached handle invalidation is explicit on reuse or teardown.
 
 ### 2) Concurrency and Locking
 
-- [ ] Shared mutations happen under the intended lock.
-- [ ] Lock order is unchanged or explicitly documented when changed.
-- [ ] No lockless access assumes stability unless guaranteed by design.
-- [ ] Potentially heavy free paths run outside lock when possible.
-- [ ] **Multiple inbound work queues** (e.g. cross-CPU completion / MSQ pairs on one
-  CPU): if only one queue is drained from allocation/free hot paths, the other
-  can **starve**. Prefer one documented drain entry (fixed order or fair batching)
-  so all queues make progress under skewed load.
-- [ ] **Per-CPU scheduler / `Task_Manager` lists:** `sched_thread_list` /
-  `sched_task_list` are owned by one CPU’s `Task_Manager`. Mutations
-  (`list_del_init`, `add_*_to_manager`, `current_thread` updates) must not race
-  the owner’s `schedule()` walking those lists—use an
-  explicit per-TM lock, run the detach on the **owner CPU** (IPI / work item),
-  or prove the thread is never concurrently scheduled. **Check:** does teardown
-  run on the same CPU as `thread->tm` / `task->tm`?
-- [ ] **MCS lock `me` pointer:** for `lock_mcs` / `unlock_mcs`, the second
-  argument is the **per-acquirer** waiter node (see `spin_lock.h`). It must be
-  `percpu(...)` on the executing CPU, not `per_cpu(..., handler->cpu_id)` or
-  any other CPU’s per-CPU slot.
+- [ ] **Mutations under lock**: Shared mutations happen under the intended lock.
+- [ ] **Lock order consistency**: Lock order is unchanged or explicitly documented.
+- [ ] **Lockless access safety**: No lockless access assumes stability without design guarantees.
+- [ ] **Heavy operations outside lock**: Potentially expensive operations run outside locks when possible.
+- [ ] **Multi-queue fairness**: When multiple queues feed the same consumer, ensure all queues make progress (avoid starvation).
+- [ ] **Per-CPU ownership**: Mutations to per-CPU data structures must synchronize with the owner CPU.
+- [ ] **Lock API correctness**: Use lock APIs correctly (e.g., MCS lock waiter node must be per-acquirer, not shared).
+
+**Key principle**: Identify ownership (CPU, lock, component) before concurrent operations.
 
 ### 3) Refcount and Lifetime
 
-- [ ] Lookup/resolve acquires a valid ref on success.
-- [ ] Remove/unregister drops ownership ref exactly once.
-- [ ] Destroy/fini does not silently leak live objects.
-- [ ] Final free path does not mutate index structures unexpectedly.
-- [ ] **Wrapper holds pointer:** if a wrapper stores `T*` and its finalizer does
-  `ref_put(T)`, then the bind/constructor path must `ref_get_not_zero(T)` before
-  publishing that pointer (symmetry); on ref_get failure, fail-fast without
-  publishing a half-initialized wrapper.
-- [ ] **Last-ref rule:** owned heap resources (queues, buffers, stacks) must be
-  drained/freed only on the **last ref** path, or the API must be explicitly
-  queue-aware/guarded so calling teardown twice is safe.
+- [ ] **Symmetry**: Lookup acquires ref, remove drops ref, destroy/fini doesn't leak.
+- [ ] **Wrapper consistency**: If a wrapper holds a reference, constructor must acquire it before publishing; finalizer must release it.
+- [ ] **Last-ref ownership**: Owned resources are freed only on the last ref, or API must handle multiple teardowns safely.
+- [ ] **Structural isolation**: Before freeing an object, ensure it's detached from traversable structures.
+
+**Key principle**: Reference counting requires symmetric acquire/release and clear ownership semantics.
 
 ### 4) Failure and Rollback
 
-- [ ] Every allocation failure has deterministic behavior.
-- [ ] Partial updates are fully rolled back or fully committed.
-- [ ] Rehash/grow uses two-phase commit:
-  - build new structure first
-  - swap pointers only after full success
-- [ ] On failure, old structure remains valid and unchanged.
+- [ ] **Deterministic failure**: Every failure path has deterministic, documented behavior.
+- [ ] **Atomic updates**: Partial updates are either fully rolled back or fully committed (no inconsistent intermediate states).
+- [ ] **Two-phase commits**: For complex state changes, build new state first, then atomically swap.
+- [ ] **Failure safety**: On failure, pre-existing state remains valid and unchanged.
+
+**Key principle**: Failures should never leave the system in an inconsistent or unrecoverable state.
 
 ### 5) Lookup/Cache Correctness
 
-- [ ] Hash collision cannot cause false-positive return.
-- [ ] Hash collision cannot cause false-negative early return.
-- [ ] Stale token/generation mismatch invalidates cache entry correctly.
-- [ ] Cache replacement/eviction keeps occupancy/count consistent.
+- [ ] **Collision safety**: Hash or key collisions cannot cause false positives/negatives.
+- [ ] **Staleness detection**: Stale tokens or generation mismatches invalidate cached entries.
+- [ ] **Consistency maintenance**: Cache operations keep metadata (occupancy, counts) consistent.
+
+**Key principle**: Cached lookups must be as correct as uncached lookups, even with collisions or concurrent updates.
 
 ### 6) Teardown and Allocator Ownership
 
-- [ ] `fini` policy is explicit: require empty or drain.
-- [ ] Allocator ownership is consistent across alloc/grow/free/free(table).
-- [ ] Destroy path does not null allocator before final free(table).
-- [ ] Teardown must use the recorded owner metadata and the correct
-  synchronization context (no "best-effort" fallbacks).
-- [ ] If teardown relies on a per-CPU/per-thread scratch window (e.g.,
-  self-mapping region used to edit frames), it must run in the context
-  that owns that window.
-- [ ] **Final free defensive unlink:** before freeing an object, ensure it is no
-  longer linked in any traversable structure (task thread list, scheduler ring,
-  hash/table, MSQ, etc.). If still linked, unlink under correct lock/context (or
-  last-chance `list_del_init` + diagnostics) to prevent list walks from touching
-  freed memory.
-- [ ] **Intent vs state overwrite:** if a “teardown intent” signal can be
-  overwritten by unrelated state transitions (IPC blocking, etc.), represent
-  intent in a monotonic flag/field, not only as a transient status enum.
+- [ ] **Policy clarity**: Teardown policy is explicit (require-empty vs drain).
+- [ ] **Ownership consistency**: Allocator ownership is consistent across alloc/free/destroy operations.
+- [ ] **Context validity**: Teardown runs in the correct context (CPU, address space, synchronization).
+- [ ] **Defensive unlinking**: Before freeing, ensure objects are detached from traversable structures.
+- [ ] **Intent preservation**: Teardown intent is represented in monotonic flags, not overwritable status.
+
+**Key principle**: Teardown should be predictable, safe to call multiple times, and never leave dangling references.
 
 ### 7) API/Type Discipline
 
@@ -361,3 +329,19 @@ When a new bug pattern appears during review/debug:
   ...)` only; it uses `ipc_serial_measure_va` + `ipc_serial_encode_into_va` into the
   allocated `kmsg` (no extra TLV allocation + copy). Checklist: §7 +
   `doc/ai/IPC_MESSAGE.md`.
+
+- 2026-04: **Field repurposing with union + type-safe caching (nexus_update_range_flags):**
+  - **Pattern**: When repurposing struct fields as temporary cache, use union with
+    correct target types, document safety conditions, and ensure symmetric cleanup.
+  - **Example**: `union { struct list_entry manage_free_list; struct { ppn_t cached_ppn;
+    ENTRY_FLAGS_t cached_flags; } cache_data; };`
+  - **Safety analysis**: (1) manage_free_list only used by manager nodes,
+    (2) vspace lock prevents concurrent is_page_manage_node() checks,
+    (3) cleanup sets both fields to 0 (not INIT_LIST_HEAD) for NULL checks,
+    (4) restore before lock release.
+  - **Performance gains**: Avoid repeated have_mapped calls, enable full rollback.
+  - **Type safety**: Using `ppn_t`/`ENTRY_FLAGS_t` instead of forced `struct list_entry*`
+    casts eliminates undefined behavior and improves debuggability.
+  - **Atomicity**: Full rollback on failure (all-or-nothing) prevents inconsistent state.
+  - Checklist: §1 (union type safety + field repurposing) + §4 (atomic updates) +
+  `doc/ai/CODE_QUALITY_PATTERNS.md`.

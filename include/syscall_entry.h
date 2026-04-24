@@ -2,7 +2,7 @@
 #define _SYSCALL_ENTRY_
 #include <rendezvos/task/tcb.h>
 
-#include <rendezvos/trap.h>
+#include <rendezvos/trap/trap.h>
 
 #ifdef _AARCH64_
 #include <arch/aarch64/syscall_ids.h>

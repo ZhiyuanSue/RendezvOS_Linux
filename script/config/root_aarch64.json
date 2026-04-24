@@ -1,0 +1,21 @@
+{
+  "use": true,
+  "root_features": [
+    "LINUX_COMPAT_TEST",
+    "RENDEZVOS_ROOT_AUTO_POWEROFF"
+  ],
+  "inherit_from_core": {
+    "use": true,
+    "sets": [
+      "arch",
+      "smp"
+    ]
+  },
+  "core_overrides": {
+    "undef_features": [
+      "RENDEZVOS_CORE_AUTO_POWEROFF"
+    ],
+    "extra_features": []
+  }
+}
+

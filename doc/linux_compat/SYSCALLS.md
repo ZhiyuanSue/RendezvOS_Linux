@@ -1,36 +1,274 @@
-# Syscall 实现顺序与逐项清单
+# Syscall 实现路线图
 
-约定：
+## 目标和策略
 
-- **编号** `Step N` 为推荐实现顺序；后项依赖前项除非标明「可并行」。
-- **不改代码** 时本文档为协作契约；落地后以 PR 勾选为准。
-- **x86_64** 系统调用号见 [`include/arch/x86_64/syscall_ids.h`](../../include/arch/x86_64/syscall_ids.h)。
-- **直接调 core**：本清单默认 `mmap`/`brk` 等 **不调 IPC**；登记簿阶段 1 用 **锁**，见 [`DATA_MODEL.md`](DATA_MODEL.md)。
+**总体目标**：实现200-300+ Linux syscall，支持x86_64、aarch64、riscv64等多架构。
+
+**实现策略**：
+- **迭代式开发**：分阶段实现，每个阶段以测例为导向
+- **灵活优先级**：根据测例需求和依赖关系调整实现顺序
+- **多架构同步**：从设计阶段考虑多架构兼容性
+- **质量优先**：每个阶段确保稳定性和正确性
+
+## 阶段划分
+
+### Phase 0：基础设施（P0 - 必须首先完成）
+
+**目标**：建立syscall框架和最小可用环境
+
+| 项 | 描述 | 优先级 | 状态 |
+|----|------|--------|------|
+| syscall框架 | 返回值约定、分发骨架、多架构支持 | P0 | 规划中 |
+| write shim | fd 1/2控制台输出（调试必需） | P0 | 规划中 |
+| 基础数据结构 | proc_registry、append区定义 | P0 | 规划中 |
+
+**里程碑**：能够运行简单的用户程序并输出调试信息
+
+### Phase 1：进程管理基础（P1 - 核心功能）
+
+**目标**：支持基本的进程创建和管理
+
+| 组 | syscall | 依赖 |
+|----|---------|------|
+| 进程信息 | getpid, gettid | Phase 0 |
+| 内存管理基础 | brk | Phase 0 |
+| 进程生命周期 | exit, exit_group | Phase 0 |
+| 进程等待 | wait4, waitpid | exit, proc_registry |
+
+**里程碑**：能够创建简单进程，父子进程能够同步
+
+### Phase 2：内存管理（P1 - 核心功能）
+
+**目标**：实现Linux式内存管理
+
+| 组 | syscall | 依赖 |
+|----|---------|------|
+| 基础映射 | mmap（匿名）, munmap | Phase 0 |
+| 权限管理 | mprotect | mmap |
+| 内存统计 | getpagesize, sysinfo | - |
+
+**里程碑**：支持动态内存分配，能够运行复杂的用户程序
+
+### Phase 3：执行流控制机制（P1 - 核心功能）
+
+**目标**：建立通用的用户态执行流控制机制
+
+**设计理念**：
+- 多个场景（线程复制、信号处理、fork）都涉及"构造用户态返回帧并恢复执行"
+- 这些场景复用相同的底层机制：trap_frame构造、内核栈安装、调度切换
+- 先实现同地址空间的简单场景，再扩展到跨地址空间的复杂场景
+
+**核心基础设施（core/）**：
+
+| 接口 | 职责 | 场景 |
+|------|------|------|
+| `arch_user_return_install()` | 安装trap_frame到内核栈 | 所有场景 |
+| `arch_ctx_inherit()` | 复制架构上下文 | 线程复制 |
+| `arch_user_return_copy_syscall()` | 复制syscall帧 | fork/clone |
+
+**实现场景（linux_layer/）**：
+
+| 场景 | 复杂度 | 描述 |
+|------|--------|------|
+| **同地址空间线程复制** | ⭐ 简单 | clone without CLONE_VM<br/>• 共享地址空间<br/>• 复制寄存器状态<br/>• 修改返回值 |
+| **信号处理** | ⭐⭐ 中等 | 信号递送<br/>• 切换到信号处理函数<br/>• 可能使用备用栈<br/>• 保存并恢复上下文 |
+| **跨地址空间进程复制** | ⭐⭐⭐ 复杂 | fork<br/>• 复制地址空间<br/>• 复制寄存器状态<br/>• 修改返回值 |
+
+**实现顺序**：
+
+1. **同地址空间线程复制**
+   - clone(CLONE_VM)
+   - 验证：pthread_create、同进程内线程操作
+
+2. **信号处理**
+   - rt_sigaction, rt_sigprocmask, sigaltstack
+   - 验证：信号处理函数能被正确调用
+
+3. **fork（移到Phase 4）**
+   - 需要地址空间复制，依赖Phase 3的基础机制
+
+**里程碑**：
+- ✅ 通用的执行流控制框架
+- ✅ clone基本功能
+- ✅ 信号处理基础
+- ✅ 为fork做好准备
+
+### Phase 4：跨地址空间进程复制（P1 - 核心功能）
+
+**目标**：实现fork（需要复制地址空间）
+
+| 组 | syscall/基础设施 | 依赖 |
+|----|------------------|------|
+| COW基础设施 | 页故障处理、物理页分裂 | mmap, mprotect |
+| 地址空间复制 | vspace_copy | Phase 3执行流控制 |
+| 进程复制 | fork | Phase 3执行流控制 + COW |
+
+**为什么fork在后面**：
+- fork需要同时处理：地址空间复制 + 执行流控制
+- 执行流控制部分已经在Phase 3实现并验证
+- fork = 地址空间复制 + Phase 3的执行流控制机制
+
+**里程碑**：完整的进程创建机制，支持多进程程序
+
+### Phase 5：程序执行（P2 - 重要功能）
+
+**目标**：支持程序加载和执行
+
+| 组 | syscall | 依赖 |
+|----|---------|------|
+| 程序加载 | execve | 内存管理 |
+| 环境变量 | execve相关 | - |
+
+**里程碑**：能够运行shell和复杂的用户程序
+
+### Phase 6：文件系统（P2 - 重要功能）
+
+**目标**：实现基本的文件系统访问
+
+| 组 | syscall | 依赖 |
+|----|---------|------|
+| 文件描述符 | open, close, read, write | - |
+| 文件操作 | lseek, stat, fstat | - |
+| 目录操作 | opendir, readdir, closedir | - |
+
+**里程碑**：支持基本的文件操作
+
+### Phase 7：高级功能（P3 - 扩展功能）
+
+**目标**：实现更多Linux功能
+
+**功能组**：
+- **IPC**：pipe, socket, shm, msgq
+- **网络**：socket相关syscall
+- **时间**：clock相关syscall
+- **资源限制**：getrlimit, setrlimit
+- **用户/组**：getuid, setuid等
+
+**里程碑**：逐步接近完整的Linux兼容性
 
 ---
 
-## 总览顺序
+## 执行流控制框架
 
-| 顺序 | 项 | 类型 |
-|------|-----|------|
-| 0 | 返回值约定 + 分发骨架 | 前置 |
-| 0a | `write`（fd 1/2 控制台 shim） | syscall（见 [`STDIO_SHIM.md`](STDIO_SHIM.md)，可与其他早期项并行） |
-| 1 | `getpid` | syscall |
-| 2 | `brk` | syscall |
-| 3 | `mmap`（匿名） | syscall |
-| 4 | `munmap` | syscall |
-| 5 | `mprotect` | syscall |
-| 6 | `exit` / `exit_group` | syscall + server 扩展 |
-| 7 | `wait4` / `waitpid` | syscall |
-| 8 | COW + 页故障路径 | 基础设施（含可选 Server） |
-| 9 | `fork` | syscall |
-| 10 | `clone`（子集） | syscall |
-| 11 | `execve` | syscall |
-| 12 | `kill` | syscall |
-| 13 | `rt_sigprocmask` / `rt_sigaction` / `rt_sigreturn` | syscall 组 |
-| 14 | `mremap` | syscall（可选） |
+### 设计理念
 
-**与 Server 平级的条目**（见文末）：`clean_server` 扩展、`proc_coordinator`（可选）、`cow_fault_handler`（可选）。
+多个Linux兼容层场景涉及"构造用户态返回帧并恢复执行"：
+
+- **线程复制**（clone）：复制父线程的寄存器状态，子线程返回不同值
+- **信号处理**：切换到信号处理函数，可能使用备用栈
+- **fork**：复制父进程的执行状态，子进程返回0
+
+这些场景**共享相同的底层机制**：
+1. 构造trap_frame（用户态寄存器状态）
+2. 安装到内核栈
+3. 配置调度切换路径
+
+### 三层架构
+
+```
+┌─────────────────────────────────────────┐
+│  第一层：业务逻辑                        │
+│  - copy_thread()                        │
+│  - signal handling                      │
+│  - fork                                │
+└──────────────┬──────────────────────────┘
+               │ 调用场景接口
+┌──────────────▼──────────────────────────┐
+│  第二层：场景组装                        │
+│  - arch_user_return_copy_syscall()     │
+│  - (未来)信号场景接口                    │
+└──────────────┬──────────────────────────┘
+               │ 调用基础原语
+┌──────────────▼──────────────────────────┐
+│  第三层：基础原语（架构特定）            │
+│  - arch_user_return_install()          │
+│  - arch_ctx_inherit()                  │
+└─────────────────────────────────────────┘
+```
+
+### 核心接口
+
+#### 第三层：基础原语（core/kernel/task/arch_thread.c）
+
+```c
+/**
+ * 安装用户态返回帧（最底层原语）
+ *
+ * 将给定的trap_frame安装到线程的内核栈，配置调度切换路径
+ * 所有用户态返回的最终步骤
+ */
+error_t arch_user_return_install(Thread_Base* t, const struct trap_frame* tf);
+
+/**
+ * 复制架构上下文
+ *
+ * 复制Arch_Task_Context（callee-saved寄存器等）
+ * 不涉及用户态返回帧
+ */
+error_t arch_ctx_inherit(const Thread_Base* src, Thread_Base* dst);
+```
+
+#### 第二层：场景组装（core/kernel/task/arch_thread.c）
+
+```c
+/**
+ * 场景：复制syscall帧（fork/clone）
+ *
+ * 从源线程复制syscall时的trap_frame，修改返回值，安装到目标线程
+ */
+error_t arch_user_return_copy_syscall(Thread_Base* dst,
+                                     const Thread_Base* src,
+                                     u64 ret_val);
+```
+
+#### 第一层：业务逻辑（linux_layer/）
+
+```c
+/* fork场景 */
+Thread_Base* copy_thread(Thread_Base* parent, Tcb_Base* child, ...);
+
+/* 信号场景（未来） */
+error_t setup_signal_frame(Thread_Base* t, signal_info* info);
+```
+
+### 复用性分析
+
+| 场景 | 复用的原语 | 额外工作 |
+|------|-----------|---------|
+| **clone（同地址空间）** | `arch_ctx_inherit`<br/>`arch_user_return_copy_syscall` | 无额外工作 |
+| **信号处理** | `arch_user_return_install` | 构造指向信号处理函数的trap_frame<br/>可能切换到备用栈 |
+| **fork** | `arch_ctx_inherit`<br/>`arch_user_return_copy_syscall` | + 地址空间复制<br/>+ 进程管理 |
+
+### 实现顺序
+
+1. **验证基础原语**（x86_64 + aarch64）
+   - 确保`arch_user_return_install`正确安装帧
+   - 确保调度切换路径正确
+
+2. **实现简单场景**
+   - clone without CLONE_VM
+   - 验证：同地址空间线程复制
+
+3. **扩展到信号处理**
+   - 基于相同原语实现信号递送
+   - 验证：信号处理函数被正确调用
+
+4. **扩展到fork**
+   - 基于相同原语 + 地址空间复制
+   - 验证：跨地址空间进程复制
+
+### 优势
+
+- ✅ **代码复用**：多个场景共享底层机制
+- ✅ **清晰分层**：每层职责明确
+- ✅ **易于扩展**：新增场景只需组合原语
+- ✅ **架构独立**：架构特定细节在底层
+
+---
+
+## 详细实现清单
+
+> **注意**：以下详细清单保持原有结构作为参考，但实际实现时应根据测例需求和阶段性目标灵活调整。实现时应遵循"先基础设施、后功能扩展"的原则。
 
 ---
 
@@ -326,7 +564,9 @@
 
 **依赖**：Step 3–4。
 
-**文件**：`linux_layer/mm/sys_mremap.c`；或明确 `-ENOSYS` 并在本文档标记 **未实现**。
+**状态**：当前实现为 **`-ENOSYS`**（保留 syscall 入口，等待 VMA/range 模型补全）。
+
+**文件**：`linux_layer/mm/sys_mremap.c`。
 
 ---
 
@@ -378,3 +618,47 @@
 - 每步完成后在 `linux_layer/tests` 或 payload 加 **最小回归**（见 [`linux_layer/tests/linux_compat_tests.c`](../../linux_layer/tests/linux_compat_tests.c)）。
 
 本文档细化程度用于 **达成共识**；若某步发现 core 缺符号，回填 `MM_AND_COW.md` 的 **core 变更清单** 并改顺序依赖。
+
+---
+
+## 实现灵活性指导
+
+### 测例驱动的优先级调整
+**原则**：以上阶段和顺序为参考，实际实现应根据测例需求灵活调整。
+
+**示例**：
+- 如果测例需要进程间通信，可以提前实现pipe相关的syscall
+- 如果测例需要文件访问，可以提前实现基础文件系统syscall
+- 如果遇到"鸡蛋问题"（如write需要文件系统），可以先用简化版本
+
+### 依赖关系处理
+**强依赖**：必须按顺序实现（如fork依赖COW）
+**弱依赖**：可以并行实现（如信号和文件系统）
+**循环依赖**：先用简化版本打破循环（如write shim）
+
+### 多架构考虑
+**架构无关代码**：linux_layer/中的主要逻辑
+**架构相关代码**：syscall号、寄存器接口、trap处理
+**实现策略**：设计时就考虑多架构，避免架构特定逻辑扩散
+
+---
+
+## 状态跟踪
+
+| Phase | 状态 | 当前重点 | 下一阶段 |
+|-------|------|----------|----------|
+| Phase 0 | ✅ 完成 | syscall框架已实现 | Phase 1 ✅ 完成 |
+| Phase 1 | ✅ 完成 | 进程管理基础已实现 | Phase 2 ✅ 完成 |
+| Phase 2 | ✅ 完成 | 内存管理已实现 | Phase 3 ✅ 完成 |
+| Phase 3 | ✅ 完成 | 执行流控制机制已实现 | Phase 4 ✅ 完成 |
+| Phase 4 | ✅ 完成 | 跨地址空间进程复制（fork）已实现 | Phase 5 |
+| Phase 5 | 🔄 进行中 | 程序执行（execve）待实现 | Phase 6 |
+| Phase 6 | 📋 计划中 | 文件系统待实现 | Phase 7 |
+| Phase 7 | 📋 计划中 | 高级功能待实现 | - |
+
+**更新频率**：每完成一个主要功能或阶段性里程碑后更新状态。
+
+**最新更新（2026-04-21）**：
+- Phase 0-4：已完成基础syscall实现（11个）
+- 详细实现记录：见 `doc/ai/SYSCALL_IMPLEMENTATION_STATUS.md`
+- 下一步：完善write安全性，实现getppid/wait4，改进mremap

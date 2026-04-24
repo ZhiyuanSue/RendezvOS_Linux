@@ -333,3 +333,72 @@ Append one entry for each user-approved commit.
 - Pattern: n/a (process).
 - Checklist update: no (workflow meta; checklist already has §8 validation).
 
+## 2026-04-16 | nexus: field repurposing union + type-safe caching + full rollback | commit TBD
+
+- Scope: `core/include/rendezvos/mm/nexus.h` (struct nexus_node),
+  `core/kernel/mm/nexus.c` (`nexus_update_range_flags` + helper cleanup),
+  `doc/ai/AI_CHECKLIST.md` (Pattern Log), `doc/ai/ASSIST_HISTORY.md` (this entry).
+- Why: Optimize `nexus_update_range_flags` to avoid repeated `have_mapped` calls
+  and ensure true atomicity (all-or-nothing updates) for batch flag updates.
+- Design decision(s):
+  - **Union field repurposing**: `manage_free_list` → union with `cache_data` for
+    temporary ppn/flags caching. Type-safe (`ppn_t`/`ENTRY_FLAGS_t`) instead of forced
+    pointer casts.
+  - **Direct vspace node access**: use `vs->_vspace_node` directly instead of
+    red-black tree search in 4 functions (eliminates O(log n) + lock overhead).
+  - **Two-phase algorithm**: merge collection+validation into one pass, eliminate
+    redundant traversal.
+  - **Full rollback on failure**: if any node update fails, rollback all previously
+    updated nodes (page table + nexus flags) to original state.
+  - **Unified cleanup**: parameterized `cleanup_aux_list` function handles both
+    simple cleanup and error path with node deletion.
+- Data structure/API impact:
+  - Public: `struct nexus_node` now uses union for `manage_free_list`/`cache_data`.
+  - Public: `nexus_update_range_flags` signature unchanged but behavior enhanced
+    with full rollback.
+  - Invariants: union field repurposing is safe under vspace lock; fields restored
+    to 0 (not INIT_LIST_HEAD) before lock release for `is_page_manage_node` compatibility.
+- Failure-path strategy:
+  - `nexus_update_range_flags` validation fails: Fail-fast -> cleanup -> return error.
+  - `nexus_update_range_flags` page table update fails: Rollback -> restore all updated
+    nodes to original state -> cleanup -> return error.
+- Verification:
+  - Code review: validated type safety (ppn_t/ENTRY_FLAGS_t), union memory layout,
+    cleanup logic (0 vs INIT_LIST_HEAD for is_page_manage_node).
+  - Not run (cross-gcc unavailable in env).
+- Pattern: field repurposing with union + type-safe caching; direct struct reference
+  avoids tree lookup; full rollback atomicity.
+- Checklist update: yes (`AI_CHECKLIST.md` Pattern Log + referenced sections).
+
+## 2026-04-21 | syscall实现进展记录 | commit TBD
+
+- Scope: `doc/ai/SYSCALL_IMPLEMENTATION_STATUS.md` (new),
+  `doc/linux_compat/SYSCALLS.md` (status update), `doc/ai/ASSIST_HISTORY.md` (this entry).
+- Why: 记录Linux兼容层syscall实现过程，为"用AI写OS"论文提供素材；梳理当前11个已实现syscall的状态、质量评分、技术约束。
+- Design decision(s):
+  - **质量评分标准**：10分制（10/10完全符合Linux语义，6/10基本功能可用，<6/10伪实现）
+  - **技术约束分类**：功能约束、性能约束、安全约束、依赖约束
+  - **诚实记录原则**：明确标注已知问题和妥协，区分完整实现/简化实现/伪实现
+- Data structure/API impact: 文档 only。
+- Verification: 文档一致性审阅。
+- Pattern: n/a (documentation)。
+- Checklist update: no.
+- **实现亮点**：
+  - fork：10/10质量，完整COW实现，依赖core/新增vspace_clone/copy_thread/run_copied_thread
+  - getpid：10/10质量，简单可靠
+  - brk：9/10质量，堆增长/收缩完整实现
+  - mprotect：9/10质量，使用nexus批量更新API
+  - mremap：6/10质量，逐字节拷贝需改用map_handler_copy_paddr_range
+  - write：6/10质量，仅支持fd 1/2，直接memcpy用户内存需改进
+- **core/新增支撑**：
+  - vspace_clone(VSPACE_CLONE_F_COW_PREP) - COW地址空间克隆
+  - pmm_change_pages_ref() - 引用计数管理+回滚
+  - nexus_update_range_flags() - 批量flags更新+回滚
+  - map_handler_copy_paddr_range() - 物理页拷贝（跨页边界）
+  - copy_thread() - 线程拷贝（包括trap_frame）
+  - run_copied_thread() - 子线程启动
+- **下一步工作**：
+  - P0（本周）：改进write安全性、实现getppid、实现COW页错误处理、改进mremap
+  - P1（2周）：实现wait4/read/open/close伪实现
+  - P2（1月）：完善VMA管理、实现execve、基础信号处理
+

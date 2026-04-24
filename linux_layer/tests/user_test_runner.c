@@ -6,221 +6,170 @@
 #include <rendezvos/task/thread_loader.h>
 #include <rendezvos/task/tcb.h>
 
-#include <common/stdbool.h>
-#include <common/stddef.h>
-
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/elf_init.h>
 #include <linux_compat/test_runner.h>
+#include <modules/test/test.h>
+#include <rendezvos/system/powerd.h>
 
 #ifdef LINUX_COMPAT_TEST
 
 extern cpu_id_t BSP_ID;
-extern int NR_CPU;
 extern volatile i64 jeffies;
-
 extern u64 _num_app;
 
-/* elf_read_test is kernel-side; keep BSP-only. */
 extern int elf_read_test(void);
 
-enum linux_user_case_phase {
-        LINUX_CASE_IDLE = 0,
-        LINUX_CASE_BEGIN = 1,
-        LINUX_CASE_END = 2,
-};
-
-static volatile u64 linux_case_epoch;
-static volatile u64 linux_case_index;
-static volatile enum linux_user_case_phase linux_case_phase;
-
-static volatile u64 linux_case_begin_arrived[RENDEZVOS_MAX_CPU_NUMBER];
-static volatile u64 linux_case_end_arrived[RENDEZVOS_MAX_CPU_NUMBER];
-
-static volatile u64 linux_user_done_cookie[RENDEZVOS_MAX_CPU_NUMBER];
-static volatile i64 linux_user_done_code[RENDEZVOS_MAX_CPU_NUMBER];
+static volatile u64 linux_test_done_cookie[RENDEZVOS_MAX_CPU_NUMBER];
+static volatile i64 linux_test_done_code[RENDEZVOS_MAX_CPU_NUMBER];
 
 void linux_user_test_notify_exit(i32 owner_cpu, u64 cookie, i64 exit_code)
 {
-        if (owner_cpu < 0 || owner_cpu >= (i32)RENDEZVOS_MAX_CPU_NUMBER)
-                return;
-        linux_user_done_code[owner_cpu] = exit_code;
-        linux_user_done_cookie[owner_cpu] = cookie;
+	if (owner_cpu < 0 || owner_cpu >= (i32)RENDEZVOS_MAX_CPU_NUMBER)
+		return;
+	linux_test_done_code[owner_cpu] = exit_code;
+	linux_test_done_cookie[owner_cpu] = cookie;
 }
 
-static void linux_case_barrier_begin(u64 epoch)
+static error_t linux_spawn_and_wait_test(u64 app_index)
 {
-        i32 cpu = (i32)percpu(cpu_number);
-        linux_case_begin_arrived[cpu] = epoch;
-        while (1) {
-                bool all = true;
-                for (i32 i = 0; i < NR_CPU; i++) {
-                        if (linux_case_begin_arrived[i] != epoch) {
-                                all = false;
-                                break;
-                        }
-                }
-                if (all)
-                        return;
-                schedule(percpu(core_tm));
-        }
+	u64 *app_start_ptr =
+		(u64 *)((vaddr)(&_num_app) + (app_index * 2 + 1) * sizeof(u64));
+	u64 *app_end_ptr =
+		(u64 *)((vaddr)(&_num_app) + (app_index * 2 + 2) * sizeof(u64));
+	u64 app_start = *(app_start_ptr);
+	u64 app_end = *(app_end_ptr);
+
+	Thread_Base *thr = NULL;
+	error_t e = gen_task_from_elf(&thr,
+				      LINUX_PROC_APPEND_BYTES,
+				      LINUX_THREAD_APPEND_BYTES,
+				      app_start,
+				      app_end,
+				      linux_elf_init_handler);
+	if (e || !thr) {
+		pr_error("[ LINUX USER ] Failed to spawn test %lu: e=%d\n",
+			 app_index, (int)e);
+		return e ? e : -E_RENDEZVOS;
+	}
+
+	linux_thread_append_t *ta = linux_thread_append(thr);
+	if (!ta) {
+		pr_error("[ LINUX USER ] Failed to get thread append for test %lu\n",
+			 app_index);
+		return -E_RENDEZVOS;
+	}
+
+	cpu_id_t cpu = percpu(cpu_number);
+	u64 cookie = ((u64)cpu << 56) ^ ((u64)jeffies << 8) ^ (app_index + 1);
+	if (cookie == 0)
+		cookie = 1;
+	ta->test_cookie = cookie;
+	linux_test_done_cookie[cpu] = 0;
+	linux_test_done_code[cpu] = 0;
+
+	/* Wait for test completion */
+	while (linux_test_done_cookie[cpu] != cookie) {
+		schedule(percpu(core_tm));
+	}
+
+	return REND_SUCCESS;
 }
 
-static void linux_case_barrier_end(u64 epoch)
+static void linux_run_user_tests(void)
 {
-        i32 cpu = (i32)percpu(cpu_number);
-        linux_case_end_arrived[cpu] = epoch;
-        while (1) {
-                bool all = true;
-                for (i32 i = 0; i < NR_CPU; i++) {
-                        if (linux_case_end_arrived[i] != epoch) {
-                                all = false;
-                                break;
-                        }
-                }
-                if (all)
-                        return;
-                schedule(percpu(core_tm));
-        }
+	pr_notice("========================================\n");
+	pr_notice(" LINUX USER TEST SUITE START\n");
+	pr_notice(" Total tests: %lu\n", _num_app);
+	pr_notice("========================================\n");
+
+	int passed = 0;
+	int failed = 0;
+
+	for (u64 i = 0; i < _num_app; i++) {
+		pr_info("----------------------------------------\n");
+		pr_info("[TEST %02lu/%02lu] Starting\n", i + 1, _num_app);
+		pr_info("----------------------------------------\n");
+
+		error_t e = linux_spawn_and_wait_test(i);
+
+		if (e) {
+			pr_error("[TEST %02lu/%02lu] FAIL: error=%d\n", i + 1, _num_app,
+				 (int)e);
+			failed++;
+		} else {
+			pr_info("[TEST %02lu/%02lu] PASS\n", i + 1, _num_app);
+			passed++;
+		}
+	}
+
+	pr_notice("========================================\n");
+	pr_notice(" LINUX USER TEST SUITE DONE\n");
+	pr_notice(" Passed: %d/%lu\n", passed, _num_app);
+	pr_notice(" Failed: %d/%lu\n", failed, _num_app);
+	pr_notice("========================================\n");
 }
 
-static error_t linux_spawn_one_app_and_wait(u64 app_index)
+static void *linux_user_test_thread(void *arg)
 {
-        u64 *app_start_ptr =
-                (u64 *)((vaddr)(&_num_app) + (app_index * 2 + 1) * sizeof(u64));
-        u64 *app_end_ptr =
-                (u64 *)((vaddr)(&_num_app) + (app_index * 2 + 2) * sizeof(u64));
-        u64 app_start = *(app_start_ptr);
-        u64 app_end = *(app_end_ptr);
+	bool is_bsp = (bool)(uintptr_t)arg;
 
-        Thread_Base *thr = NULL;
-        error_t e = gen_task_from_elf(&thr,
-                                      LINUX_PROC_APPEND_BYTES,
-                                      LINUX_THREAD_APPEND_BYTES,
-                                      app_start,
-                                      app_end,
-                                      linux_elf_init_handler);
-        if (e || !thr)
-                return e ? e : -E_RENDEZVOS;
+#ifdef RENDEZVOS_TEST
+	/* Wait for core tests to complete */
+	while (core_test_phase_get() < CORE_TEST_PHASE_UPPER_TESTS) {
+		schedule(percpu(core_tm));
+	}
+#endif
 
-        linux_thread_append_t *ta = linux_thread_append(thr);
-        if (!ta)
-                return -E_RENDEZVOS;
+	if (!is_bsp) {
+		/* AP: nothing to do */
+		return NULL;
+	}
 
-        i32 cpu = (i32)percpu(cpu_number);
-        u64 cookie = ((u64)cpu << 56) ^ ((u64)jeffies << 8) ^ (app_index + 1);
-        if (cookie == 0)
-                cookie = 1;
-        ta->test_cookie = cookie;
-        linux_user_done_cookie[cpu] = 0;
-        linux_user_done_code[cpu] = 0;
+	/* BSP: Run Linux compatibility tests */
+	pr_info("[ Linux compat ] BSP: Starting ELF read test\n");
+	if (elf_read_test() != REND_SUCCESS) {
+		pr_error("[ Linux compat ] ELF read test failed\n");
+	}
 
-        /* Wait until clean_server notifies the cookie for this CPU. */
-        while (linux_user_done_cookie[cpu] != cookie) {
-                schedule(percpu(core_tm));
-        }
-        return REND_SUCCESS;
+	linux_run_user_tests();
+
+	pr_info("[ Linux compat ] All tests completed\n");
+
+	/* Mark completion and request shutdown */
+	core_test_phase_set(CORE_TEST_PHASE_DONE);
+
+#ifdef RENDEZVOS_CORE_AUTO_POWEROFF
+	pr_info("[ Linux compat ] Requesting shutdown\n");
+	(void)rendezvos_request_poweroff();
+#endif
+
+	return NULL;
 }
 
-static void linux_user_tests_single_phase(void)
+static void linux_user_test_init(void)
 {
-        pr_notice("====== [ LINUX USER TEST SINGLE ] ======\n");
-        for (u64 i = 0; i < _num_app; i++) {
-                pr_notice("[ LINUX USER SINGLE case=%lu ]\n", i);
-                error_t e = linux_spawn_one_app_and_wait(i);
-                if (e) {
-                        pr_error("[ LINUX USER SINGLE ] case=%lu failed e=%d\n",
-                                 i,
-                                 (int)e);
-                        break;
-                }
-        }
-        pr_notice("====== [ LINUX USER TEST SINGLE DONE ] ======\n");
+	cpu_id_t cpu = percpu(cpu_number);
+	bool is_bsp = (cpu == BSP_ID);
+
+	if (is_bsp) {
+		pr_info("[ Linux compat ] BSP: Creating user test thread\n");
+		(void)gen_thread_from_func(NULL,
+					   linux_user_test_thread,
+					   "linux_user_test",
+					   percpu(core_tm),
+					   (void *)1);
+	} else {
+		pr_info("[ Linux compat ] AP CPU %lu: Creating user test thread\n",
+			cpu);
+		(void)gen_thread_from_func(NULL,
+					   linux_user_test_thread,
+					   "linux_user_test_ap",
+					   percpu(core_tm),
+					   (void *)0);
+	}
 }
 
-static void linux_user_tests_smp_phase_ap(void)
-{
-        while (linux_case_phase == LINUX_CASE_IDLE) {
-                schedule(percpu(core_tm));
-        }
-        while (1) {
-                u64 epoch = linux_case_epoch;
-                if (linux_case_phase == LINUX_CASE_IDLE)
-                        break;
-
-                if (linux_case_phase == LINUX_CASE_BEGIN) {
-                        linux_case_barrier_begin(epoch);
-                        (void)linux_spawn_one_app_and_wait(linux_case_index);
-                        linux_case_barrier_end(epoch);
-                } else {
-                        schedule(percpu(core_tm));
-                }
-        }
-}
-
-static void linux_user_tests_smp_phase_bsp(void)
-{
-        pr_notice("====== [ LINUX USER TEST SMP ] ======\n");
-        for (u64 i = 0; i < _num_app; i++) {
-                linux_case_index = i;
-                linux_case_epoch++;
-                linux_case_phase = LINUX_CASE_BEGIN;
-                pr_notice("[ LINUX USER SMP case=%lu begin ]\n", i);
-                linux_case_barrier_begin(linux_case_epoch);
-
-                (void)linux_spawn_one_app_and_wait(i);
-
-                linux_case_barrier_end(linux_case_epoch);
-                pr_notice("[ LINUX USER SMP case=%lu end ]\n", i);
-                linux_case_phase = LINUX_CASE_END;
-                schedule(percpu(core_tm));
-        }
-        linux_case_phase = LINUX_CASE_IDLE;
-        pr_notice("====== [ LINUX USER TEST SMP DONE ] ======\n");
-}
-
-static void *linux_user_test_runner_thread(void *arg)
-{
-        bool is_bsp = (bool)(uintptr_t)arg;
-        if (is_bsp) {
-                pr_info("[ Linux compat ] running elf_read_test (BSP)\n");
-                if (elf_read_test() != REND_SUCCESS) {
-                        pr_error("[ Linux compat ] elf_read_test failed\n");
-                }
-                linux_user_tests_single_phase();
-
-                /* Kick SMP phase. */
-                linux_case_epoch = 1;
-                linux_case_phase = LINUX_CASE_BEGIN;
-                linux_user_tests_smp_phase_bsp();
-        } else {
-                linux_user_tests_smp_phase_ap();
-        }
-        thread_set_status(percpu(init_thread_ptr), thread_status_ready);
-        schedule(percpu(core_tm));
-        return NULL;
-}
-
-static void linux_user_test_runner_init(void)
-{
-        cpu_id_t cpu = percpu(cpu_number);
-        if (cpu == BSP_ID) {
-                pr_info("[ Linux compat ] start user test runner (BSP)\n");
-                (void)gen_thread_from_func(NULL,
-                                           linux_user_test_runner_thread,
-                                           "linux_user_test_bsp",
-                                           percpu(core_tm),
-                                           (void *)1);
-        } else {
-                pr_info("[ Linux compat ] start user test runner (AP)\n");
-                (void)gen_thread_from_func(NULL,
-                                           linux_user_test_runner_thread,
-                                           "linux_user_test_ap",
-                                           percpu(core_tm),
-                                           (void *)0);
-        }
-}
-
-DEFINE_INIT_LEVEL(linux_user_test_runner_init, 6);
+DEFINE_INIT_LEVEL(linux_user_test_init, 6);
 
 #endif
