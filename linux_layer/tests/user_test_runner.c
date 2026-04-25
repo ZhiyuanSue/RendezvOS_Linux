@@ -21,15 +21,53 @@ extern volatile bool is_print_sche_info;
 
 extern int elf_read_test(void);
 
-static volatile u64 linux_test_done_cookie[RENDEZVOS_MAX_CPU_NUMBER];
-static volatile i64 linux_test_done_code[RENDEZVOS_MAX_CPU_NUMBER];
+/*
+ * Improved test framework with better multi-core scalability.
+ *
+ * Instead of hardcoding RENDEZVOS_MAX_CPU_NUMBER, we use a dynamic
+ * approach where each CPU manages its own test slot.
+ *
+ * For single-core testing: Only CPU 0 slot is used.
+ * For multi-core testing: Each CPU uses its own slot based on cpu_number.
+ */
+#define MAX_CONCURRENT_TESTS 16  /* Reasonable upper bound */
+
+typedef struct {
+        volatile u64 cookie;
+        volatile i64 exit_code;
+        volatile bool in_use;
+} test_slot_t;
+
+static test_slot_t linux_test_slots[MAX_CONCURRENT_TESTS];
+
+/*
+ * Get test slot for current CPU.
+ * For single-core: always returns slot 0.
+ * For multi-core: returns hash(cpu_number) % MAX_CONCURRENT_TESTS.
+ */
+static test_slot_t* get_test_slot(void)
+{
+        cpu_id_t cpu = percpu(cpu_number);
+        /* Simple hash: use modulo to avoid hardcoding MAX_CPUS */
+        u32 slot_index = (u32)cpu % MAX_CONCURRENT_TESTS;
+        return &linux_test_slots[slot_index];
+}
 
 void linux_user_test_notify_exit(i32 owner_cpu, u64 cookie, i64 exit_code)
 {
-        if (owner_cpu < 0 || owner_cpu >= (i32)RENDEZVOS_MAX_CPU_NUMBER)
+        /*
+         * Find the test slot based on owner_cpu.
+         * This avoids hardcoding RENDEZVOS_MAX_CPU_NUMBER.
+         */
+        u32 slot_index = (u32)owner_cpu % MAX_CONCURRENT_TESTS;
+
+        if (slot_index >= MAX_CONCURRENT_TESTS) {
+                pr_warn("[linux_user_test] Invalid owner_cpu %d\n", owner_cpu);
                 return;
-        linux_test_done_code[owner_cpu] = exit_code;
-        linux_test_done_cookie[owner_cpu] = cookie;
+        }
+
+        linux_test_slots[slot_index].exit_code = exit_code;
+        linux_test_slots[slot_index].cookie = cookie;
 }
 
 static error_t linux_spawn_and_wait_test(u64 app_index)
@@ -63,13 +101,17 @@ static error_t linux_spawn_and_wait_test(u64 app_index)
                 return -E_RENDEZVOS;
         }
 
+        /* Get test slot for this CPU */
+        test_slot_t* slot = get_test_slot();
+
         cpu_id_t cpu = percpu(cpu_number);
         u64 cookie = ((u64)cpu << 56) ^ ((u64)jeffies << 8) ^ (app_index + 1);
         if (cookie == 0)
                 cookie = 1;
+
         ta->test_cookie = cookie;
-        linux_test_done_cookie[cpu] = 0;
-        linux_test_done_code[cpu] = 0;
+        slot->cookie = 0;  /* Clear cookie to indicate waiting */
+        slot->in_use = true;
 
         pr_info("[linux_spawn_and_wait_test] CPU %lu: Waiting for test %lu, cookie=0x%lx\n",
                 (u64)cpu,
@@ -78,7 +120,7 @@ static error_t linux_spawn_and_wait_test(u64 app_index)
 
         /* Wait for test completion */
         u64 loop_count = 0;
-        while (linux_test_done_cookie[cpu] != cookie) {
+        while (slot->cookie != cookie) {
                 schedule(percpu(core_tm));
                 loop_count++;
                 if (loop_count % 100000 == 0) {
@@ -86,16 +128,19 @@ static error_t linux_spawn_and_wait_test(u64 app_index)
                                 "[linux_spawn_and_wait_test] CPU %lu: Still waiting, loop=%lu, current_cookie=0x%lx, expected=0x%lx\n",
                                 (u64)cpu,
                                 loop_count,
-                                linux_test_done_cookie[cpu],
+                                slot->cookie,
                                 cookie);
                 }
         }
+
+        i64 exit_code = slot->exit_code;
+        slot->in_use = false;
 
         pr_info("[linux_spawn_and_wait_test] CPU %lu: Test %lu completed, cookie matched (0x%lx), exit_code=%ld\n",
                 (u64)cpu,
                 app_index,
                 cookie,
-                linux_test_done_code[cpu]);
+                exit_code);
 
         return REND_SUCCESS;
 }

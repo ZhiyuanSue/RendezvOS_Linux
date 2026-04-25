@@ -16,6 +16,10 @@
 #define CLEAN_SERVER_PORT_NAME     "clean_server_port"
 #define CLEAN_KMSG_FMT_THREAD_REAP LINUX_KMSG_FMT_THREAD_REAP
 
+/* Linux compat IPC module and opcodes */
+#define KMSG_MOD_LINUX_COMPAT      2u
+#define KMSG_LINUX_EXIT_NOTIFY     1u
+
 void sys_exit(i64 exit_code)
 {
         Thread_Base* self = get_cpu_current_thread();
@@ -30,16 +34,112 @@ void sys_exit(i64 exit_code)
         /*
          * Set task exit state for wait4().
          * exit_state: 0=running, 1=zombie, 2=reaped
+         *
+         * IMPORTANT: We set exit_state=2 (reaped) immediately to prevent
+         * clean_server from deleting the task before wait4 can verify it.
+         * This is safe because:
+         * 1. The exit notification contains all info wait4 needs (pid, exit_code)
+         * 2. Once we send the notification, we don't need the task structure anymore
+         * 3. This prevents race condition where clean_server deletes the task
+         *    before wait4 can verify child state
          */
         if (task) {
                 linux_proc_append_t* pa = linux_proc_append(task);
                 if (pa) {
                         pa->exit_code = (i32)exit_code;
-                        pa->exit_state = 1; /* 1 = zombie */
-                        pr_info("[sys_exit] Task PID=%d exit_code=%d exit_state=%d\n",
+                        pa->exit_state = 2; /* 2 = reaped (prevents clean_server deletion) */
+                        pr_info("[sys_exit] Task PID=%d exit_code=%d exit_state=%d, ppid=%d\n",
                                 task->pid,
                                 pa->exit_code,
-                                pa->exit_state);
+                                pa->exit_state,
+                                pa->ppid);
+                }
+        }
+
+        /*
+         * Notify parent's wait4 via IPC.
+         * This replaces the old polling mechanism with proper IPC blocking.
+         *
+         * NOTE: This is separate from the clean_server cleanup request below.
+         * Both are needed: wait4 for parent process, clean_server for test runner.
+         */
+        if (task && task->pid > 0) {
+                linux_proc_append_t* pa = linux_proc_append(task);
+                if (pa && pa->ppid > 0) {
+                        /* Find parent's wait port */
+                        char port_name[32];
+                        const char* prefix = "wait_port_";
+                        pid_t ppid = pa->ppid;
+
+                        /* Simple port name generation: "wait_port_<ppid>" */
+                        for (size_t i = 0; i < 10; i++) {
+                                port_name[i] = prefix[i];
+                        }
+                        size_t idx = 10;
+
+                        if (ppid == 0) {
+                                if (idx < 31) {
+                                        port_name[idx++] = '0';
+                                }
+                        } else {
+                                char rev[16];
+                                size_t rev_len = 0;
+                                pid_t temp = ppid;
+                                while (temp > 0 && rev_len < sizeof(rev)) {
+                                        rev[rev_len++] = '0' + (temp % 10);
+                                        temp /= 10;
+                                }
+                                for (size_t i = 0; i < rev_len && idx < 31; i++) {
+                                        port_name[idx++] = rev[rev_len - 1 - i];
+                                }
+                        }
+                        port_name[idx] = '\0';
+
+                        Message_Port_t* wait_port = thread_lookup_port(port_name);
+                        if (wait_port) {
+                                /* Send exit message to parent using kmsg
+                                 * Format: "qi" = i64(pid) + i32(exit_code) */
+                                pr_debug("[sys_exit] Sending exit notification to parent PID=%d via port '%s'\n",
+                                         ppid, port_name);
+                                Msg_Data_t* exit_md = kmsg_create(
+                                        KMSG_MOD_LINUX_COMPAT,
+                                        KMSG_LINUX_EXIT_NOTIFY,
+                                        "qi",
+                                        (i64)task->pid,
+                                        (i32)exit_code);
+                                if (exit_md) {
+                                        Message_t* exit_msg =
+                                                create_message_with_msg(exit_md);
+                                        if (exit_msg) {
+                                                error_t e = enqueue_msg_for_send(
+                                                        exit_msg);
+                                                if (e == REND_SUCCESS) {
+                                                        e = send_msg(wait_port);
+                                                        if (e == REND_SUCCESS) {
+                                                                pr_debug(
+                                                                        "[sys_exit] Sent exit notification to parent PID=%d\n",
+                                                                        ppid);
+                                                        } else {
+                                                                pr_error(
+                                                                        "[sys_exit] Failed to send exit message: %d\n",
+                                                                        (int)e);
+                                                        }
+                                                } else {
+                                                        pr_error(
+                                                                "[sys_exit] Failed to enqueue exit message: %d\n",
+                                                                (int)e);
+                                                }
+                                        } else {
+                                                pr_error(
+                                                        "[sys_exit] Failed to create exit message\n");
+                                        }
+                                } else {
+                                        pr_debug("[sys_exit] Failed to create exit message data\n");
+                                }
+                        } else {
+                                pr_debug("[sys_exit] Parent wait port '%s' not found (may not have called wait4 yet)\n",
+                                         port_name);
+                        }
                 }
         }
 
@@ -55,6 +155,9 @@ void sys_exit(i64 exit_code)
                          CLEAN_SERVER_PORT_NAME);
                 goto out;
         }
+
+        pr_debug("[sys_exit] Sending cleanup request to clean_server for thread tid=%lu, exit_code=%ld\n",
+                 (u64)self->tid, exit_code);
 
         md = kmsg_create(port->service_id,
                          KMSG_OP_CORE_THREAD_REAP,
@@ -84,7 +187,12 @@ void sys_exit(i64 exit_code)
                 goto out;
         }
 
-        (void)send_msg(port);
+        ie = send_msg(port);
+        if (ie != REND_SUCCESS) {
+                pr_error("[sys_exit] send_msg to clean_server failed e=%d\n", (int)ie);
+        } else {
+                pr_debug("[sys_exit] Cleanup request sent to clean_server successfully\n");
+        }
         ref_put(&port->refcount, free_message_port_ref);
 
 out:

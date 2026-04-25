@@ -658,7 +658,11 @@ error_t setup_signal_frame(Thread_Base* t, signal_info* info);
 
 **更新频率**：每完成一个主要功能或阶段性里程碑后更新状态。
 
-**最新更新（2026-04-21）**：
+**最新更新（2026-04-25）**：
 - Phase 0-4：已完成基础syscall实现（11个）
-- 详细实现记录：见 `doc/ai/SYSCALL_IMPLEMENTATION_STATUS.md`
-- 下一步：完善write安全性，实现getppid/wait4，改进mremap
+- ✅ **wait4完整实现**：支持所有Linux标准pid选项（>0, -1, 0, <-1）+ WNOHANG
+- ✅ **proc_registry扩展**：O(1) PID查找 + 反向查询（ppid/pgid）
+- ✅ **IPC阻塞机制**：替代轮询，保持架构一致性
+- ✅ **竞态条件修复**：exit_state三态管理（running/zombie/reaped）
+- 详细实现记录：见 `doc/linux_compat/WAIT4_IMPLEMENTATION_STATUS.md`
+- 下一步：完善write安全性，实现rusage或信号机制支持

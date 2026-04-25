@@ -80,6 +80,7 @@ i64 sys_fork()
                 child_pa->start_brk = parent_pa->brk;
                 /* Set parent PID and initialize exit state */
                 child_pa->ppid = parent->pid;
+                child_pa->pgid = parent_pa->pgid; /* Inherit process group */
                 child_pa->exit_code = 0;
                 child_pa->exit_state = 0; /* 0 = running */
                 INIT_LIST_HEAD(&child_pa->wait_queue);

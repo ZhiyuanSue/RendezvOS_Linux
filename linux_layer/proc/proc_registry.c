@@ -168,6 +168,76 @@ void unregister_process(Tcb_Base* task)
 }
 
 /*
+ * Find a zombie child by parent PID.
+ * This implements the lookup needed for wait4(pid == -1).
+ *
+ * Strategy: Try PID ranges sequentially until we find a zombie child.
+ * This is O(N) in the number of PIDs, but N is typically small.
+ * TODO: Optimize with reverse index if needed.
+ */
+Tcb_Base* find_zombie_child(pid_t ppid)
+{
+        if (ppid <= 0) {
+                return NULL;
+        }
+
+        /* Try a reasonable range of PIDs (assuming PIDs are allocated sequentially) */
+        for (pid_t candidate = ppid + 1; candidate < ppid + 1000; candidate++) {
+                Tcb_Base* child = find_task_by_pid(candidate);
+                if (!child) {
+                        continue;
+                }
+
+                linux_proc_append_t* pa = linux_proc_append(child);
+                if (!pa) {
+                        continue;
+                }
+
+                /* Check if this is our child and in zombie state */
+                if (pa->ppid == ppid && pa->exit_state == 1) {
+                        pr_debug("[proc] Found zombie child PID=%d of parent PID=%d\n",
+                                 candidate, ppid);
+                        return child;
+                }
+        }
+
+        return NULL;
+}
+
+/*
+ * Find a zombie child in the same process group.
+ * This implements the lookup needed for wait4(pid == 0) and wait4(pid < -1).
+ */
+Tcb_Base* find_zombie_child_in_pgid(pid_t ppid, pid_t pgid)
+{
+        if (ppid <= 0 || pgid <= 0) {
+                return NULL;
+        }
+
+        /* Try a reasonable range of PIDs */
+        for (pid_t candidate = ppid + 1; candidate < ppid + 1000; candidate++) {
+                Tcb_Base* child = find_task_by_pid(candidate);
+                if (!child) {
+                        continue;
+                }
+
+                linux_proc_append_t* pa = linux_proc_append(child);
+                if (!pa) {
+                        continue;
+                }
+
+                /* Check if this is our child, in zombie state, and matches pgid */
+                if (pa->ppid == ppid && pa->exit_state == 1 && pa->pgid == pgid) {
+                        pr_debug("[proc] Found zombie child PID=%d of parent PID=%d in pgid %d\n",
+                                 candidate, ppid, pgid);
+                        return child;
+                }
+        }
+
+        return NULL;
+}
+
+/*
  * Initcall to initialize the process registry.
  * Runs at init level 2 (early init, before user programs).
  */

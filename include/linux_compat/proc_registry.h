@@ -9,6 +9,7 @@
  * Process registry for PID lookup.
  *
  * Provides O(1) PID->task lookup using core's name_index mechanism.
+ * Also supports reverse lookups for wait4 extensions (by ppid/pgid).
  */
 
 /*
@@ -32,6 +33,25 @@ error_t register_process(Tcb_Base* task);
  * @return: Task if found, NULL otherwise
  */
 Tcb_Base* find_task_by_pid(pid_t pid);
+
+/*
+ * Find a child task by parent PID.
+ * Returns the first zombie child, or NULL if no zombie children found.
+ *
+ * @param ppid: Parent PID to search for
+ * @return: Zombie child task if found, NULL otherwise
+ */
+Tcb_Base* find_zombie_child(pid_t ppid);
+
+/*
+ * Find a zombie child in the same process group.
+ * Returns the first zombie child with matching pgid, or NULL if none found.
+ *
+ * @param ppid: Parent PID (to verify it's actually our child)
+ * @param pgid: Process group ID to match
+ * @return: Zombie child task if found, NULL otherwise
+ */
+Tcb_Base* find_zombie_child_in_pgid(pid_t ppid, pid_t pgid);
 
 /*
  * Unregister a process from the registry.

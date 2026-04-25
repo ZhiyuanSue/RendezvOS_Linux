@@ -123,24 +123,42 @@ static void clean_handle_message(Message_t *msg)
         }
         if (task && task_empty) {
                 /*
-                 * Active refcount teardown is expected to be safe:
-                 * `schedule()` switches hardware roots (CR3/TTBR0) on context
-                 * switches, so by the time this task is empty (all threads
-                 * removed and thread marked ZOMBIE), this CPU should have
-                 * dropped its active ref to the user vspace. Other CPUs
-                 * follow their own schedule switches and the vspace is
-                 * freed only on the last ref.
+                 * Check if this is a Linux compat task that has already been
+                 * reaped by wait4(). If exit_state == 2, the parent has already
+                 * reaped this task via wait4, so we should NOT delete it here
+                 * to avoid race condition.
                  */
-                if (task->vs == &root_vspace) {
-                        pr_error(
-                                "[ Error ] a user task should not use root vspace as its vspace\n");
+                bool should_delete = true;
+#ifdef LINUX_COMPAT_TEST
+                linux_proc_append_t *pa = linux_proc_append(task);
+                if (pa && pa->exit_state == 2) {
+                        pr_debug("[clean_server] Task PID=%d already reaped by wait4, skipping deletion\n",
+                                 task->pid);
+                        should_delete = false;
                 }
-                error_t e = delete_task(task);
-                if (e) {
-                        pr_error(
-                                "[ Error ] delete_task failed (task=%p, e=%d)\n",
-                                (void *)task,
-                                e);
+#endif
+
+                if (should_delete) {
+                        /*
+                         * Active refcount teardown is expected to be safe:
+                         * `schedule()` switches hardware roots (CR3/TTBR0) on context
+                         * switches, so by the time this task is empty (all threads
+                         * removed and thread marked ZOMBIE), this CPU should have
+                         * dropped its active ref to the user vspace. Other CPUs
+                         * follow their own schedule switches and the vspace is
+                         * freed only on the last ref.
+                         */
+                        if (task->vs == &root_vspace) {
+                                pr_error(
+                                        "[ Error ] a user task should not use root vspace as its vspace\n");
+                        }
+                        error_t e = delete_task(task);
+                        if (e) {
+                                pr_error(
+                                        "[ Error ] delete_task failed (task=%p, e=%d)\n",
+                                        (void *)task,
+                                        e);
+                        }
                 }
         }
 }
