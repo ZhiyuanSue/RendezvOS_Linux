@@ -13,7 +13,8 @@
   },
   "core_overrides": {
     "undef_features": [
-      "RENDEZVOS_CORE_AUTO_POWEROFF"
+      "RENDEZVOS_CORE_AUTO_POWEROFF",
+      "RENDEZVOS_TEST"
     ],
     "extra_features": []
   }

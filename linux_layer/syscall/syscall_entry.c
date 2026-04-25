@@ -36,9 +36,9 @@ void syscall(struct trap_frame *syscall_ctx)
                 break;
         case __NR_wait4:
                 ret = sys_wait4((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
-                               (i64*)syscall_ctx->ARCH_SYSCALL_ARG_2,
-                               (i32)syscall_ctx->ARCH_SYSCALL_ARG_3,
-                               (i64*)syscall_ctx->ARCH_SYSCALL_ARG_4);
+                                (i64 *)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                (i32)syscall_ctx->ARCH_SYSCALL_ARG_3,
+                                (i64 *)syscall_ctx->ARCH_SYSCALL_ARG_4);
                 break;
         case __NR_brk:
                 ret = (i64)sys_brk((u64)syscall_ctx->ARCH_SYSCALL_ARG_1);

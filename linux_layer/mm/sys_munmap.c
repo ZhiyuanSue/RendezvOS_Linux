@@ -28,10 +28,8 @@ i64 sys_munmap(u64 addr, u64 length)
                 return -LINUX_ESRCH;
 
         pr_debug("[munmap] freeing %d pages at %lx\n", page_num, addr);
-        error_t e = free_pages((void*)(vaddr)addr,
-                               page_num,
-                               tcb->vs,
-                               percpu(nexus_root));
+        error_t e = free_pages(
+                (void*)(vaddr)addr, page_num, tcb->vs, percpu(nexus_root));
         if (e != REND_SUCCESS) {
                 pr_debug("[munmap] free_pages failed with error %d\n", e);
                 return -LINUX_EINVAL;
@@ -39,4 +37,3 @@ i64 sys_munmap(u64 addr, u64 length)
         pr_debug("[munmap] success\n");
         return 0;
 }
-

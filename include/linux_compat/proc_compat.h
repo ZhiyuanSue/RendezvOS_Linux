@@ -16,9 +16,9 @@
 typedef struct linux_proc_append {
         u64 start_brk;
         u64 brk;
-        pid_t ppid;              /* Parent process PID */
-        i32 exit_code;           /* Exit code for wait() */
-        i32 exit_state;          /* Exit state: 0=running, 1=zombie, 2=reaped */
+        pid_t ppid; /* Parent process PID */
+        i32 exit_code; /* Exit code for wait() */
+        i32 exit_state; /* Exit state: 0=running, 1=zombie, 2=reaped */
         struct list_entry wait_queue; /* Parent processes waiting */
 } linux_proc_append_t;
 

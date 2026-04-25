@@ -8,8 +8,8 @@
 #include <syscall.h>
 
 /* Linux wait4 options */
-#define LINUX_WNOHANG   0x00000001  /* Don't block if no child exited */
-#define LINUX_WUNTRACED 0x00000002  /* Report stopped children */
+#define LINUX_WNOHANG    0x00000001 /* Don't block if no child exited */
+#define LINUX_WUNTRACED  0x00000002 /* Report stopped children */
 #define LINUX_WCONTINUED 0x00000008 /* Report continued children */
 
 /*
@@ -43,7 +43,9 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
         }
 
         pr_debug("[wait4] PID=%d waiting for child PID=%d, options=0x%x\n",
-                 parent->pid, pid, options);
+                 parent->pid,
+                 pid,
+                 options);
 
         /* Ignore rusage for now */
         if (rusage) {
@@ -70,7 +72,8 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
                         /* Wait for specific child */
                         child = find_task_by_pid(pid);
                         if (!child) {
-                                pr_debug("[wait4] Child PID=%d not found\n", pid);
+                                pr_debug("[wait4] Child PID=%d not found\n",
+                                         pid);
                                 return -LINUX_ECHILD;
                         }
 
@@ -82,8 +85,10 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
 
                         /* Check if this is actually our child */
                         if (child_pa->ppid != parent->pid) {
-                                pr_debug("[wait4] PID=%d is not our child (ppid=%d)\n",
-                                         pid, child_pa->ppid);
+                                pr_debug(
+                                        "[wait4] PID=%d is not our child (ppid=%d)\n",
+                                        pid,
+                                        child_pa->ppid);
                                 return -LINUX_ECHILD;
                         }
                 } else if (pid == -1) {
@@ -103,11 +108,13 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
                         i32 exit_code = child_pa->exit_code;
 
                         pr_debug("[wait4] Child PID=%d exited with code %d\n",
-                                 child->pid, exit_code);
+                                 child->pid,
+                                 exit_code);
 
                         /* Copy exit status to user space */
                         if (wstatus) {
-                                /* Simple copy - no user pointer validation yet */
+                                /* Simple copy - no user pointer validation yet
+                                 */
                                 *wstatus = exit_code;
                         }
 
@@ -126,7 +133,8 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
 
                 /* Small delay before next poll */
                 /* In a real implementation, we would block here */
-                for (volatile int i = 0; i < 1000; i++);
+                for (volatile int i = 0; i < 1000; i++)
+                        ;
         }
 
         pr_debug("[wait4] Timeout waiting for child\n");

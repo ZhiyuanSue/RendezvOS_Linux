@@ -26,7 +26,8 @@
  * Linux-layer page fault entry.
  *
  * We register a page fault handler using core's architecture-independent
- * trap_class interface. This keeps linux_layer code portable across architectures.
+ * trap_class interface. This keeps linux_layer code portable across
+ * architectures.
  *
  * The handler can resolve:
  * - lazy anonymous allocation (range exists but not filled)
@@ -57,9 +58,8 @@
  * We use core's nexus_remap_user_leaf() API which encapsulates all the
  * complex interactions between page tables, nexus tree, and reference counting.
  */
-static error_t linux_handle_cow_fault(vaddr fault_addr,
-                                       bool is_write,
-                                       bool is_present)
+static error_t linux_handle_cow_fault(vaddr fault_addr, bool is_write,
+                                      bool is_present)
 {
         VS_Common *vs = percpu(current_vspace);
         struct map_handler *handler = &percpu(Map_Handler);
@@ -73,7 +73,8 @@ static error_t linux_handle_cow_fault(vaddr fault_addr,
         /* Step 1: Query current mapping */
         ENTRY_FLAGS_t old_flags;
         int entry_level;
-        ppn_t old_ppn = have_mapped(vs, VPN(fault_addr), &old_flags, &entry_level, handler);
+        ppn_t old_ppn = have_mapped(
+                vs, VPN(fault_addr), &old_flags, &entry_level, handler);
 
         if (old_ppn <= 0 || !(old_flags & PAGE_ENTRY_VALID)) {
                 /* Page not present - not a COW fault */
@@ -97,7 +98,8 @@ static error_t linux_handle_cow_fault(vaddr fault_addr,
          */
         if (old_flags & PAGE_ENTRY_WRITE) {
                 /* Page already writable - not a COW fault */
-                pr_error("[COW] Page already writable at vaddr=0x%lx\n", fault_addr);
+                pr_error("[COW] Page already writable at vaddr=0x%lx\n",
+                         fault_addr);
                 return -E_RENDEZVOS;
         }
 
@@ -116,13 +118,9 @@ static error_t linux_handle_cow_fault(vaddr fault_addr,
          * between these cases and return appropriate error codes.
          */
 
-        if (!is_write || !is_present) {
-                /* Not a write fault on present page */
-                return -E_RENDEZVOS;
-        }
-
         pr_debug("[COW] Splitting page at vaddr=0x%lx (old_ppn=0x%lx)\n",
-                 fault_addr, (u64)old_ppn);
+                 fault_addr,
+                 (u64)old_ppn);
 
         /* Step 3: Allocate new physical page */
         size_t alloced_page_number;
@@ -151,21 +149,25 @@ static error_t linux_handle_cow_fault(vaddr fault_addr,
          */
         /* Check if nexus_node is properly initialized */
         if (!vs->_vspace_node) {
-                pr_error("[COW] vs->_vspace_node is NULL! va=0x%lx\n", fault_addr);
+                pr_error("[COW] vs->_vspace_node is NULL! va=0x%lx\n",
+                         fault_addr);
                 pr_error("[COW] This means child vspace has no nexus tree!\n");
                 pmm->pmm_free(pmm, new_ppn, 1);
                 return -E_RENDEZVOS;
         }
 
-        struct nexus_node* vspace_node = (struct nexus_node*)vs->_vspace_node;
+        struct nexus_node *vspace_node = (struct nexus_node *)vs->_vspace_node;
         if (vspace_node->vs_common != vs) {
-                pr_error("[COW] nexus_node->vs_common mismatch! va=0x%lx\n", fault_addr);
+                pr_error("[COW] nexus_node->vs_common mismatch! va=0x%lx\n",
+                         fault_addr);
                 pmm->pmm_free(pmm, new_ppn, 1);
                 return -E_RENDEZVOS;
         }
 
         pr_debug("[COW] vspace_node: addr=%p, vs_common=%p, expected vs=%p\n",
-                 vspace_node, vspace_node->vs_common, vs);
+                 vspace_node,
+                 vspace_node->vs_common,
+                 vs);
 
         /*
          * Step 5: Use nexus_remap_user_leaf() to update the mapping
@@ -173,22 +175,34 @@ static error_t linux_handle_cow_fault(vaddr fault_addr,
          * This function now automatically handles page alignment, so we can
          * pass the fault_addr directly without manual alignment.
          */
-        pr_debug("[COW] Calling nexus_remap_user_leaf: va=0x%lx, new_ppn=0x%lx, old_ppn=0x%lx, flags=0x%lx\n",
-                 fault_addr, (u64)new_ppn, (u64)old_ppn, (u64)(old_flags | PAGE_ENTRY_WRITE));
+        pr_debug(
+                "[COW] Calling nexus_remap_user_leaf: va=0x%lx, new_ppn=0x%lx, old_ppn=0x%lx, flags=0x%lx\n",
+                fault_addr,
+                (u64)new_ppn,
+                (u64)old_ppn,
+                (u64)(old_flags | PAGE_ENTRY_WRITE));
 
         ENTRY_FLAGS_t new_flags = old_flags | PAGE_ENTRY_WRITE;
         e = nexus_remap_user_leaf(vs, fault_addr, new_ppn, new_flags, old_ppn);
 
         if (e != REND_SUCCESS) {
                 pr_error("[COW] Failed to remap page (e=%d)\n", (int)e);
-                pr_error("[COW] Details: va=0x%lx, new_ppn=0x%lx, old_ppn=0x%lx, flags=0x%lx, entry_level=%d\n",
-                         fault_addr, (u64)new_ppn, (u64)old_ppn, (u64)new_flags, entry_level);
+                pr_error(
+                        "[COW] Details: va=0x%lx, new_ppn=0x%lx, old_ppn=0x%lx, flags=0x%lx, entry_level=%d\n",
+                        fault_addr,
+                        (u64)new_ppn,
+                        (u64)old_ppn,
+                        (u64)new_flags,
+                        entry_level);
                 pmm->pmm_free(pmm, new_ppn, 1);
                 return e;
         }
 
-        pr_debug("[COW] Successfully split page at vaddr=0x%lx (old_ppn=0x%lx -> new_ppn=0x%lx)\n",
-                 fault_addr, (u64)old_ppn, (u64)new_ppn);
+        pr_debug(
+                "[COW] Successfully split page at vaddr=0x%lx (old_ppn=0x%lx -> new_ppn=0x%lx)\n",
+                fault_addr,
+                (u64)old_ppn,
+                (u64)new_ppn);
 
         return REND_SUCCESS;
 }
@@ -219,8 +233,12 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
 #error "Unsupported architecture"
 #endif
 
-        pr_debug("[Linux compat] Page fault at vaddr=0x%lx (write=%d, present=%d, exec=%d)\n",
-                 fault_addr, is_write, is_present, is_execute);
+        pr_debug(
+                "[Linux compat] Page fault at vaddr=0x%lx (write=%d, present=%d, exec=%d)\n",
+                fault_addr,
+                is_write,
+                is_present,
+                is_execute);
 
         /*
          * First, determine if this is a kernel or user fault.
@@ -246,14 +264,15 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
         int level = 0;
         ppn_t ppn = have_mapped(vs, VPN(aligned), &pt_flags, &level, handler);
 
-        pr_debug("[Linux compat] have_mapped: va=0x%lx ppn=0x%lx flags=0x%lx level=%d vs=%p asid=%lu root=0x%lx\n",
-                 aligned,
-                 (u64)ppn,
-                 (u64)pt_flags,
-                 level,
-                 (void*)vs,
-                 (u64)vs->asid,
-                 (u64)vs->vspace_root_addr);
+        pr_debug(
+                "[Linux compat] have_mapped: va=0x%lx ppn=0x%lx flags=0x%lx level=%d vs=%p asid=%lu root=0x%lx\n",
+                aligned,
+                (u64)ppn,
+                (u64)pt_flags,
+                level,
+                (void *)vs,
+                (u64)vs->asid,
+                (u64)vs->vspace_root_addr);
 
         vaddr nstart = 0;
         ENTRY_FLAGS_t nflags = 0;
@@ -261,28 +280,32 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
 
         if (invalid_ppn(ppn)) {
                 if (ne == REND_SUCCESS) {
-                        pr_debug("[Linux compat] nexus query: start=0x%lx flags=0x%lx\n",
-                                 (u64)nstart,
-                                 (u64)nflags);
+                        pr_debug(
+                                "[Linux compat] nexus query: start=0x%lx flags=0x%lx\n",
+                                (u64)nstart,
+                                (u64)nflags);
                 } else {
-                        pr_debug("[Linux compat] nexus query: not found (e=%d)\n", (int)ne);
+                        pr_debug(
+                                "[Linux compat] nexus query: not found (e=%d)\n",
+                                (int)ne);
                 }
         }
 
         /*
-         * Page fault handling decision tree.
+         * Page fault handling decision tree based on nexus flags.
          *
-         * We classify faults into these categories:
-         * 1. NULL pointer access (fault_addr < PAGE_SIZE)
-         * 2. Lazy allocation (page not present, but in nexus)
-         * 3. COW write fault (page present + read-only + write)
-         * 4. True read-only violation (nexus RO, write attempt)
-         * 5. Unmapped address (no nexus entry)
-         * 6. Guard page (explicitly unmapped page in mapped region)
+         * We classify faults by what nexus says the mapping SHOULD be:
+         * - If nexus says writable -> this is a write access
+         * - If nexus says executable -> this is an execute access
+         * - Otherwise -> this is a read access
          *
          * User-mode faults: SIGSEGV (linux_fatal_user_fault)
          * Kernel-mode faults: kernel_panic
          */
+
+        /* Determine access type from nexus flags */
+        bool nexus_is_write = (nflags & PAGE_ENTRY_WRITE);
+        bool nexus_is_exec = (nflags & PAGE_ENTRY_EXEC);
 
         bool page_mapped = !invalid_ppn(ppn) && (pt_flags & PAGE_ENTRY_VALID);
         bool in_nexus = (ne == REND_SUCCESS);
@@ -292,7 +315,8 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
          * Any fault in the first page is almost certainly a bug.
          */
         if (fault_addr < PAGE_SIZE) {
-                pr_error("[Linux compat] NULL pointer access at 0x%lx\n", fault_addr);
+                pr_error("[Linux compat] NULL pointer access at 0x%lx\n",
+                         fault_addr);
                 if (is_kernel) {
                         kernel_panic("NULL pointer dereference in kernel\n");
                 } else {
@@ -310,16 +334,25 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
          * sparse address spaces.
          */
         if (!page_mapped && in_nexus) {
-                pr_debug("[Linux compat] Lazy allocation at 0x%lx (nexus flags=0x%lx)\n",
-                         fault_addr, (u64)nflags);
+                pr_debug(
+                        "[Linux compat] Lazy allocation at 0x%lx (nexus flags=0x%lx)\n",
+                        fault_addr,
+                        (u64)nflags);
 
-                /* Check permissions before allocating */
-                if (is_write && !(nflags & PAGE_ENTRY_WRITE)) {
-                        /* Write to RO lazy mapping - treat as true RO violation */
+                /* Check permissions based on nexus flags */
+                if (nexus_is_write && !(nflags & PAGE_ENTRY_WRITE)) {
+                        /* Write to RO lazy mapping - should not happen */
+                        pr_error(
+                                "[Linux compat] Nexus inconsistency: write fault on RO nexus mapping at 0x%lx\n",
+                                fault_addr);
                         goto handle_read_only_violation;
                 }
-                if (is_execute && !(nflags & PAGE_ENTRY_EXEC)) {
-                        /* Execute from NX lazy mapping - permission violation */
+                if (nexus_is_exec && !(nflags & PAGE_ENTRY_EXEC)) {
+                        /* Execute from NX lazy mapping - permission violation
+                         */
+                        pr_error(
+                                "[Linux compat] Nexus inconsistency: exec fault on NX nexus mapping at 0x%lx\n",
+                                fault_addr);
                         goto handle_read_only_violation;
                 }
 
@@ -337,12 +370,14 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
                 size_t alloced_page_number;
                 ppn_t new_ppn = pmm->pmm_alloc(pmm, 1, &alloced_page_number);
                 if (invalid_ppn(new_ppn) || alloced_page_number != 1) {
-                        pr_error("[Linux compat] Failed to allocate physical page for lazy allocation\n");
+                        pr_error(
+                                "[Linux compat] Failed to allocate physical page for lazy allocation\n");
                         goto unhandled_fault;
                 }
 
                 pr_debug("[Linux compat] Allocated ppn=0x%lx for va=0x%lx\n",
-                         (u64)new_ppn, aligned);
+                         (u64)new_ppn,
+                         aligned);
 
                 /*
                  * Step 2: Zero the page (anonymous mapping semantics)
@@ -353,10 +388,12 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
                  * for the physical page, then memset to zero it.
                  */
                 vaddr virt_page = KERNEL_PHY_TO_VIRT(PADDR(new_ppn));
-                memset((void*)virt_page, 0, PAGE_SIZE);
+                memset((void *)virt_page, 0, PAGE_SIZE);
 
-                pr_debug("[Linux compat] Zeroed page at vaddr=0x%lx (ppn=0x%lx)\n",
-                         virt_page, (u64)new_ppn);
+                pr_debug(
+                        "[Linux compat] Zeroed page at vaddr=0x%lx (ppn=0x%lx)\n",
+                        virt_page,
+                        (u64)new_ppn);
 
                 /*
                  * Step 3: Map the page into user address space
@@ -366,7 +403,8 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
                  */
                 e = map(vs, new_ppn, VPN(aligned), 3, nflags, handler);
                 if (e != REND_SUCCESS) {
-                        pr_error("[Linux compat] Failed to map page (e=%d)\n", (int)e);
+                        pr_error("[Linux compat] Failed to map page (e=%d)\n",
+                                 (int)e);
                         pmm->pmm_free(pmm, new_ppn, 1);
                         goto unhandled_fault;
                 }
@@ -383,7 +421,8 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
                  */
 
                 pr_info("[Linux compat] Lazy allocation successful: va=0x%lx -> ppn=0x%lx\n",
-                        aligned, (u64)new_ppn);
+                        aligned,
+                        (u64)new_ppn);
 
                 /* Page successfully allocated and mapped - return to user */
                 return;
@@ -391,18 +430,27 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
 
         /*
          * Category 3: COW write fault.
-         * Page present + read-only + write, with nexus saying writable.
+         * Page present + read-only, with nexus saying writable.
+         *
+         * We determine this is a write fault based on nexus flags, not hardware
+         * registers.
          */
-        if (page_mapped && is_write && is_present && !(pt_flags & PAGE_ENTRY_WRITE)) {
+        if (page_mapped && nexus_is_write && is_present
+            && !(pt_flags & PAGE_ENTRY_WRITE)) {
                 if (in_nexus && (nflags & PAGE_ENTRY_WRITE)) {
-                        /* This is a COW page - nexus says writable, PTE is RO */
-                        pr_debug("[Linux compat] COW write fault at 0x%lx\n", fault_addr);
-                        error_t e = linux_handle_cow_fault(fault_addr, is_write, is_present);
+                        /* This is a COW page - nexus says writable, PTE is RO
+                         */
+                        pr_debug("[Linux compat] COW write fault at 0x%lx\n",
+                                 fault_addr);
+                        error_t e = linux_handle_cow_fault(
+                                fault_addr, nexus_is_write, is_present);
                         if (e == REND_SUCCESS) {
                                 return;
                         }
-                        pr_error("[Linux compat] COW handling failed at 0x%lx: e=%d\n",
-                                 fault_addr, (int)e);
+                        pr_error(
+                                "[Linux compat] COW handling failed at 0x%lx: e=%d\n",
+                                fault_addr,
+                                (int)e);
                         goto unhandled_fault;
                 } else {
                         /* Not COW - this is a true read-only violation */
@@ -414,12 +462,13 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
          * Category 4: True read-only violation.
          * Attempt to write to genuinely read-only mapping.
          */
-        if (is_write && !is_present && page_mapped) {
+        if (nexus_is_write && !is_present && page_mapped) {
         handle_read_only_violation:
                 pr_error("[Linux compat] Write to read-only mapping at 0x%lx\n",
                          fault_addr);
                 pr_error("[Linux compat] pt_flags=0x%lx, nflags=0x%lx\n",
-                         (u64)pt_flags, (u64)nflags);
+                         (u64)pt_flags,
+                         (u64)nflags);
                 goto unhandled_fault;
         }
 
@@ -430,7 +479,8 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
         if (!in_nexus) {
                 pr_error("[Linux compat] Access to unmapped address at 0x%lx\n",
                          fault_addr);
-                pr_error("[Linux compat] Not in nexus - this is a true segfault\n");
+                pr_error(
+                        "[Linux compat] Not in nexus - this is a true segfault\n");
                 goto unhandled_fault;
         }
 
@@ -438,8 +488,11 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
          * Category 6: Other faults (execution violations, etc.)
          */
         pr_error("[Linux compat] Unhandled page fault at 0x%lx\n", fault_addr);
-        pr_error("[Linux compat] Fault details: write=%d, present=%d, exec=%d\n",
-                 is_write, is_present, is_execute);
+        pr_error(
+                "[Linux compat] Fault details: write=%d, present=%d, exec=%d\n",
+                is_write,
+                is_present,
+                is_execute);
 
 fatal_fault:
 unhandled_fault:
@@ -460,14 +513,15 @@ unhandled_fault:
 static void linux_page_fault_irq_init(void)
 {
         /*
-         * Register page fault handler using architecture-independent trap_class.
+         * Register page fault handler using architecture-independent
+         * trap_class.
          *
          * This automatically maps to the correct trap IDs on each architecture:
          * - x86_64: vector 14 (#PF)
          * - aarch64: EC 0x20 (instruction abort) and EC 0x24 (data abort)
          */
-        register_fixed_trap(TRAP_CLASS_PAGE_FAULT, linux_trap_pf_handler, IRQ_NO_ATTR);
+        register_fixed_trap(
+                TRAP_CLASS_PAGE_FAULT, linux_trap_pf_handler, IRQ_NO_ATTR);
 }
 
 DEFINE_INIT_LEVEL(linux_page_fault_irq_init, 0);
-

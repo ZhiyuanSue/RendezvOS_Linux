@@ -16,11 +16,8 @@ i64 sys_fork();
 u64 sys_mmap(u64 addr, u64 length, i64 prot, i64 flags, i64 fd, u64 offset);
 i64 sys_munmap(u64 addr, u64 length);
 i64 sys_mprotect(u64 addr, u64 length, i64 prot);
-i64 sys_mremap(u64 old_address,
-              u64 old_size,
-              u64 new_size,
-              u64 flags,
-              u64 new_address);
+i64 sys_mremap(u64 old_address, u64 old_size, u64 new_size, u64 flags,
+               u64 new_address);
 
 i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage);
 i64 sys_waitpid(i32 pid, i64* wstatus, i32 options);

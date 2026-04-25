@@ -27,16 +27,14 @@ i64 sys_mprotect(u64 addr, u64 length, i64 prot)
                 return -LINUX_ESRCH;
 
         ENTRY_FLAGS_t eflags = linux_prot_to_page_flags(prot);
-        error_t e = nexus_update_range_flags(
-                percpu(nexus_root),
-                tcb->vs,
-                (vaddr)addr,
-                len_aligned,
-                NEXUS_RANGE_FLAGS_ABSOLUTE,
-                eflags,
-                0);
+        error_t e = nexus_update_range_flags(percpu(nexus_root),
+                                             tcb->vs,
+                                             (vaddr)addr,
+                                             len_aligned,
+                                             NEXUS_RANGE_FLAGS_ABSOLUTE,
+                                             eflags,
+                                             0);
         if (e != REND_SUCCESS)
                 return -LINUX_EINVAL;
         return 0;
 }
-

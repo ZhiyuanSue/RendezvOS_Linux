@@ -28,8 +28,14 @@
 
 u64 sys_mmap(u64 addr, u64 length, i64 prot, i64 flags, i64 fd, u64 offset)
 {
-        pr_debug("[mmap] called: addr=%lx, length=%lx, prot=%lx, flags=%lx, fd=%d, offset=%lx\n",
-                 addr, length, prot, flags, fd, offset);
+        pr_debug(
+                "[mmap] called: addr=%lx, length=%lx, prot=%lx, flags=%lx, fd=%d, offset=%lx\n",
+                addr,
+                length,
+                prot,
+                flags,
+                fd,
+                offset);
 
         if (length == 0)
                 return (u64)(-LINUX_EINVAL);
@@ -56,7 +62,11 @@ u64 sys_mmap(u64 addr, u64 length, i64 prot, i64 flags, i64 fd, u64 offset)
                 return (u64)(-LINUX_EFAULT);
 
         ENTRY_FLAGS_t page_flags = linux_prot_to_page_flags(prot);
-        pr_debug("[mmap] tcb=%p, pa=%p, brk=%lx, page_flags=%lx\n", tcb, pa, pa->brk, page_flags);
+        pr_debug("[mmap] tcb=%p, pa=%p, brk=%lx, page_flags=%lx\n",
+                 tcb,
+                 pa,
+                 pa->brk,
+                 page_flags);
 
         /* Exact mapping if MAP_FIXED is set. */
         if (flags & LINUX_MAP_FIXED) {
@@ -88,7 +98,9 @@ u64 sys_mmap(u64 addr, u64 length, i64 prot, i64 flags, i64 fd, u64 offset)
                 hint = (vaddr)addr;
         }
 
-        pr_debug("[mmap] searching from hint=%lx, page_num=%lu\n", hint, page_num);
+        pr_debug("[mmap] searching from hint=%lx, page_num=%lu\n",
+                 hint,
+                 page_num);
 
         /* Try a bounded number of probes to avoid infinite loops. */
         const int max_probes = 64;
@@ -105,7 +117,7 @@ u64 sys_mmap(u64 addr, u64 length, i64 prot, i64 flags, i64 fd, u64 offset)
                 hint += (vaddr)len_aligned;
         }
 
-        pr_debug("[mmap] failed: no free pages found after %d probes\n", max_probes);
+        pr_debug("[mmap] failed: no free pages found after %d probes\n",
+                 max_probes);
         return (u64)(-LINUX_ENOMEM);
 }
-

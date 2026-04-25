@@ -30,14 +30,15 @@ void *linux_elf_init_handler(Arch_Task_Context *ctx,
         u64 brk0 = (u64)info->max_load_end;
         if (brk0 == 0 || brk0 >= KERNEL_VIRT_OFFSET) {
                 pr_warn("[LINUX_ELF_INIT] Invalid brk: max_load_end=%lx, using default 0x40000000\n",
-                       (u64)info->max_load_end);
+                        (u64)info->max_load_end);
                 brk0 = 0x40000000;
         }
 
         pa->brk = brk0;
         pa->start_brk = brk0;
         pr_info("[LINUX_ELF_INIT] Set brk to %lx (max_load_end=%lx)\n",
-                brk0, (u64)info->max_load_end);
+                brk0,
+                (u64)info->max_load_end);
 
         return NULL;
 }

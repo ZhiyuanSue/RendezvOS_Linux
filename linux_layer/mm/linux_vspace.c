@@ -16,7 +16,8 @@
  *     pages (via map() remap of the same physical page with updated flags).
  * - Nexus metadata is populated for the child by core vspace_clone (internal).
  *
- * This prepares COW semantics; the actual fault-time split is handled elsewhere.
+ * This prepares COW semantics; the actual fault-time split is handled
+ * elsewhere.
  */
 
 error_t linux_copy_vspace(VS_Common *parent_vs, VS_Common **child_vs_ptr)
@@ -30,10 +31,9 @@ error_t linux_copy_vspace(VS_Common *parent_vs, VS_Common **child_vs_ptr)
                 return -E_IN_PARAM;
         }
 
-        return vspace_clone(
-                parent_vs,
-                child_vs_ptr,
-                (vspace_clone_flags_t)(VSPACE_CLONE_F_USER_4K_ONLY
-                                       | VSPACE_CLONE_F_COW_PREP),
-                percpu(nexus_root));
+        return vspace_clone(parent_vs,
+                            child_vs_ptr,
+                            (vspace_clone_flags_t)(VSPACE_CLONE_F_USER_4K_ONLY
+                                                   | VSPACE_CLONE_F_COW_PREP),
+                            percpu(nexus_root));
 }

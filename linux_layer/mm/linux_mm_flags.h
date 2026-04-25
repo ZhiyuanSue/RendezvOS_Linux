@@ -22,4 +22,3 @@ static inline ENTRY_FLAGS_t linux_prot_to_page_flags(i64 prot)
 }
 
 #endif
-

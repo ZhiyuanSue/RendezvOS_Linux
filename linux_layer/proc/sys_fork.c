@@ -88,7 +88,8 @@ i64 sys_fork()
         /* Add child to task manager */
         e = add_task_to_manager(percpu(core_tm), child);
         if (e) {
-                pr_error("[FORK] Failed to add child to task manager: %d\n", (int)e);
+                pr_error("[FORK] Failed to add child to task manager: %d\n",
+                         (int)e);
                 ret = -LINUX_EAGAIN;
                 goto out_free_vspace;
         }
@@ -102,49 +103,47 @@ i64 sys_fork()
          * has the same layout as the parent (including Linux-specific fields).
          *
          * Note: copy_thread must be called from syscall context on the parent.
-         * Core copies the parent's syscall trap frame into the child's save slot
-         * inside copy_thread, then run_copied_thread → arch_return_to_user(..., NULL, ret).
+         * Core copies the parent's syscall trap frame into the child's save
+         * slot inside copy_thread, then run_copied_thread →
+         * arch_return_to_user(..., NULL, ret).
          */
         parent_thread = get_cpu_current_thread();
-        child_thread = copy_thread(parent_thread, child, 0,
-                                   LINUX_THREAD_APPEND_BYTES);
+        child_thread =
+                copy_thread(parent_thread, child, 0, LINUX_THREAD_APPEND_BYTES);
         if (!child_thread) {
                 pr_error("[FORK] Failed to create child thread\n");
                 ret = -LINUX_ENOMEM;
                 goto out_del_from_manager;
         }
 
-        /* Add child thread to task */
-        e = add_thread_to_task(child, child_thread);
-        if (e) {
-                pr_error("[FORK] Failed to add child thread to task: %d\n", (int)e);
-                ret = -LINUX_EAGAIN;
-                goto out_free_thread;
-        }
+        /* Note: copy_thread already set child_thread->belong_tcb = child,
+         * so add_thread_to_task is not needed here */
 
         /* Add child thread to scheduler */
         e = add_thread_to_manager(percpu(core_tm), child_thread);
         if (e) {
-                pr_error("[FORK] Failed to add child thread to scheduler: %d\n", (int)e);
+                pr_error("[FORK] Failed to add child thread to scheduler: %d\n",
+                         (int)e);
                 ret = -LINUX_EAGAIN;
-                goto out_del_thread_from_task;
+                goto out_free_thread;
         }
 
         /* Register child in PID registry */
         e = register_process(child);
         if (e) {
                 pr_warn("[FORK] Failed to register child PID: %d\n", (int)e);
-                /* Non-fatal: fork still works, just wait/waitpid won't find it */
+                /* Non-fatal: fork still works, just wait/waitpid won't find it
+                 */
         }
 
         pr_info("[FORK] Fork: parent PID=%d, child PID=%d, child tid=%d\n",
-                parent->pid, child->pid, child_thread->tid);
+                parent->pid,
+                child->pid,
+                child_thread->tid);
 
         /* Return child PID to parent */
         return (i64)child->pid;
 
-out_del_thread_from_task:
-        del_thread_from_task(child_thread);
 out_free_thread:
         delete_thread(child_thread);
 out_del_from_manager:

@@ -10,4 +10,3 @@
 void linux_fatal_user_fault(i64 exit_code);
 
 #endif
-

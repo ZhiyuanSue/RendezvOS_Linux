@@ -49,10 +49,11 @@ i64 sys_waitpid(i32 pid, i64* wstatus, i32 options)
          *
          * According to Linux man page:
          *   pid_t waitpid(pid_t pid, int *wstatus, int options);
-         *   pid_t wait4(pid_t pid, int *wstatus, int options, struct rusage *rusage);
+         *   pid_t wait4(pid_t pid, int *wstatus, int options, struct rusage
+         * *rusage);
          *
          * waitpid(pid, wstatus, options) == wait4(pid, wstatus, options, NULL)
          */
-        extern i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage);
+        extern i64 sys_wait4(i32 pid, i64 * wstatus, i32 options, i64 * rusage);
         return sys_wait4(pid, wstatus, options, NULL);
 }

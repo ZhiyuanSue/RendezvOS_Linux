@@ -94,8 +94,15 @@ static void task_drop(void* value)
 
 void proc_registry_init(void)
 {
-        name_index_init(&pid_index, NULL, 16, NULL,
-                        task_get_name, task_hold, task_drop, NULL, NULL);
+        name_index_init(&pid_index,
+                        NULL,
+                        16,
+                        NULL,
+                        task_get_name,
+                        task_hold,
+                        task_drop,
+                        NULL,
+                        NULL);
         pr_info("[proc] PID registry initialized\n");
 }
 
@@ -114,7 +121,8 @@ error_t register_process(Tcb_Base* task)
         error_t e = name_index_register(&pid_index, task, &row_idx);
         if (e) {
                 pr_error("[proc] Failed to register PID %d: %d\n",
-                         task->pid, (int)e);
+                         task->pid,
+                         (int)e);
                 return -LINUX_EAGAIN;
         }
 
@@ -131,7 +139,8 @@ Tcb_Base* find_task_by_pid(pid_t pid)
         char name_buf[16];
         format_pid_decimal(name_buf, sizeof(name_buf), pid);
 
-        Tcb_Base* task = (Tcb_Base*)name_index_lookup(&pid_index, name_buf, NULL);
+        Tcb_Base* task =
+                (Tcb_Base*)name_index_lookup(&pid_index, name_buf, NULL);
         if (task) {
                 pr_debug("[proc] Found PID %d\n", pid);
         } else {
@@ -167,4 +176,3 @@ static void proc_registry_initcall(void)
         proc_registry_init();
 }
 DEFINE_INIT(proc_registry_initcall);
-
