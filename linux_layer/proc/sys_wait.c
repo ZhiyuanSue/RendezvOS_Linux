@@ -220,6 +220,34 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
                 /* Mark child as reaped */
                 child_pa->exit_state = 2; /* 2 = reaped */
 
+                /*
+                 * Encode exit status in Linux format.
+                 * For normal exit: status = (exit_code << 8) | 0x00
+                 * This matches WEXITSTATUS(status) = ((status & 0xff00) >> 8)
+                 */
+                i32 encoded_status = 0;
+                if (exit_code >= 0 && exit_code <= 255) {
+                        encoded_status = (exit_code << 8) | 0x00;
+                } else {
+                        /* Exit code out of range, use 0xFF */
+                        encoded_status = (255 << 8) | 0x00;
+                }
+
+                if (wstatus) {
+                        *wstatus = encoded_status;
+                }
+
+                /*
+                 * Note: We don't need to notify clean_server here.
+                 * The child process already notified clean_server when it exited.
+                 * clean_server will check exit_state and decide whether to delete:
+                 * - exit_state==1 (zombie) with parent: keep for wait4
+                 * - exit_state==1 (zombie) orphan: delete immediately
+                 * - exit_state==2 (reaped): delete immediately
+                 */
+                pr_debug("[wait4] Child PID=%d marked as reaped, exit_code=%d, status=0x%x\n",
+                         child_pid, exit_code, encoded_status);
+
                 return (i64)child_pid;
         }
 
@@ -325,10 +353,25 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
                         (pid_t)child_pid_i64,
                         exit_code);
 
+                /*
+                 * Encode exit status in Linux format.
+                 * For normal exit: status = (exit_code << 8) | 0x00
+                 */
+                i32 encoded_status = 0;
+                if (exit_code >= 0 && exit_code <= 255) {
+                        encoded_status = (exit_code << 8) | 0x00;
+                } else {
+                        /* Exit code out of range, use 0xFF */
+                        encoded_status = (255 << 8) | 0x00;
+                }
+
                 /* Copy exit status to user space */
                 if (wstatus) {
-                        *wstatus = exit_code;
+                        *wstatus = encoded_status;
                 }
+
+                pr_debug("[wait4] Returning child_pid=%d, exit_code=%d, status=0x%x\n",
+                         (pid_t)child_pid_i64, exit_code, encoded_status);
 
                 return (i64)child_pid_i64;
         } else {

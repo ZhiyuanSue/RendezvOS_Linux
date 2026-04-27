@@ -13,6 +13,7 @@
 #include <linux_compat/test_sync_ipc.h>
 #ifdef LINUX_COMPAT_TEST
 #include <linux_compat/proc_compat.h>
+#include <linux_compat/proc_registry.h>
 #include <linux_compat/test_runner.h>
 #endif
 
@@ -123,19 +124,48 @@ static void clean_handle_message(Message_t *msg)
         }
         if (task && task_empty) {
                 /*
-                 * Check if this is a Linux compat task that has already been
-                 * reaped by wait4(). If exit_state == 2, the parent has already
-                 * reaped this task via wait4, so we should NOT delete it here
-                 * to avoid race condition.
+                 * Check if this is a Linux compat task that is still zombie.
+                 * exit_state: 0=running, 1=zombie, 2=reaped
+                 *
+                 * If exit_state == 1 (zombie):
+                 *   - Check if parent task still exists (not just wait_port)
+                 *   - If parent exists: don't delete (wait4 will reap)
+                 *   - If parent doesn't exist: delete (orphan)
+                 *
+                 * If exit_state == 2 (reaped): safe to delete
                  */
                 bool should_delete = true;
 #ifdef LINUX_COMPAT_TEST
                 linux_proc_append_t *pa = linux_proc_append(task);
+                if (pa && pa->exit_state == 1) {
+                        /* Zombie child - check if parent task still exists */
+                        pr_debug("[clean_server] Task PID=%d is zombie, checking parent PID=%d\n",
+                                 task->pid, pa->ppid);
+
+                        /* Check if parent task exists in proc_registry */
+                        if (pa->ppid > 0) {
+                                Tcb_Base* parent_task = find_task_by_pid(pa->ppid);
+                                if (parent_task) {
+                                        pr_debug("[clean_server] Parent PID=%d still exists, keeping zombie child PID=%d for wait4\n",
+                                                 pa->ppid, task->pid);
+                                        should_delete = false;
+                                } else {
+                                        pr_debug("[clean_server] Parent PID=%d not found in registry, deleting orphan zombie child PID=%d\n",
+                                                 pa->ppid, task->pid);
+                                        should_delete = true;
+                                }
+                        } else {
+                                /* No parent (ppid <= 0), safe to delete */
+                                pr_debug("[clean_server] Task PID=%d has no parent, safe to delete\n",
+                                         task->pid);
+                                should_delete = true;
+                        }
+                }
                 if (pa && pa->exit_state == 2) {
                         pr_debug(
-                                "[clean_server] Task PID=%d already reaped by wait4, skipping deletion\n",
+                                "[clean_server] Task PID=%d already reaped by wait4, safe to delete\n",
                                 task->pid);
-                        should_delete = false;
+                        should_delete = true;
                 }
 #endif
 
@@ -153,6 +183,17 @@ static void clean_handle_message(Message_t *msg)
                                 pr_error(
                                         "[ Error ] a user task should not use root vspace as its vspace\n");
                         }
+
+#ifdef LINUX_COMPAT_TEST
+                        /* Unregister from proc_registry before deleting */
+                        linux_proc_append_t *pa = linux_proc_append(task);
+                        if (pa) {
+                                pr_debug("[clean_server] Unregistering PID=%d from proc_registry\n",
+                                         task->pid);
+                                unregister_process(task);
+                        }
+#endif
+
                         error_t e = delete_task(task);
                         if (e) {
                                 pr_error(
