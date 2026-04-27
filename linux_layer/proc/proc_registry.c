@@ -181,7 +181,8 @@ Tcb_Base* find_zombie_child(pid_t ppid)
                 return NULL;
         }
 
-        /* Try a reasonable range of PIDs (assuming PIDs are allocated sequentially) */
+        /* Try a reasonable range of PIDs (assuming PIDs are allocated
+         * sequentially) */
         for (pid_t candidate = ppid + 1; candidate < ppid + 1000; candidate++) {
                 Tcb_Base* child = find_task_by_pid(candidate);
                 if (!child) {
@@ -195,8 +196,10 @@ Tcb_Base* find_zombie_child(pid_t ppid)
 
                 /* Check if this is our child and in zombie state */
                 if (pa->ppid == ppid && pa->exit_state == 1) {
-                        pr_debug("[proc] Found zombie child PID=%d of parent PID=%d\n",
-                                 candidate, ppid);
+                        pr_debug(
+                                "[proc] Found zombie child PID=%d of parent PID=%d\n",
+                                candidate,
+                                ppid);
                         return child;
                 }
         }
@@ -226,10 +229,15 @@ Tcb_Base* find_zombie_child_in_pgid(pid_t ppid, pid_t pgid)
                         continue;
                 }
 
-                /* Check if this is our child, in zombie state, and matches pgid */
-                if (pa->ppid == ppid && pa->exit_state == 1 && pa->pgid == pgid) {
-                        pr_debug("[proc] Found zombie child PID=%d of parent PID=%d in pgid %d\n",
-                                 candidate, ppid, pgid);
+                /* Check if this is our child, in zombie state, and matches pgid
+                 */
+                if (pa->ppid == ppid && pa->exit_state == 1
+                    && pa->pgid == pgid) {
+                        pr_debug(
+                                "[proc] Found zombie child PID=%d of parent PID=%d in pgid %d\n",
+                                candidate,
+                                ppid,
+                                pgid);
                         return child;
                 }
         }

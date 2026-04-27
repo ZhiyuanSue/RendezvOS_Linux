@@ -53,7 +53,9 @@ flowchart LR
 | **细粒度锁（core 已有）** | nexus、`vspace_lock`、`sched_lock`、PMM zone 锁 |
 | **per-CPU 数据** | 当前线程/调度队列（见 `doc/ai/INVARIANTS.md`） |
 
-**演进**：阶段 1 用 `linux_layer` 内 **一把大锁或分区锁** 维护 `proc_registry`；阶段 2 将 **同一数据结构的操作** 迁到 `proc_coordinator` 单线程，**消息格式**可预先按阶段 2 设计，减少二次重写。
+**演进**：
+- ✅ **Phase 1 完成**：用 `linux_layer` 内 **proc_registry**（基于core锁机制）维护进程注册表
+- 📋 **阶段 2（可选）**：将 **同一数据结构的操作** 迁到 `proc_coordinator` 单线程，**消息格式**可预先按阶段 2 设计，减少二次重写
 
 ## 4. 与微内核的关系
 

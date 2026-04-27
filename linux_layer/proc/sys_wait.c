@@ -23,8 +23,8 @@ extern struct Port_Table* global_port_table;
 #define WAIT_PORT_NAME_MAX 32
 
 /* Linux compat IPC module and opcodes */
-#define KMSG_MOD_LINUX_COMPAT      2u
-#define KMSG_LINUX_EXIT_NOTIFY     1u
+#define KMSG_MOD_LINUX_COMPAT  2u
+#define KMSG_LINUX_EXIT_NOTIFY 1u
 
 /*
  * Generate wait port name for a process.
@@ -141,7 +141,8 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
                 /* Check if this is actually our child */
                 if (child_pa->ppid != parent->pid) {
                         pr_debug("[wait4] PID=%d is not our child (ppid=%d)\n",
-                                 pid, child_pa->ppid);
+                                 pid,
+                                 child_pa->ppid);
                         return -LINUX_ECHILD;
                 }
 
@@ -150,8 +151,9 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
                 /* Wait for any child */
                 child = find_zombie_child(parent->pid);
                 if (!child) {
-                        pr_debug("[wait4] No zombie children found for parent PID=%d\n",
-                                 parent->pid);
+                        pr_debug(
+                                "[wait4] No zombie children found for parent PID=%d\n",
+                                parent->pid);
                         return -LINUX_ECHILD;
                 }
 
@@ -171,8 +173,9 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
 
                 child = find_zombie_child_in_pgid(parent->pid, parent_pa->pgid);
                 if (!child) {
-                        pr_debug("[wait4] No zombie children found in pgid %d\n",
-                                 parent_pa->pgid);
+                        pr_debug(
+                                "[wait4] No zombie children found in pgid %d\n",
+                                parent_pa->pgid);
                         return -LINUX_ECHILD;
                 }
 
@@ -188,8 +191,9 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
                 pid_t pgid = -pid;
                 child = find_zombie_child_in_pgid(parent->pid, pgid);
                 if (!child) {
-                        pr_debug("[wait4] No zombie children found in pgid %d\n",
-                                 pgid);
+                        pr_debug(
+                                "[wait4] No zombie children found in pgid %d\n",
+                                pgid);
                         return -LINUX_ECHILD;
                 }
 
@@ -233,32 +237,43 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
 
                 Message_Port_t* wait_port = thread_lookup_port(port_name);
                 if (!wait_port) {
-                        pr_debug("[wait4] Creating wait port '%s'\n", port_name);
+                        pr_debug("[wait4] Creating wait port '%s'\n",
+                                 port_name);
                         wait_port = create_message_port(port_name);
                         if (!wait_port) {
-                                pr_error("[wait4] Failed to create wait port\n");
+                                pr_error(
+                                        "[wait4] Failed to create wait port\n");
                                 return -LINUX_EAGAIN;
                         }
-                        /* Register the port in the global port table so child can find it */
-                        error_t reg_e = register_port(global_port_table, wait_port);
+                        /* Register the port in the global port table so child
+                         * can find it */
+                        error_t reg_e =
+                                register_port(global_port_table, wait_port);
                         if (reg_e != REND_SUCCESS) {
                                 pr_warn("[wait4] Failed to register wait port '%s': %d\n",
-                                        port_name, (int)reg_e);
+                                        port_name,
+                                        (int)reg_e);
                         } else {
-                                pr_debug("[wait4] Created and registered wait port '%s'\n",
-                                         port_name);
+                                pr_debug(
+                                        "[wait4] Created and registered wait port '%s'\n",
+                                        port_name);
                         }
                 } else {
-                        pr_debug("[wait4] Using existing wait port '%s'\n", port_name);
+                        pr_debug("[wait4] Using existing wait port '%s'\n",
+                                 port_name);
                 }
 
-                pr_debug("[wait4] PID=%d waiting on port '%s' for child PID=%d\n",
-                         parent->pid, port_name, child_pid);
+                pr_debug(
+                        "[wait4] PID=%d waiting on port '%s' for child PID=%d\n",
+                        parent->pid,
+                        port_name,
+                        child_pid);
 
                 /* Block waiting for exit message from child */
                 error_t recv_e = recv_msg(wait_port);
                 if (recv_e != REND_SUCCESS) {
-                        pr_error("[wait4] Failed to receive message (e=%d)\n", (int)recv_e);
+                        pr_error("[wait4] Failed to receive message (e=%d)\n",
+                                 (int)recv_e);
                         return -LINUX_EINTR;
                 }
 
@@ -279,13 +294,16 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
                 /* Verify module and opcode */
                 if (kmsg->hdr.module != KMSG_MOD_LINUX_COMPAT
                     || kmsg->hdr.opcode != KMSG_LINUX_EXIT_NOTIFY) {
-                        pr_error("[wait4] Invalid kmsg module/opcode (mod=%u, op=%u)\n",
-                                 kmsg->hdr.module, kmsg->hdr.opcode);
+                        pr_error(
+                                "[wait4] Invalid kmsg module/opcode (mod=%u, op=%u)\n",
+                                kmsg->hdr.module,
+                                kmsg->hdr.opcode);
                         dequeue_recv_msg();
                         return -LINUX_ECHILD;
                 }
 
-                /* Decode the payload: format "qi" = i64(pid) + i32(exit_code) */
+                /* Decode the payload: format "qi" = i64(pid) + i32(exit_code)
+                 */
                 i64 child_pid_i64;
                 i32 exit_code;
                 error_t dec_e = ipc_serial_decode(kmsg->payload,
@@ -294,15 +312,18 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
                                                   &child_pid_i64,
                                                   &exit_code);
                 if (dec_e != REND_SUCCESS) {
-                        pr_error("[wait4] Failed to decode payload (e=%d)\n", (int)dec_e);
+                        pr_error("[wait4] Failed to decode payload (e=%d)\n",
+                                 (int)dec_e);
                         dequeue_recv_msg();
                         return -LINUX_ECHILD;
                 }
 
                 dequeue_recv_msg();
 
-                pr_debug("[wait4] Received exit notification: child_pid=%d, exit_code=%d\n",
-                         (pid_t)child_pid_i64, exit_code);
+                pr_debug(
+                        "[wait4] Received exit notification: child_pid=%d, exit_code=%d\n",
+                        (pid_t)child_pid_i64,
+                        exit_code);
 
                 /* Copy exit status to user space */
                 if (wstatus) {
@@ -311,8 +332,10 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
 
                 return (i64)child_pid_i64;
         } else {
-                /* For pid == -1, 0, or < -1, we should have found a zombie above */
-                pr_error("[wait4] Unexpected: non-zombie child for pid=%d\n", pid);
+                /* For pid == -1, 0, or < -1, we should have found a zombie
+                 * above */
+                pr_error("[wait4] Unexpected: non-zombie child for pid=%d\n",
+                         pid);
                 return -LINUX_ECHILD;
         }
 }

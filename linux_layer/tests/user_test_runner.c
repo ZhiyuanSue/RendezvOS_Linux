@@ -30,7 +30,7 @@ extern int elf_read_test(void);
  * For single-core testing: Only CPU 0 slot is used.
  * For multi-core testing: Each CPU uses its own slot based on cpu_number.
  */
-#define MAX_CONCURRENT_TESTS 16  /* Reasonable upper bound */
+#define MAX_CONCURRENT_TESTS 16 /* Reasonable upper bound */
 
 typedef struct {
         volatile u64 cookie;
@@ -45,7 +45,7 @@ static test_slot_t linux_test_slots[MAX_CONCURRENT_TESTS];
  * For single-core: always returns slot 0.
  * For multi-core: returns hash(cpu_number) % MAX_CONCURRENT_TESTS.
  */
-static test_slot_t* get_test_slot(void)
+static test_slot_t *get_test_slot(void)
 {
         cpu_id_t cpu = percpu(cpu_number);
         /* Simple hash: use modulo to avoid hardcoding MAX_CPUS */
@@ -85,7 +85,7 @@ static error_t linux_spawn_and_wait_test(u64 app_index)
                                       LINUX_THREAD_APPEND_BYTES,
                                       app_start,
                                       app_end,
-                                      linux_elf_init_handler);
+                                      linux_elf_init_handler_ptr);
         if (e || !thr) {
                 pr_error("[ LINUX USER ] Failed to spawn test %lu: e=%d\n",
                          app_index,
@@ -102,7 +102,7 @@ static error_t linux_spawn_and_wait_test(u64 app_index)
         }
 
         /* Get test slot for this CPU */
-        test_slot_t* slot = get_test_slot();
+        test_slot_t *slot = get_test_slot();
 
         cpu_id_t cpu = percpu(cpu_number);
         u64 cookie = ((u64)cpu << 56) ^ ((u64)jeffies << 8) ^ (app_index + 1);
@@ -110,7 +110,7 @@ static error_t linux_spawn_and_wait_test(u64 app_index)
                 cookie = 1;
 
         ta->test_cookie = cookie;
-        slot->cookie = 0;  /* Clear cookie to indicate waiting */
+        slot->cookie = 0; /* Clear cookie to indicate waiting */
         slot->in_use = true;
 
         pr_info("[linux_spawn_and_wait_test] CPU %lu: Waiting for test %lu, cookie=0x%lx\n",

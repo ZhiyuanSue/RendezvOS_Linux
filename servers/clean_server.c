@@ -132,8 +132,9 @@ static void clean_handle_message(Message_t *msg)
 #ifdef LINUX_COMPAT_TEST
                 linux_proc_append_t *pa = linux_proc_append(task);
                 if (pa && pa->exit_state == 2) {
-                        pr_debug("[clean_server] Task PID=%d already reaped by wait4, skipping deletion\n",
-                                 task->pid);
+                        pr_debug(
+                                "[clean_server] Task PID=%d already reaped by wait4, skipping deletion\n",
+                                task->pid);
                         should_delete = false;
                 }
 #endif
@@ -141,12 +142,12 @@ static void clean_handle_message(Message_t *msg)
                 if (should_delete) {
                         /*
                          * Active refcount teardown is expected to be safe:
-                         * `schedule()` switches hardware roots (CR3/TTBR0) on context
-                         * switches, so by the time this task is empty (all threads
-                         * removed and thread marked ZOMBIE), this CPU should have
-                         * dropped its active ref to the user vspace. Other CPUs
-                         * follow their own schedule switches and the vspace is
-                         * freed only on the last ref.
+                         * `schedule()` switches hardware roots (CR3/TTBR0) on
+                         * context switches, so by the time this task is empty
+                         * (all threads removed and thread marked ZOMBIE), this
+                         * CPU should have dropped its active ref to the user
+                         * vspace. Other CPUs follow their own schedule switches
+                         * and the vspace is freed only on the last ref.
                          */
                         if (task->vs == &root_vspace) {
                                 pr_error(

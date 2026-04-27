@@ -27,7 +27,7 @@ int task_test(void)
                                               LINUX_THREAD_APPEND_BYTES,
                                               app_start,
                                               app_end,
-                                              linux_elf_init_handler);
+                                              linux_elf_init_handler_ptr);
                 if (e)
                         continue;
         }
