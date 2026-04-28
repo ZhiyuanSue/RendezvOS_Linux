@@ -315,8 +315,15 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
          * Any fault in the first page is almost certainly a bug.
          */
         if (fault_addr < PAGE_SIZE) {
-                pr_error("[Linux compat] NULL pointer access at 0x%lx\n",
-                         fault_addr);
+                pr_error("[Linux compat] NULL pointer access at 0x%lx (is_kernel=%d)\n",
+                         fault_addr, is_kernel);
+#if defined(_X86_64_)
+                pr_error("[Linux compat] RIP=0x%lx, RSP=0x%lx, RAX=0x%lx\n",
+                         tf->rip, tf->rsp, tf->rax);
+#elif defined(_AARCH64_)
+                pr_error("[Linux compat] PC=0x%lx, SP=0x%lx\n",
+                         tf->ELR, tf->SP);
+#endif
                 if (is_kernel) {
                         kernel_panic("NULL pointer dereference in kernel\n");
                 } else {

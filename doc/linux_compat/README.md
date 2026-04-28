@@ -12,6 +12,8 @@
 | [`SYSCALLS.md`](SYSCALLS.md) | **推荐实现顺序**、逐步文件/函数清单、独立 server 条目 |
 | [`STDIO_SHIM.md`](STDIO_SHIM.md) | **无 VFS 阶段**：`write(1|2, …)` 控制台 shim、与后续 fd 表/VFS 的衔接 |
 | [`USER_TESTS.md`](USER_TESTS.md) | 用户态 ELF 测例：single/smp 分层、case 同步边界、输出乱序期望 |
+| [`BUGFIX_MAP_INTERMEDIATE_PTE_FLAGS.md`](BUGFIX_MAP_INTERMEDIATE_PTE_FLAGS.md) | 曾出现的问题：多级页表里 **中间目录项**错误复用 **叶子映射 flags**；根因与修复思路 |
+| [`BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md`](BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md) | 曾出现的问题：syscall 路径上 **`copy_thread` 继承陈旧用户栈/TLS**；以及相关 **clean_server/test_cookie** 测例边界 |
 
 ## 与仓库规范的关系
 

@@ -59,6 +59,23 @@
 - **记录**：运行了什么（make/test/boot）或**明确未运行**原因
 - **不声称正确性**：除非有验证结果或用户审查
 
+### 调试流程（⭐必读！遇到bug先用此法！）
+**使用qemu_trace调试法分析崩溃/卡死问题**
+
+**⚠️ 重要：遇到任何崩溃、卡死、异常行为，必须使用此方法！不要盲目加打印！**
+
+**步骤**：
+1. **初步定位**：`make ARCH=x86_64 run`，观察问题类型和大概位置
+2. **判断场景**：
+   - 如果**死循环卡死**（会重复打印）：用timeout截断，如`timeout 20s make ARCH=x86_64 run LOG=true DUMP=true`
+   - 如果**正常退出/崩溃**：直接运行`make ARCH=x86_64 run LOG=true DUMP=true`
+3. **生成日志**：`make dump`（生成qemu.log和objdump.log）
+4. **定位问题**：在qemu.log中搜索关键信息（地址、寄存器、异常类型）
+5. **符号定位**：在objdump.log中查找地址对应的函数
+6. **源码分析**：结合汇编和源代码找到根因
+
+**详细文档**：`/home/zhiyuansue/.claude/projects/-Users-zhiyuansue-Desktop-RendezvOS-Linux/memory/kernel_debugging_workflow.md`
+
 ---
 
 ## 关键架构原则

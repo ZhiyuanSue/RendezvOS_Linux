@@ -30,10 +30,10 @@ i64 sys_mremap(u64 old_address, u64 old_size, u64 new_size, u64 flags,
                u64 new_address)
 {
         pr_debug(
-                "[mremap] called: old_address=%lx, old_size=%lx, new_size=%lx, flags=%lx, new_address=%lx\n",
-                old_address,
-                old_size,
-                new_size,
+                "[mremap] called: old_address=%lx (0x%lx), old_size=%lx (0x%lx), new_size=%lx (0x%lx), flags=%lx, new_address=%lx\n",
+                old_address, old_address,
+                old_size, old_size,
+                new_size, new_size,
                 flags,
                 new_address);
 

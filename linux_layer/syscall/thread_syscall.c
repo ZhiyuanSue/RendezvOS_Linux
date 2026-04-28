@@ -168,12 +168,31 @@ void sys_exit(i64 exit_code)
         thread_or_flags(self, THREAD_FLAG_EXIT_REQUESTED);
 
         /*
-         * Notify clean_server if orphan (parent doesn't exist).
-         * If parent exists, wait4 will be responsible for cleanup.
+         * Notify clean_server:
+         * - Always for orphan (parent doesn't exist).
+         * - Also for linux user-test runner synchronization (cookie-based wait).
+         *
+         * Rationale:
+         * - `wait4` uses direct parent notification and can reap zombies without
+         *   clean_server involvement.
+         * - The linux user test framework (linux_layer/tests/user_test_runner.c)
+         *   waits on `linux_user_test_notify_exit()` which is triggered from
+         *   clean_server cleanup notifications keyed by `test_cookie`.
+         *   If we skip clean_server when parent exists, those tests can hang.
          */
-        if (!parent_exists) {
-                /* Orphan process: notify clean_server directly */
-                pr_debug("[sys_exit] Orphan process, notifying clean_server directly\n");
+        bool need_clean_server_notify = !parent_exists;
+        if (!need_clean_server_notify) {
+                linux_thread_append_t* ta = linux_thread_append(self);
+                if (ta && ta->test_cookie != 0) {
+                        need_clean_server_notify = true;
+                        pr_debug("[sys_exit] test_cookie present, notifying clean_server for test sync\n");
+                }
+        }
+
+        if (need_clean_server_notify) {
+                /* Notify clean_server (orphan or test sync). */
+                if (!parent_exists)
+                        pr_debug("[sys_exit] Orphan process, notifying clean_server directly\n");
                 port = thread_lookup_port(CLEAN_SERVER_PORT_NAME);
                 if (!port) {
                         pr_error("[sys_exit] port %s not found\n",

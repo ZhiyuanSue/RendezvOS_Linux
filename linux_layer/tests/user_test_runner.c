@@ -142,6 +142,14 @@ static error_t linux_spawn_and_wait_test(u64 app_index)
                 cookie,
                 exit_code);
 
+        /*
+         * Treat cookie match as completion.
+         *
+         * Many user tests intentionally exercise error paths or validate exit
+         * status semantics (non-zero exits). Higher-level PASS/FAIL belongs to
+         * the user test binary itself (stdout logs) or an explicit expectation
+         * table, not the runner.
+         */
         return REND_SUCCESS;
 }
 
