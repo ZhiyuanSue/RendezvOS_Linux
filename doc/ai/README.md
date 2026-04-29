@@ -14,6 +14,7 @@ This folder stores persistent AI collaboration artifacts for the whole repositor
 - `DECISIONS.md`: short architecture/design decision log (ADR-lite).
 - `TEST_MATRIX.md`: minimum tests by change type.
 - `RED_TEAM_REVIEW.md`: adversarial review checklist for regression hunting.
+- `NEXUS_API_FREEZE.md`: temporary frozen nexus APIs/flags during big refactors.
 - `archive/`: monthly archived history files.
 
 ## Workflow
