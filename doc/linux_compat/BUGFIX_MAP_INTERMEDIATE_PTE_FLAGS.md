@@ -2,7 +2,7 @@
 
 ## 适用范围
 
-- **层级**：主要在 [`core/kernel/mm/map_handler.c`](../../core/kernel/mm/map_handler.c) 的 `map()`——为 **VS_Common**（用户多级页表根）逐级走向 **最终叶子**（2M 或 4K）时，若需要 **新分配** 中间级别的页目录表。
+- **层级**：主要在 [`core/kernel/mm/map_handler.c`](../../core/kernel/mm/map_handler.c) 的 `map()`——为 **VSpace**（用户多级页表根）逐级走向 **最终叶子**（2M 或 4K）时，若需要 **新分配** 中间级别的页目录表。
 - **架构**：x86_64 等使用多级 PTE 的实现；语义是「**表指针**」与「**叶子映射**」对 flags 编码的要求不同。
 
 ## 症状（为何会坏）

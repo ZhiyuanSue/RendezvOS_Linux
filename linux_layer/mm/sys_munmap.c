@@ -2,7 +2,7 @@
 #include <common/types.h>
 #include <linux_compat/errno.h>
 #include <modules/log/log.h>
-#include <rendezvos/mm/nexus.h>
+#include <linux_compat/linux_mm_radix.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/tcb.h>
 #include <syscall.h>
@@ -24,12 +24,12 @@ i64 sys_munmap(u64 addr, u64 length)
                 return -LINUX_EINVAL;
 
         Tcb_Base* tcb = get_cpu_current_task();
-        if (!tcb || !tcb->vs || !vs_common_is_table_vspace(tcb->vs))
+        if (!tcb || !tcb->vs || !linux_vspace_is_user_table(tcb->vs))
                 return -LINUX_ESRCH;
 
         pr_debug("[munmap] freeing %d pages at %lx\n", page_num, addr);
-        error_t e = free_pages(
-                (void*)(vaddr)addr, page_num, tcb->vs, percpu(nexus_root));
+        error_t e = linux_mm_unmap_user_range(
+                tcb->vs, (vaddr)addr, (size_t)page_num);
         if (e != REND_SUCCESS) {
                 pr_debug("[munmap] free_pages failed with error %d\n", e);
                 return -LINUX_EINVAL;

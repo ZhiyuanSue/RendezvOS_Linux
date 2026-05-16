@@ -238,7 +238,7 @@ When a new bug pattern appears during review/debug:
   both kernel `kref*` and user `VSpace*` stored in the same word — second case
   mis-reads `VSpace*` as `kernel_address_space_ref*` (`kref->vs` becomes
   `vspace_root_addr`). Fix: read `vs_common->type` first, then only the active
-  branch fields on `VS_Common` (`vs`/`cpu_id` vs table fields). Checklist:
+  branch fields on `VSpace` (`vs`/`cpu_id` vs table fields). Checklist:
   §1 + Pattern Log.
 
 - 2026-03: **`Page.rmap_list` vs lock-free kmem queues:** small-object free may
@@ -248,9 +248,9 @@ When a new bug pattern appears during review/debug:
   entries under `pmm` lock one at a time, then unmap without holding `pmm`
   (see `unfill_phy_page`). Checklist: §2 + Pattern Log.
 
-- 2026-03: **Typedef incomplete during struct body (`VS_Common*` in
-  `typedef struct VS_Common`):** using the typedef alias for a pointer to the
-  struct being defined is ill-formed in standard C; use `struct VS_Common *`.
+- 2026-03: **Typedef incomplete during struct body (`VSpace*` in
+  `typedef struct VSpace`):** using the typedef alias for a pointer to the
+  struct being defined is ill-formed in standard C; use `struct VSpace *`.
   Symptom: `unknown type name` on the alias, then wrong return/assignment types
   on union members. Checklist: §7 + Pattern Log.
 

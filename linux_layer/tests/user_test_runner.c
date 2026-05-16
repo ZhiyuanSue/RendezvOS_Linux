@@ -173,7 +173,7 @@ static void linux_run_user_tests(void)
 
                 error_t e = linux_spawn_and_wait_test(i);
 
-                if (e) {
+                if (e != REND_SUCCESS) {
                         pr_error("[TEST %02lu/%02lu] FAIL: error=%d\n",
                                  i + 1,
                                  _num_app,

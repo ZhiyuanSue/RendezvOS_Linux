@@ -139,25 +139,33 @@ static void clean_handle_message(Message_t *msg)
                 linux_proc_append_t *pa = linux_proc_append(task);
                 if (pa && pa->exit_state == 1) {
                         /* Zombie child - check if parent task still exists */
-                        pr_debug("[clean_server] Task PID=%d is zombie, checking parent PID=%d\n",
-                                 task->pid, pa->ppid);
+                        pr_debug(
+                                "[clean_server] Task PID=%d is zombie, checking parent PID=%d\n",
+                                task->pid,
+                                pa->ppid);
 
                         /* Check if parent task exists in proc_registry */
                         if (pa->ppid > 0) {
-                                Tcb_Base* parent_task = find_task_by_pid(pa->ppid);
+                                Tcb_Base *parent_task =
+                                        find_task_by_pid(pa->ppid);
                                 if (parent_task) {
-                                        pr_debug("[clean_server] Parent PID=%d still exists, keeping zombie child PID=%d for wait4\n",
-                                                 pa->ppid, task->pid);
+                                        pr_debug(
+                                                "[clean_server] Parent PID=%d still exists, keeping zombie child PID=%d for wait4\n",
+                                                pa->ppid,
+                                                task->pid);
                                         should_delete = false;
                                 } else {
-                                        pr_debug("[clean_server] Parent PID=%d not found in registry, deleting orphan zombie child PID=%d\n",
-                                                 pa->ppid, task->pid);
+                                        pr_debug(
+                                                "[clean_server] Parent PID=%d not found in registry, deleting orphan zombie child PID=%d\n",
+                                                pa->ppid,
+                                                task->pid);
                                         should_delete = true;
                                 }
                         } else {
                                 /* No parent (ppid <= 0), safe to delete */
-                                pr_debug("[clean_server] Task PID=%d has no parent, safe to delete\n",
-                                         task->pid);
+                                pr_debug(
+                                        "[clean_server] Task PID=%d has no parent, safe to delete\n",
+                                        task->pid);
                                 should_delete = true;
                         }
                 }
@@ -188,14 +196,15 @@ static void clean_handle_message(Message_t *msg)
                         /* Unregister from proc_registry before deleting */
                         linux_proc_append_t *pa = linux_proc_append(task);
                         if (pa) {
-                                pr_debug("[clean_server] Unregistering PID=%d from proc_registry\n",
-                                         task->pid);
+                                pr_debug(
+                                        "[clean_server] Unregistering PID=%d from proc_registry\n",
+                                        task->pid);
                                 unregister_process(task);
                         }
 #endif
 
                         error_t e = delete_task(task);
-                        if (e) {
+                        if (e != REND_SUCCESS) {
                                 pr_error(
                                         "[ Error ] delete_task failed (task=%p, e=%d)\n",
                                         (void *)task,
@@ -334,7 +343,7 @@ static void clean_server_init(void)
                                          clean_server_thread_name,
                                          percpu(core_tm),
                                          NULL);
-        if (e) {
+        if (e != REND_SUCCESS) {
                 pr_error("[ Error ]clean server init fail (e=%d)\n", (int)e);
         } else {
                 pr_info("[clean_server] CPU %lu: clean_server_thread created successfully\n",

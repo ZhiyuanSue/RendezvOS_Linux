@@ -15,7 +15,7 @@
 **建议修改**:
 ```c
 // 在vmm.h中添加
-error_t copy_vspace(VS_Common* src_vs, VS_Common* dst_vs, 
+error_t copy_vspace(VSpace* src_vs, VSpace* dst_vs, 
                     struct map_handler* handler);
 ```
 
@@ -24,7 +24,7 @@ error_t copy_vspace(VS_Common* src_vs, VS_Common* dst_vs,
 **建议修改**:
 ```c
 // 在map_handler.h中添加
-error_t copy_user_page_table(VS_Common* src_vs, VS_Common* dst_vs,
+error_t copy_user_page_table(VSpace* src_vs, VSpace* dst_vs,
                              struct map_handler* src_handler,
                              struct map_handler* dst_handler);
 ```

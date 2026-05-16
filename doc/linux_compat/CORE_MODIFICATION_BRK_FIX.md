@@ -32,11 +32,11 @@ create_thread参数 → run_elf_program接收
 **修改内容**:
 ```c
 // 修改前
-error_t run_elf_program(vaddr elf_start, vaddr elf_end, VS_Common *vs,
+error_t run_elf_program(vaddr elf_start, vaddr elf_end, VSpace *vs,
                         elf_init_handler_t elf_init)
 
 // 修改后  
-error_t run_elf_program(vaddr elf_start, vaddr elf_end, VS_Common *vs,
+error_t run_elf_program(vaddr elf_start, vaddr elf_end, VSpace *vs,
                         elf_init_handler_t elf_init,
                         size_t append_tcb_info_len,  // 新增
                         size_t append_thread_info_len) // 新增
@@ -52,7 +52,7 @@ error_t run_elf_program(vaddr elf_start, vaddr elf_end, VS_Common *vs,
 
 #### 1. 函数签名修改
 ```c
-error_t run_elf_program(vaddr elf_start, vaddr elf_end, VS_Common *vs,
+error_t run_elf_program(vaddr elf_start, vaddr elf_end, VSpace *vs,
                         elf_init_handler_t elf_init,
                         size_t append_tcb_info_len,
                         size_t append_thread_info_len)

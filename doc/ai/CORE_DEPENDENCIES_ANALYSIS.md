@@ -91,11 +91,11 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
 **需要core支撑**：
 ```c
 // core/kernel/mm/vmm.c - 需要添加
-error_t handle_cow_fault(VS_Common* vs, vaddr fault_addr, struct trap_frame* tf);
+error_t handle_cow_fault(VSpace* vs, vaddr fault_addr, struct trap_frame* tf);
 
 // core/include/rendezvos/mm/vmm.h  
 // 注册COW处理回调
-typedef error_t (*cow_fault_handler_t)(VS_Common* vs, vaddr addr, struct trap_frame* tf);
+typedef error_t (*cow_fault_handler_t)(VSpace* vs, vaddr addr, struct trap_frame* tf);
 void register_cow_fault_handler(cow_fault_handler_t handler);
 ```
 

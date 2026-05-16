@@ -26,24 +26,24 @@ If a change breaks or modifies an invariant, update this file in the same commit
 - Table-internal buffers (`slots`, `ht`) are allocated/freed by the same table allocator.
 - Destroy path must keep allocator valid until table object free completes.
 
-## Nexus / `nexus_node` address-space identity (`VS_Common`)
+## Nexus / `nexus_node` address-space identity (`VSpace`)
 
 - **Multi-role aggregate:** when one `struct` type represents more than one logical
   role (different roots, containers, or records in the same subsystem), pointers
   of that type are **not** interchangeable by shape alone—naming and call-site
   context must reflect **role** (which tree, which lock, which lookup root).
-- `nexus_node` holds `VS_Common* vs_common` only. `VS_Common` (`vmm.h`) is one
+- `nexus_node` holds `VSpace* vs_common` only. `VSpace` (`vmm.h`) is one
   struct: `type` (`enum vs_common_kind` as `u64`) + **anonymous** union (C11:
-  members lifted to `VS_Common`). **Kernel heap ref:** `vs` points at the shared
-  root `VS_Common` (table branch), `cpu_id` is the allocating CPU for kmem
+  members lifted to `VSpace`). **Kernel heap ref:** `vs` points at the shared
+  root `VSpace` (table branch), `cpu_id` is the allocating CPU for kmem
   routing. **Table vspace:** `vspace_root_addr`, locks, `_vspace_node` (kernel
-  `root_vspace` and per-task roots from `new_vspace()`; same union storage;
+  `root_vspace` and per-task roots from `new_vspace_structure()`; same union storage;
   never interpret without `type`).
   Never infer role from pointer truthiness. Per-CPU `nexus_kernel_heap_vs_common`
-  is `KERNEL_HEAP_REF`. `new_vspace` returns `VS_COMMON_TABLE_VSPACE`, freed in
+  is `KERNEL_HEAP_REF`. `new_vspace_structure` returns `VS_COMMON_TABLE_VSPACE`, freed in
   `del_vspace`.
-- `map` / `unmap` / `have_mapped` take a **table** `VS_Common*` (kernel
-  `root_vspace` or user object from `new_vspace`), not the KERNEL_HEAP_REF
+- `map` / `unmap` / `have_mapped` take a **table** `VSpace*` (kernel
+  `root_vspace` or user object from `new_vspace_structure`), not the KERNEL_HEAP_REF
   wrapper.
 - **Kernel SMP:** mutations / walks of `root_vspace` page tables must hold
   `root_vspace.vspace_lock` (MCS, taken inside `map`/`unmap`/`have_mapped` via
@@ -129,10 +129,10 @@ If a change breaks or modifies an invariant, update this file in the same commit
   idle, kernel code can keep a user CR3. `gen_thread_from_func` attaches new
   kernel threads to `root_task` when present, else `get_cpu_current_task()`.
 
-- **User `VS_Common` teardown vs SMP (CR3 / `current_vspace`):** `delete_task` may
+- **User `VSpace` teardown vs SMP (CR3 / `current_vspace`):** `delete_task` may
   call `del_vspace`, which tears down page tables. No CPU may still execute with
   that task’s page tables loaded: if another CPU faults while `CR3` (or the
-  kernel’s `current_vspace` / map-handler view) still targets a `VS_Common` that
+  kernel’s `current_vspace` / map-handler view) still targets a `VSpace` that
   is already being freed, you can get `CR2 ≈ RIP` and recursive `#PF` / triple
   fault. Moving only the clean-server CPU to `root_task` is **not** sufficient;
   cross-CPU quiescence (e.g. remote threads stopped, IPI + switch all CPUs to a

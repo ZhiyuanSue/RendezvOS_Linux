@@ -1,6 +1,6 @@
 #include <common/types.h>
 #include <linux_compat/proc_compat.h>
-#include <rendezvos/mm/nexus.h>
+#include <linux_compat/linux_mm_radix.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/tcb.h>
 #include <syscall.h>
@@ -27,11 +27,10 @@ u64 sys_brk(u64 new_brk)
                 u64 page_num = (new_aligned - old_aligned) / PAGE_SIZE;
                 ENTRY_FLAGS_t page_flags = PAGE_ENTRY_USER | PAGE_ENTRY_VALID
                                            | PAGE_ENTRY_WRITE | PAGE_ENTRY_READ;
-                void* p = get_free_page((size_t)page_num,
-                                        (vaddr)old_aligned,
-                                        percpu(nexus_root),
-                                        tcb->vs,
-                                        page_flags);
+                void* p = linux_mm_map_user_range(tcb->vs,
+                                                  (vaddr)old_aligned,
+                                                  (size_t)page_num,
+                                                  page_flags);
                 if (!p) {
                         /* Linux brk: failure returns current brk unchanged. */
                         return pa->brk;
@@ -39,10 +38,9 @@ u64 sys_brk(u64 new_brk)
         } else if (new_aligned < old_aligned) {
                 /* Shrink: unmap/free pages. */
                 u64 page_num = (old_aligned - new_aligned) / PAGE_SIZE;
-                (void)free_pages((void*)(vaddr)new_aligned,
-                                 (int)page_num,
-                                 tcb->vs,
-                                 percpu(nexus_root));
+                (void)linux_mm_unmap_user_range(tcb->vs,
+                                                (vaddr)new_aligned,
+                                                (size_t)page_num);
         }
 
         pa->brk = new_brk;

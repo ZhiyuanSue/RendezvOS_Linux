@@ -10,7 +10,7 @@
 #include <rendezvos/ipc/port.h>
 
 /* External reference to global port table */
-extern struct Port_Table* global_port_table;
+extern struct Port_Table *global_port_table;
 
 /* Global ELF init handler pointer - accessed via extern to avoid GOT issues */
 elf_init_handler_t linux_elf_init_handler_ptr = linux_elf_init_handler;
@@ -42,6 +42,7 @@ void *linux_elf_init_handler(Arch_Task_Context *ctx,
 
         pa->brk = brk0;
         pa->start_brk = brk0;
+        pa->mmap_hint = ROUND_UP(brk0, PAGE_SIZE) + PAGE_SIZE;
         pr_info("[LINUX_ELF_INIT] Set brk to %lx (max_load_end=%lx)\n",
                 brk0,
                 (u64)info->max_load_end);
@@ -53,20 +54,22 @@ void *linux_elf_init_handler(Arch_Task_Context *ctx,
         error_t reg_e = register_process(tcb);
         if (reg_e != REND_SUCCESS) {
                 pr_warn("[LINUX_ELF_INIT] Failed to register PID=%d: %d\n",
-                        tcb->pid, (int)reg_e);
+                        tcb->pid,
+                        (int)reg_e);
                 /* Non-fatal: process still works, but wait4 won't find it */
         } else {
-                pr_debug("[LINUX_ELF_INIT] Registered PID=%d in proc_registry\n",
-                         tcb->pid);
+                pr_debug(
+                        "[LINUX_ELF_INIT] Registered PID=%d in proc_registry\n",
+                        tcb->pid);
         }
 
         /*
          * Create wait_port for this process.
-         * This ensures the port always exists (no race condition with child exit).
-         * Child processes will send exit notifications to this port.
+         * This ensures the port always exists (no race condition with child
+         * exit). Child processes will send exit notifications to this port.
          */
         char port_name[32];
-        const char* prefix = "wait_port_";
+        const char *prefix = "wait_port_";
         pid_t pid = tcb->pid;
 
         /* Generate port name: "wait_port_<pid>" */
@@ -93,27 +96,35 @@ void *linux_elf_init_handler(Arch_Task_Context *ctx,
         }
         port_name[idx] = '\0';
 
-        Message_Port_t* wait_port = thread_lookup_port(port_name);
+        Message_Port_t *wait_port = thread_lookup_port(port_name);
         if (!wait_port) {
-                pr_debug("[LINUX_ELF_INIT] Creating wait_port for PID=%d\n", pid);
+                pr_debug("[LINUX_ELF_INIT] Creating wait_port for PID=%d\n",
+                         pid);
                 wait_port = create_message_port(port_name);
                 if (wait_port) {
-                        error_t reg_e = register_port(global_port_table, wait_port);
+                        error_t reg_e =
+                                register_port(global_port_table, wait_port);
                         if (reg_e != REND_SUCCESS) {
                                 pr_warn("[LINUX_ELF_INIT] Failed to register wait_port '%s': %d\n",
-                                        port_name, (int)reg_e);
+                                        port_name,
+                                        (int)reg_e);
                                 delete_message_port_structure(wait_port);
                         } else {
-                                pr_debug("[LINUX_ELF_INIT] Created and registered wait_port '%s' for PID=%d\n",
-                                         port_name, pid);
+                                pr_debug(
+                                        "[LINUX_ELF_INIT] Created and registered wait_port '%s' for PID=%d\n",
+                                        port_name,
+                                        pid);
                         }
                 } else {
-                        pr_error("[LINUX_ELF_INIT] Failed to create wait_port for PID=%d\n",
-                                 pid);
+                        pr_error(
+                                "[LINUX_ELF_INIT] Failed to create wait_port for PID=%d\n",
+                                pid);
                 }
         } else {
-                pr_debug("[LINUX_ELF_INIT] wait_port '%s' already exists for PID=%d\n",
-                         port_name, pid);
+                pr_debug(
+                        "[LINUX_ELF_INIT] wait_port '%s' already exists for PID=%d\n",
+                        port_name,
+                        pid);
                 ref_put(&wait_port->refcount, free_message_port_ref);
         }
 

@@ -74,7 +74,7 @@ Append one entry for each user-approved commit.
 
 - Scope: `core/kernel/mm/nexus.c`, `doc/ai/INVARIANTS.md`, `doc/ai/AI_CHECKLIST.md`
   (Pattern Log), `doc/ai/ASSIST_HISTORY.md`.
-- Why: User `VS_Common` rmap entries cannot define kmem whole-page owner; same PPN
+- Why: User `VSpace` rmap entries cannot define kmem whole-page owner; same PPN
   may have multiple user mappings or order-dependent walks.
 - Checklist update: yes (INVARIANTS + Pattern Log).
 
@@ -113,7 +113,7 @@ Append one entry for each user-approved commit.
   readability and invite wrong invariants.
 - Checklist update: yes (§7 + Pattern Log).
 
-## 2026-03-21 | mm: `VS_Common` anonymous union (drop `payload` field name) | commit <pending>
+## 2026-03-21 | mm: `VSpace` anonymous union (drop `payload` field name) | commit <pending>
 
 - Scope: `core/include/rendezvos/mm/vmm.h`, `vmm.c`, `nexus.{h,c}`, `map_handler.c`,
   `task_manager.c`, `kmalloc.c`, `doc/ai/INVARIANTS.md`, `doc/ai/ASSIST_HISTORY.md`.
@@ -122,23 +122,23 @@ Append one entry for each user-approved commit.
 - Verification: build with cross-gcc when available.
 - Checklist update: INVARIANTS only.
 
-## 2026-03-21 | fix: `struct VS_Common*` self-reference in `vmm.h` + checklist §7 | commit <pending>
+## 2026-03-21 | fix: `struct VSpace*` self-reference in `vmm.h` + checklist §7 | commit <pending>
 
 - Scope: `core/include/rendezvos/mm/vmm.h`, `doc/ai/AI_CHECKLIST.md` (§7 + Pattern Log),
   `doc/ai/ASSIST_HISTORY.md`.
-- Why: `VS_Common* vs` inside `typedef struct VS_Common { ... } VS_Common` is not
+- Why: `VSpace* vs` inside `typedef struct VSpace { ... } VSpace` is not
   valid in standard C (typedef incomplete during struct body); gcc: unknown type,
   cascaded bogus pointer types in `nexus_node_vspace`.
 - Verification: `make` when cross-gcc available.
 - Checklist update: yes (§7 bullet + Pattern Log).
 
-## 2026-03-21 | mm: drop `VSpace` typedef; single `VS_Common` table + heap-ref union | commit <pending>
+## 2026-03-21 | mm: drop `VSpace` typedef; single `VSpace` table + heap-ref union | commit <pending>
 
 - Scope: `core/include/rendezvos/mm/vmm.h`, `map_handler.{h,c}`, `vmm.c`, `nexus.{h,c}`,
   `kmalloc.c`, `tcb.h`, `thread_loader.{h,c}`, `task_manager.c`, tests, `LocalAPIC.c`,
   `doc/ai/INVARIANTS.md`, `doc/ai/ASSIST_HISTORY.md`.
-- Why: Unify page-table fields and kernel-heap ref in one `VS_Common` (anonymous
-  union: `vs`/`cpu_id` vs table fields). All former `VSpace*` APIs are `VS_Common*`.
+- Why: Unify page-table fields and kernel-heap ref in one `VSpace` (anonymous
+  union: `vs`/`cpu_id` vs table fields). All former `VSpace*` APIs are `VSpace*`.
 - Verification: full build not run here (cross `gcc` may be missing).
 - Checklist update: INVARIANTS only (no new pattern).
 
@@ -163,15 +163,15 @@ Append one entry for each user-approved commit.
 - Verification: not run (cross `gcc` unavailable here).
 - Checklist update: yes (INVARIANTS + Pattern Log §2).
 
-## 2026-03-21 | mm: `VS_Common` in `vmm.h` (replaces `nexus_vs_common`) | commit <pending>
+## 2026-03-21 | mm: `VSpace` in `vmm.h` (replaces `nexus_vs_common`) | commit <pending>
 
 - Scope: `core/include/rendezvos/mm/vmm.h`, `core/include/rendezvos/mm/nexus.h`,
   `core/kernel/mm/vmm.c`, `core/kernel/mm/nexus.c`, `doc/ai/INVARIANTS.md`,
   `doc/ai/ASSIST_HISTORY.md`.
-- Why: one typedef `VS_Common` (`type` + `payload`) with `VSpace` and
+- Why: one typedef `VSpace` (`type` + `payload`) with `VSpace` and
   `kernel_address_space_ref` lives next to vspace helpers; `nexus_node.vs_common`
   stays a pointer. Enum `vs_common_kind` / `VS_COMMON_*`; helper
-  `vs_common_from_user_vspace`. Per-CPU `DEFINE_PER_CPU(VS_Common,
+  `vs_common_from_user_vspace`. Per-CPU `DEFINE_PER_CPU(VSpace,
   nexus_kernel_heap_vs_common)`.
 - Verification: build run if toolchain available.
 - Checklist update: INVARIANTS only (no new pattern).

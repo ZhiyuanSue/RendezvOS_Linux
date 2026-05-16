@@ -6,7 +6,7 @@
 
 ## 1. 为何不需要独立 VMA 子系统
 
-Linux **VMA** 解决的是：**按用户 VA 区间** 记录映射属性，并支持 **`munmap`/`mprotect` 的部分区间**（分裂、合并）。RendezvOS **nexus** 已在每个用户 `VS_Common` 下维护用户 VA 与物理页/nexus 节点的关系；**同一语义**可在 nexus 节点上扩展元数据（prot、`MAP_PRIVATE`/`SHARED`、COW 共享关系），无需第二棵并行树。若日后需要 **按文件 offset 反查** 等索引，再增加辅助结构。
+Linux **VMA** 解决的是：**按用户 VA 区间** 记录映射属性，并支持 **`munmap`/`mprotect` 的部分区间**（分裂、合并）。RendezvOS **nexus** 已在每个用户 `VSpace` 下维护用户 VA 与物理页/nexus 节点的关系；**同一语义**可在 nexus 节点上扩展元数据（prot、`MAP_PRIVATE`/`SHARED`、COW 共享关系），无需第二棵并行树。若日后需要 **按文件 offset 反查** 等索引，再增加辅助结构。
 
 ## 2. nexus 需承载的 Linux 侧信息（实现时逐项补）
 
@@ -55,7 +55,7 @@ Linux **VMA** 解决的是：**按用户 VA 区间** 记录映射属性，并支
 
 在 **不** 把 Linux 头文件引入 `core` 的前提下，Phase 1 已完成：
 
-- [x] **导出或封装**：在指定 `VS_Common` 上的地址空间复制API（`copy_vspace`等）
+- [x] **导出或封装**：在指定 `VSpace` 上的地址空间复制API（`copy_vspace`等）
 - [x] **page fault 入口**：可注册回调（弱符号），由 linux_layer 注册 COW 逻辑
 - [x] **refcount**：fork 共享只读 PTE 时与 `Page` / buddy 一致性已审计
 
@@ -69,7 +69,7 @@ Linux **VMA** 解决的是：**按用户 VA 区间** 记录映射属性，并支
 
 > **状态**: ✅ Phase 1 完成
 
-- **子进程**：新 `Tcb_Base` + 新 `VS_Common` + **复制或共享** L0…L3 策略（COW 通常为 **共享只读 + 引用计数**）。
+- **子进程**：新 `Tcb_Base` + 新 `VSpace` + **复制或共享** L0…L3 策略（COW 通常为 **共享只读 + 引用计数**）。
 - **实现文件**：
   - `linux_layer/proc/sys_fork.c` - fork系统调用实现
   - `linux_layer/mm/linux_vspace.c` - `linux_copy_vspace()` 地址空间COW复制

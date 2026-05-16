@@ -204,7 +204,7 @@ void resume_after_fork(Thread_Base* child_thread);
 error_t copy_nexus_tree(
     const struct nexus_node* src_root,
     struct nexus_node* dst_root,
-    VS_Common* dst_vs
+    VSpace* dst_vs
 );
 ```
 
@@ -221,10 +221,10 @@ error_t copy_nexus_tree(
 
 ```c
 // core/kernel/mm/vmm.c - 需要添加
-error_t handle_cow_fault(VS_Common* vs, vaddr fault_addr, struct trap_frame* tf);
+error_t handle_cow_fault(VSpace* vs, vaddr fault_addr, struct trap_frame* tf);
 
 // core/include/rendezvos/mm/vmm.h
-typedef error_t (*cow_fault_handler_t)(VS_Common* vs, vaddr addr, struct trap_frame* tf);
+typedef error_t (*cow_fault_handler_t)(VSpace* vs, vaddr addr, struct trap_frame* tf);
 void register_cow_fault_handler(cow_fault_handler_t handler);
 ```
 

@@ -24,7 +24,7 @@
 - **语义**：允许把已经存在的 leaf mapping 替换成另一个物理页（remap）。
 - **典型使用**：COW split 时把同一 VA 的 PPN 改成新页。
 
-### `PAGE_ENTRY_NEXUS_LAZY`
+### `PAGE_ENTRY_LAZY`
 
 - **类型**：software-only。
 - **语义**：该 VA 区间允许“延迟物理页提交”（reserve 后不立刻 commit，首次访问时由 fault 触发 populate）。
@@ -59,7 +59,7 @@
 ### 1) 语义查询：`nexus_query_user_semantics()`
 
 ```c
-error_t nexus_query_user_semantics(VS_Common* vs,
+error_t nexus_query_user_semantics(VSpace* vs,
                                   vaddr va,
                                   struct map_handler* handler,
                                   nexus_user_semantics_t* out);
@@ -84,7 +84,7 @@ error_t nexus_query_user_semantics(VS_Common* vs,
 error_t nexus_reserve_user_range(size_t page_num,
                                 vaddr target_vaddr,
                                 struct nexus_node* nexus_root,
-                                VS_Common* vs,
+                                VSpace* vs,
                                 ENTRY_FLAGS_t region_flags,
                                 struct nexus_node** first_entry_out,
                                 vaddr* addr_out);
@@ -100,7 +100,7 @@ error_t nexus_reserve_user_range(size_t page_num,
 ```c
 error_t nexus_commit_user_range(struct nexus_node* first_entry,
                                int page_num,
-                               VS_Common* vs);
+                               VSpace* vs);
 ```
 
 - **语义**：为此前 reserve 的区间分配物理页并建立 leaf PTE（populate）。
@@ -109,7 +109,7 @@ error_t nexus_commit_user_range(struct nexus_node* first_entry,
 #### `nexus_uncommit_user_range()`
 
 ```c
-error_t nexus_uncommit_user_range(vaddr addr, int page_num, VS_Common* vs);
+error_t nexus_uncommit_user_range(vaddr addr, int page_num, VSpace* vs);
 ```
 
 - **语义**：撤销 leaf PTE 并释放物理页（允许保留区间元数据，以便后续再次 commit 或 lazy fault）。
@@ -117,7 +117,7 @@ error_t nexus_uncommit_user_range(vaddr addr, int page_num, VS_Common* vs);
 #### `nexus_release_user_range()`
 
 ```c
-error_t nexus_release_user_range(vaddr addr, int page_num, VS_Common* vs);
+error_t nexus_release_user_range(vaddr addr, int page_num, VSpace* vs);
 ```
 
 - **语义**：删除/释放 nexus 中的区间元数据（并处理必要的 split/truncate）。
@@ -128,7 +128,7 @@ error_t nexus_release_user_range(vaddr addr, int page_num, VS_Common* vs);
 ### 3) fault-time populate：`nexus_map_anon_zero_leaf()`
 
 ```c
-error_t nexus_map_anon_zero_leaf(VS_Common* vs,
+error_t nexus_map_anon_zero_leaf(VSpace* vs,
                                 vaddr va,
                                 struct map_handler* handler,
                                 ENTRY_FLAGS_t leaf_flags);

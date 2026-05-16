@@ -121,25 +121,25 @@ struct nexus_node* nexus_range_prev(struct nexus_node* node);
 ```c
 // L2提供给L3的接口
 error_t nexus_pt_alloc_and_map(
-    VS_Common* vs,
+    VSpace* vs,
     vaddr va,
     ENTRY_FLAGS_t flags,
     struct nexus_node* nexus_node);
 
 error_t nexus_pt_unmap_and_free(
-    VS_Common* vs,
+    VSpace* vs,
     vaddr va,
     struct nexus_node* nexus_node);
 
 error_t nexus_pt_remap_leaf(
-    VS_Common* vs,
+    VSpace* vs,
     vaddr va,
     ppn_t new_ppn,
     ENTRY_FLAGS_t new_flags,
     struct nexus_node* nexus_node);
 
-error_t nexus_pt_query_leaf(
-    VS_Common* vs,
+error_t nexus_pt_query_range(
+    VSpace* vs,
     vaddr va,
     ppn_t* ppn_out,
     ENTRY_FLAGS_t* flags_out,
@@ -176,7 +176,7 @@ error_t vspace_clone(...);
 **优先级1: `get_free_page` / `free_pages`**
 ```c
 void* get_free_page(size_t page_num, vaddr target_vaddr,
-                    struct nexus_node* nexus_root, VS_Common* vs,
+                    struct nexus_node* nexus_root, VSpace* vs,
                     ENTRY_FLAGS_t flags) {
     if (内核) {
         return _kernel_get_free_page(page_num, nexus_root);
@@ -187,13 +187,13 @@ void* get_free_page(size_t page_num, vaddr target_vaddr,
         error_t e = nexus_range_insert(vs, target_vaddr,
                                       target_vaddr + page_num * PAGE_SIZE,
                                       flags, &first_node);
-        if (e) return NULL;
+        if (e!=REND_SUCCESS) return NULL;
 
         // L2: 分配物理页并映射
         struct nexus_node* node = first_node;
         for (int i = 0; i < page_num; i++) {
             e = nexus_pt_alloc_and_map(vs, node->addr, flags, node);
-            if (e) {
+            if (e!=REND_SUCCESS) {
                 // 回滚
                 nexus_pt_unmap_and_free(vs, node->addr, node);
                 nexus_range_remove(vs, addr, addr + i * PAGE_SIZE);
@@ -223,7 +223,7 @@ error_t nexus_update_range_flags(...) {
     // Phase 2: 批量更新（L2）
     error_t e = nexus_pt_batch_update(vs, &update_list, mode, set_mask, clear_mask);
 
-    if (e) {
+    if (e!=REND_SUCCESS) {
         // Phase 3: 回滚（L2）
         nexus_pt_batch_rollback(vs, &update_list);
     }
@@ -238,7 +238,7 @@ error_t vspace_clone(...) {
     // Step 1: 创建基础设施（L1）
     error_t e = vspace_clone_create_infrastructure(
                     src_vs, &dst_vs, &dst_nexus, nexus_root);
-    if (e) goto fail;
+    if (e!=REND_SUCCESS) goto fail;
 
     // Step 2: 根据flag选择策略
     if (flags & VSPACE_CLONE_F_COPY_PAGES) {
@@ -247,7 +247,7 @@ error_t vspace_clone(...) {
         e = vspace_clone_setup_cow(src_vs, dst_vs, dst_nexus);
     }
 
-    if (e) goto fail_cleanup;
+    if (e!=REND_SUCCESS) goto fail_cleanup;
     return REND_SUCCESS;
 
 fail_cleanup:
@@ -263,7 +263,7 @@ fail:
 
 ```c
 // L2: alloc_and_map实现
-error_t nexus_pt_alloc_and_map(VS_Common* vs, vaddr va,
+error_t nexus_pt_alloc_and_map(VSpace* vs, vaddr va,
                                ENTRY_FLAGS_t flags,
                                struct nexus_node* nexus_node) {
     struct pmm* pmm = vs->pmm;
@@ -289,7 +289,7 @@ error_t nexus_pt_alloc_and_map(VS_Common* vs, vaddr va,
 }
 
 // L2: unmap_and_free实现
-error_t nexus_pt_unmap_and_free(VS_Common* vs, vaddr va,
+error_t nexus_pt_unmap_and_free(VSpace* vs, vaddr va,
                                struct nexus_node* nexus_node) {
     struct pmm* pmm = vs->pmm;
     struct map_handler* handler = &percpu(Map_Handler);
@@ -382,7 +382,7 @@ error_t nexus_pt_remap_leaf(...);
 // - nexus_pt_alloc_and_map
 // - nexus_pt_unmap_and_free
 // - nexus_pt_remap_leaf
-// - nexus_pt_query_leaf
+// - nexus_pt_query_range
 // - link_rmap_list/unlink_rmap_list
 // - unfill_phy_page/nexus_kernel_page_owner_cpu
 // 行数：约400行

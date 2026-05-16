@@ -1,5 +1,6 @@
 #include <common/types.h>
 #include <linux_compat/errno.h>
+#include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/proc_registry.h>
 #include <modules/log/log.h>
@@ -25,6 +26,22 @@ extern struct Port_Table* global_port_table;
 /* Linux compat IPC module and opcodes */
 #define KMSG_MOD_LINUX_COMPAT  2u
 #define KMSG_LINUX_EXIT_NOTIFY 1u
+
+static error_t linux_put_wstatus(Tcb_Base* task, u64 user_wstatus, i32 encoded)
+{
+        if (!user_wstatus) {
+                return REND_SUCCESS;
+        }
+        if (!task || !task->vs) {
+                return -LINUX_EFAULT;
+        }
+        if (linux_mm_store_to_user(
+                    task->vs, user_wstatus, &encoded, sizeof(i32))
+            != REND_SUCCESS) {
+                return -LINUX_EFAULT;
+        }
+        return REND_SUCCESS;
+}
 
 /*
  * Generate wait port name for a process.
@@ -86,7 +103,7 @@ static void make_wait_port_name(char* buf, size_t bufsize, pid_t pid)
  * - WUNTRACED, WCONTINUED
  * - rusage parameter
  */
-i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
+i64 sys_wait4(i32 pid, u64 user_wstatus, i32 options, u64 user_rusage)
 {
         Tcb_Base* parent = get_cpu_current_task();
         linux_proc_append_t* parent_pa = NULL;
@@ -108,9 +125,10 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
                  options);
 
         /* Ignore rusage for now */
-        if (rusage) {
+        if (user_rusage) {
                 pr_debug("[wait4] rusage not supported, ignoring\n");
         }
+        (void)user_rusage;
 
         Tcb_Base* child = NULL;
         linux_proc_append_t* child_pa = NULL;
@@ -213,10 +231,6 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
                 pr_debug("[wait4] Child PID=%d already exited (zombie)\n",
                          child_pid);
 
-                if (wstatus) {
-                        *wstatus = exit_code;
-                }
-
                 /* Mark child as reaped */
                 child_pa->exit_state = 2; /* 2 = reaped */
 
@@ -229,12 +243,12 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
                 if (exit_code >= 0 && exit_code <= 255) {
                         encoded_status = (exit_code << 8) | 0x00;
                 } else {
-                        /* Exit code out of range, use 0xFF */
                         encoded_status = (255 << 8) | 0x00;
                 }
 
-                if (wstatus) {
-                        *wstatus = encoded_status;
+                if (linux_put_wstatus(parent, user_wstatus, encoded_status)
+                    != REND_SUCCESS) {
+                        return -LINUX_EFAULT;
                 }
 
                 /*
@@ -315,7 +329,7 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
                 const kmsg_t* kmsg = kmsg_from_msg(msg);
                 if (!kmsg || kmsg->hdr.magic != KMSG_MAGIC) {
                         pr_error("[wait4] Invalid kmsg magic\n");
-                        dequeue_recv_msg();
+                        ref_put(&msg->ms_queue_node.refcount, free_message_ref);
                         return -LINUX_ECHILD;
                 }
 
@@ -326,7 +340,7 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
                                 "[wait4] Invalid kmsg module/opcode (mod=%u, op=%u)\n",
                                 kmsg->hdr.module,
                                 kmsg->hdr.opcode);
-                        dequeue_recv_msg();
+                        ref_put(&msg->ms_queue_node.refcount, free_message_ref);
                         return -LINUX_ECHILD;
                 }
 
@@ -342,11 +356,11 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
                 if (dec_e != REND_SUCCESS) {
                         pr_error("[wait4] Failed to decode payload (e=%d)\n",
                                  (int)dec_e);
-                        dequeue_recv_msg();
+                        ref_put(&msg->ms_queue_node.refcount, free_message_ref);
                         return -LINUX_ECHILD;
                 }
 
-                dequeue_recv_msg();
+                ref_put(&msg->ms_queue_node.refcount, free_message_ref);
 
                 pr_debug(
                         "[wait4] Received exit notification: child_pid=%d, exit_code=%d\n",
@@ -365,9 +379,9 @@ i64 sys_wait4(i32 pid, i64* wstatus, i32 options, i64* rusage)
                         encoded_status = (255 << 8) | 0x00;
                 }
 
-                /* Copy exit status to user space */
-                if (wstatus) {
-                        *wstatus = encoded_status;
+                if (linux_put_wstatus(parent, user_wstatus, encoded_status)
+                    != REND_SUCCESS) {
+                        return -LINUX_EFAULT;
                 }
 
                 pr_debug("[wait4] Returning child_pid=%d, exit_code=%d, status=0x%x\n",

@@ -678,20 +678,20 @@ error_t nexus_update_range_flags(...) {
 ```c
 // 创建基础设施
 static error_t vspace_clone_create_infrastructure(
-    VS_Common* src_vs,
-    VS_Common** dst_vs_out,
+    VSpace* src_vs,
+    VSpace** dst_vs_out,
     struct nexus_node** dst_nexus_out,
     struct nexus_node* nexus_root);
 
 // 复制映射（COPY模式）
 static error_t vspace_clone_copy_mappings(
-    VS_Common* src_vs, VS_Common* dst_vs,
+    VSpace* src_vs, VSpace* dst_vs,
     struct nexus_node* dst_nexus,
     struct map_handler* handler);
 
 // 设置COW（COW模式）
 static error_t vspace_clone_setup_cow(
-    VS_Common* src_vs, VS_Common* dst_vs,
+    VSpace* src_vs, VSpace* dst_vs,
     struct nexus_node* dst_nexus,
     struct map_handler* handler);
 
@@ -717,7 +717,7 @@ static struct nexus_node* _kernel_create_nexus_range(
 
 // 映射范围
 static error_t _kernel_map_range(
-    VS_Common* vs,
+    VSpace* vs,
     struct nexus_node* first_entry,
     size_t page_num,
     struct pmm* pmm);

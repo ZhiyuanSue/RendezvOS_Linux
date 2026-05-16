@@ -14,7 +14,7 @@ flowchart LR
   end
   subgraph core [core]
     Sched[schedule Task_Manager]
-    VS[VS_Common nexus map_handler]
+    VS[VSpace nexus map_handler]
     IPC[ports messages]
     Trap[trap syscall page_fault]
   end

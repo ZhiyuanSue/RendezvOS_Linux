@@ -67,7 +67,7 @@ void arch_copy_task_context(
 error_t copy_nexus_tree(
     const struct nexus_node* src_root,
     struct nexus_node* dst_root,
-    VS_Common* dst_vs
+    VSpace* dst_vs
 );
 ```
 
@@ -154,10 +154,10 @@ Thread_Base* copy_thread(Thread_Base* parent, Tcb_Base* child_task, u64 ret_val)
 void arch_copy_task_context(const Arch_Task_Context* src, Arch_Task_Context* dst, u64 ret_val);
 
 // core/kernel/mm/nexus.c (可选，或用简化版)
-error_t copy_nexus_tree(const struct nexus_node* src, struct nexus_node* dst, VS_Common* dst_vs);
+error_t copy_nexus_tree(const struct nexus_node* src, struct nexus_node* dst, VSpace* dst_vs);
 
 // core/kernel/mm/vmm.c
-VS_Common* copy_vspace(VS_Common* parent_vs);  // 替代linux_copy_vspace
+VSpace* copy_vspace(VSpace* parent_vs);  // 替代linux_copy_vspace
 ```
 
 ### 设计原则

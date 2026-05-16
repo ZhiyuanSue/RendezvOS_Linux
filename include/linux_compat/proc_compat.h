@@ -16,6 +16,8 @@
 typedef struct linux_proc_append {
         u64 start_brk;
         u64 brk;
+        /* Anonymous mmap search cursor (page-aligned VA past last mmap). */
+        u64 mmap_hint;
         pid_t ppid; /* Parent process PID */
         pid_t pgid; /* Process group ID (for wait4 pid==0, pid<-1) */
         i32 exit_code; /* Exit code for wait() */

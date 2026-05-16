@@ -15,6 +15,6 @@
  * Current policy: user 4K pages only + COW preparation (share ppn, downgrade
  * parent/child writable leaves to read-only).
  */
-error_t linux_copy_vspace(VS_Common *parent_vs, VS_Common **child_vs_ptr);
+error_t linux_copy_vspace(VSpace *parent_vs, VSpace **child_vs_ptr);
 
 #endif

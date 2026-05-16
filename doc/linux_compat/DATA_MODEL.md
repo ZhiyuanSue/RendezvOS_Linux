@@ -10,7 +10,7 @@
 |-------|-------------------|------|
 | 调度实体 `task_struct` | `Thread_Base` | `tid`、`ctx`、IPC 队列 |
 | 线程组 / 进程 `tgid` | `Tcb_Base::pid`（初期单线程） | ✅ Phase 1：单线程进程 `getpid` = `Tcb_Base::pid`<br/>📋 后续：多线程需要 `tgid` 字段 |
-| 内存描述 `mm_struct` | `Tcb_Base::vs` → `VS_Common` | nexus 挂在 vspace |
+| 内存描述 `mm_struct` | `Tcb_Base::vs` → `VSpace` | nexus 挂在 vspace |
 | 子进程、wait | `proc_registry`（✅ Phase 1完成） | O(1) PID查找，支持wait4 |
 
 ## 2. append 区（单一真源）

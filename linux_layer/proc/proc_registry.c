@@ -106,6 +106,47 @@ void proc_registry_init(void)
         pr_info("[proc] PID registry initialized\n");
 }
 
+/*
+ * Remove every registry row for this decimal PID name.
+ * name_index_register does not replace an existing name; stale rows must be
+ * cleared explicitly (unregister_process used to pass row_idx=0 and no-op).
+ */
+static void proc_registry_evict_pid(pid_t pid, Tcb_Base* only_task)
+{
+        char name_buf[16];
+
+        if (pid <= 0) {
+                return;
+        }
+
+        format_pid_decimal(name_buf, sizeof(name_buf), pid);
+
+        for (;;) {
+                name_index_token_t tok;
+                Tcb_Base* existing = (Tcb_Base*)name_index_lookup(
+                        &pid_index, name_buf, &tok);
+                if (!existing
+                    || tok.row_index == NAME_INDEX_ROW_INDEX_INVALID) {
+                        return;
+                }
+                if (only_task && existing != only_task) {
+                        /*
+                         * Stale row left by the old row_idx=0 unregister bug;
+                         * drop it and keep scanning for only_task.
+                         */
+                        name_index_unregister(&pid_index,
+                                              existing,
+                                              (u64)tok.row_index,
+                                              name_buf);
+                        continue;
+                }
+                name_index_unregister(&pid_index,
+                                      existing,
+                                      (u64)tok.row_index,
+                                      name_buf);
+        }
+}
+
 error_t register_process(Tcb_Base* task)
 {
         if (!task) {
@@ -117,9 +158,11 @@ error_t register_process(Tcb_Base* task)
                 return -LINUX_EINVAL;
         }
 
+        proc_registry_evict_pid(task->pid, NULL);
+
         u64 row_idx;
         error_t e = name_index_register(&pid_index, task, &row_idx);
-        if (e) {
+        if (e != REND_SUCCESS) {
                 pr_error("[proc] Failed to register PID %d: %d\n",
                          task->pid,
                          (int)e);
@@ -156,14 +199,7 @@ void unregister_process(Tcb_Base* task)
                 return;
         }
 
-        char name_buf[16];
-        format_pid_decimal(name_buf, sizeof(name_buf), task->pid);
-
-        /*
-         * TODO: We need to store the row_idx when registering to
-         * properly unregister. For now, this is a simplified version.
-         */
-        name_index_unregister(&pid_index, task, 0, name_buf);
+        proc_registry_evict_pid(task->pid, task);
         pr_debug("[proc] Unregistered PID %d\n", task->pid);
 }
 

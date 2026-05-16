@@ -246,7 +246,7 @@
 
 #### `vspace_clone()` - 地址空间克隆
 ```c
-error_t vspace_clone(VS_Common* src_vs, VS_Common** dst_vs_out,
+error_t vspace_clone(VSpace* src_vs, VSpace** dst_vs_out,
                      vspace_clone_flags_t flags, struct nexus_node* nexus_root);
 ```
 - **模式**：
@@ -260,7 +260,7 @@ error_t vspace_clone(VS_Common* src_vs, VS_Common** dst_vs_out,
 #### `nexus_update_range_flags()` - 批量flags更新
 ```c
 error_t nexus_update_range_flags(struct nexus_node* nexus_root,
-                                 VS_Common* vs,
+                                 VSpace* vs,
                                  vaddr start,
                                  u64 size,
                                  u64 mode,

@@ -1,7 +1,9 @@
+#include <common/string.h>
 #include <common/types.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/proc_registry.h>
+#include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/vspace_copy.h>
 #include <modules/log/log.h>
 #include <rendezvos/error.h>
@@ -36,7 +38,7 @@ i64 sys_fork(void)
 {
         Tcb_Base *parent = get_cpu_current_task();
         Tcb_Base *child = NULL;
-        VS_Common *child_vs = NULL;
+        VSpace *child_vs = NULL;
         Thread_Base *parent_thread = NULL;
         Thread_Base *child_thread = NULL;
         i64 ret = -LINUX_ENOMEM;
@@ -47,8 +49,8 @@ i64 sys_fork(void)
                 return -LINUX_ESRCH;
         }
 
-        if (!vs_common_is_table_vspace(parent->vs)) {
-                pr_error("[FORK] Parent vspace is not a table vspace\n");
+        if (!linux_vspace_is_user_table(parent->vs)) {
+                pr_error("[FORK] Parent has no user vspace (radix/page tables)\n");
                 return -LINUX_EINVAL;
         }
 
@@ -71,29 +73,37 @@ i64 sys_fork(void)
         child->vs = child_vs;
         child->pid = get_new_id(&pid_manager);
 
-        /* Copy parent's linux_proc_append data */
+        /* Initialize child proc append (do not memcpy wait_queue / exit state). */
         linux_proc_append_t *parent_pa = linux_proc_append(parent);
         linux_proc_append_t *child_pa = linux_proc_append(child);
-        if (parent_pa && child_pa) {
-                memcpy(child_pa, parent_pa, sizeof(*parent_pa));
-                child_pa->start_brk = parent_pa->brk;
+        if (child_pa) {
+                memset(child_pa, 0, sizeof(*child_pa));
                 child_pa->ppid = parent->pid;
-                child_pa->pgid = parent_pa->pgid;
                 child_pa->exit_code = 0;
                 child_pa->exit_state = 0;
                 INIT_LIST_HEAD(&child_pa->wait_queue);
+                if (parent_pa) {
+                        child_pa->start_brk = parent_pa->brk;
+                        child_pa->brk = parent_pa->brk;
+                        child_pa->mmap_hint = parent_pa->mmap_hint;
+                        child_pa->pgid = parent_pa->pgid ?
+                                                 parent_pa->pgid :
+                                                 parent->pid;
+                }
         }
 
         /* Add child to task manager */
         e = add_task_to_manager(percpu(core_tm), child);
-        if (e) {
-                pr_error("[FORK] Failed to add child task to task manager: %d\n",
-                         (int)e);
+        if (e != REND_SUCCESS) {
+                pr_error(
+                        "[FORK] Failed to add child task to task manager: %d\n",
+                        (int)e);
                 ret = -LINUX_EAGAIN;
                 goto out_free_vspace;
         }
 
         parent_thread = get_cpu_current_thread();
+
         child_thread =
                 copy_thread(parent_thread, child, 0, LINUX_THREAD_APPEND_BYTES);
         if (!child_thread) {
@@ -103,7 +113,7 @@ i64 sys_fork(void)
         }
 
         e = add_thread_to_manager(percpu(core_tm), child_thread);
-        if (e) {
+        if (e != REND_SUCCESS) {
                 pr_error("[FORK] Failed to add child thread to scheduler: %d\n",
                          (int)e);
                 ret = -LINUX_EAGAIN;
@@ -111,7 +121,7 @@ i64 sys_fork(void)
         }
 
         e = register_process(child);
-        if (e) {
+        if (e != REND_SUCCESS) {
                 pr_warn("[FORK] Failed to register child PID: %d\n", (int)e);
         }
 
