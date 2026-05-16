@@ -1,4 +1,4 @@
-# 内存：nexus 作为虚存真源 + COW + 页故障
+# 内存：Radix Tree 作为虚存真源 + COW + 页故障
 
 > **📅 阶段状态**：
 > - ✅ **Phase 1 完成**：brk, mmap, munmap, mprotect, mremap, COW机制, fork地址空间复制
@@ -6,38 +6,38 @@
 
 ## 1. 为何不需要独立 VMA 子系统
 
-Linux **VMA** 解决的是：**按用户 VA 区间** 记录映射属性，并支持 **`munmap`/`mprotect` 的部分区间**（分裂、合并）。RendezvOS **nexus** 已在每个用户 `VSpace` 下维护用户 VA 与物理页/nexus 节点的关系；**同一语义**可在 nexus 节点上扩展元数据（prot、`MAP_PRIVATE`/`SHARED`、COW 共享关系），无需第二棵并行树。若日后需要 **按文件 offset 反查** 等索引，再增加辅助结构。
+Linux **VMA** 解决的是：**按用户 VA 区间** 记录映射属性，并支持 **`munmap`/`mprotect` 的部分区间**（分裂、合并）。RendezvOS **Radix Tree** 已在每个用户 `VSpace` 下维护用户 VA 与物理页的映射关系；**同一语义**可在 Radix_node_t 上扩展元数据（flags、`MAP_PRIVATE`/`SHARED`、COW 共享关系），无需第二棵并行树。若日后需要 **按文件 offset 反查** 等索引，再增加辅助结构。
 
-## 2. nexus 需承载的 Linux 侧信息（实现时逐项补）
+## 2. Radix Tree 需承载的 Linux 侧信息（实现时逐项补）
 
-- **区间**：与现有 `nexus_node::addr`、长度 API 一致。
-- **保护**：与 `region_flags` / PTE 属性对齐；`mprotect` 时 **分裂边界** 后改写。
-- **匿名 vs 文件**：初期仅匿名；文件 `mmap` 预留 `file`/`offset` 字段或外部表。
-- **COW**：`MAP_PRIVATE` + fork 后 **多 vspace 共享只读物理页**；写故障时 **分裂物理页** 并更新 nexus/rmap（与现有 `Page` refcount 衔接）。
+- **区间**：Radix tree 天然支持按 4K/2M 粒度查询，通过 `vmm_radix_tree_find_first_occupied_interval` 查找连续区间。
+- **保护**：与 `Radix_node_t::flags` / PTE 属性对齐；`mprotect` 时通过 `mm_user_utils_set_range_flags` 批量更新。
+- **匿名 vs 文件**：初期仅匿名；文件 `mmap` 预留后端接口（见 `MM_BACKEND_FRONTEND_API.md`）。
+- **COW**：`MAP_PRIVATE` + fork 后 **多 vspace 共享只读物理页**；写故障时 **分裂物理页** 并更新 radix/rmap（与现有 `Page` refcount 衔接）。
 
 ## 3. `brk`
 
 > **状态**: ✅ Phase 1 完成
 
 - **语义**：调整 **堆顶**；失败返回当前 brk。
-- **实现要点**：`linux_proc_append` 中 `start_brk`/`brk`；从 `brk_old` 到 `brk_new` 用 `get_free_page` / `free_pages` + `map`/`unmap`，**堆范围**与 ELF program header 对齐（loader 已有信息可传入 append 初始化）。
+- **实现要点**：`linux_proc_append` 中 `start_brk`/`brk`；从 `brk_old` 到 `brk_new` 用 `mm_user_utils_set_range_and_fill` / `mm_user_utils_clean_range_and_unfill`，**堆范围**与 ELF program header 对齐（loader 已有信息可传入 append 初始化）。
 - **实现文件**：`linux_layer/mm/sys_brk.c`
 - **测试验证**: ✅ TEST 03/04, 04/04 PASS
-- **锁**：`vs->vspace_lock` + `nexus_vspace_lock` 按 core 既有顺序。
+- **锁**：按 core 既有顺序：L0 big lock → L2 band lock → PMM zone lock（rmap 操作）。
 
 ## 4. `mmap` / `munmap` / `mprotect` / `mremap`
 
 > **状态**: ✅ Phase 1 完成基础匿名映射
 
-| Syscall | 状态 | nexus 侧工作 | 实现文件 |
-|---------|------|----------------|----------|
-| `mmap` | ✅ 完成 | 分配/插入区间；匿名页 `pmm_alloc` + `map`；处理 `MAP_FIXED` 与重叠策略 | `linux_layer/mm/sys_mmap.c` |
-| `munmap` | ✅ 完成 | **部分删除** → 分裂或截断 nexus 节点；`unmap` + `free_pages` | `linux_layer/mm/sys_munmap.c` |
-| `mprotect` | ✅ 完成 | 求交区间，分裂边界，更新 flags 与 PTE | `linux_layer/mm/sys_mprotect.c` |
-| `mremap` | ✅ 完成 | 基础实现 | `linux_layer/mm/sys_mremap.c` |
+| Syscall | 状态 | Radix Tree 侧工作 | 实现文件 |
+|---------|------|------------------|----------|
+| `mmap` | ✅ 完成 | 通过 `mm_user_utils_set_range_and_fill` 分配物理页、预留 radix 区间、映射页表、绑定叶子 | `linux_layer/mm/sys_mmap.c` |
+| `munmap` | ✅ 完成 | 通过 `mm_user_utils_clean_range_and_unfill` 解绑、解映射、删除 radix 区间、释放物理页 | `linux_layer/mm/sys_munmap.c` |
+| `mprotect` | ✅ 完成 | 通过 `mm_user_utils_set_range_flags` 批量更新 PTE 和 radix flags | `linux_layer/mm/sys_mprotect.c` |
+| `mremap` | ✅ 完成 | 通过 `mm_user_utils_remap_page` 重映射单页 | `linux_layer/mm/sys_mremap.c` |
 | 文件mmap | 📋 后续阶段 | 需要VFS支持 | - |
 
-**Map_Handler**：所有 **页表遍历** 使用 **`&percpu(Map_Handler)`**（当前 CPU），即使 nexus 节点带 `handler->cpu_id`（见 `doc/ai/INVARIANTS.md`）。
+**Map_Handler**：所有 **页表遍历** 使用 **`&percpu(Map_Handler)`**（当前 CPU），见 `doc/ai/INVARIANTS.md`。
 
 ## 5. COW 与页故障
 
@@ -55,9 +55,12 @@ Linux **VMA** 解决的是：**按用户 VA 区间** 记录映射属性，并支
 
 在 **不** 把 Linux 头文件引入 `core` 的前提下，Phase 1 已完成：
 
-- [x] **导出或封装**：在指定 `VSpace` 上的地址空间复制API（`copy_vspace`等）
-- [x] **page fault 入口**：可注册回调（弱符号），由 linux_layer 注册 COW 逻辑
-- [x] **refcount**：fork 共享只读 PTE 时与 `Page` / buddy 一致性已审计
+- [x] **导出 Radix Tree API**：`vmm_radix_tree_*` 系列，提供 INSERT/DELETE/QUERY_OR_CHANGE 三种语义。
+- [x] **导出用户编排层**：`mm_user_utils_*` 系列，提供完整的"分配→映射→绑定"和"解绑→解映射→释放"流程。
+- [x] **导出 vspace 复制 API**：`linux_copy_vspace()` 等，支持 fork 地址空间复制。
+- [x] **page fault 入口**：可注册回调（弱符号），由 linux_layer 注册 COW 逻辑。
+- [x] **两层锁机制**：L0 big lock + L2 per-band lock，多核扩展性优于单一 vspace-wide 锁。
+- [x] **refcount**：fork 共享只读 PTE 时与 `Page` / buddy 一致性已审计。
 
 **后续阶段可能需要**：
 - [ ] 文件mmap相关的nexus扩展

@@ -83,17 +83,17 @@ static error_t linux_handle_cow_fault(vaddr fault_addr, bool is_write,
         /* Step 2: Verify COW condition
          *
          * COW semantics after the fix:
-         * - Nexus node: stores original permissions (e.g., RW)
+         * - Radix_node_t: stores original permissions (e.g., RW)
          * - Page table: read-only (COW protection)
          *
          * When a write fault occurs on a COW page:
          * - old_flags (from page table): read-only
-         * - But the page should be writable according to nexus
+         * - But the page should be writable according to radix tree flags
          *
-         * We can't directly check nexus flags here without a query interface,
+         * We can't directly check radix tree flags here without a query interface,
          * so we rely on the fact that:
          * - If page is mapped and read-only, it might be COW
-         * - linux_mm_remap_user_leaf verifies radix state
+         * - linux_mm_remap_user_leaf verifies radix tree state
          */
         if (old_flags & PAGE_ENTRY_WRITE) {
                 /* Page already writable - not a COW fault */
@@ -110,8 +110,8 @@ static error_t linux_handle_cow_fault(vaddr fault_addr, bool is_write,
         /*
          * At this point, we have a write fault on a present, read-only page.
          * This could be:
-         * 1. A COW page (nexus says writable, page table says read-only)
-         * 2. A true read-only page (both nexus and page table say read-only)
+         * 1. A COW page (radix tree says writable, page table says read-only)
+         * 2. A true read-only page (both radix tree and page table say read-only)
          *
          * We attempt COW split; remap helper distinguishes
          * between these cases and return appropriate error codes.
@@ -285,7 +285,7 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
 
         /*
          * Category 2: Lazy allocation.
-         * Page not mapped, but exists in nexus with appropriate permissions.
+         * Page not mapped, but exists in radix tree with appropriate permissions.
          *
          * This is the core of demand paging: allocate physical pages on first
          * access rather than pre-allocating. This saves memory and allows
@@ -333,9 +333,9 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
 
         /*
          * Category 3: COW write fault.
-         * Page present + read-only, with nexus saying writable.
+         * Page present + read-only, with radix tree saying writable.
          *
-         * We determine this is a write fault based on nexus flags, not hardware
+         * We determine this is a write fault based on radix tree flags, not hardware
          * registers.
          */
         if (page_mapped && radix_is_write && is_present
@@ -373,7 +373,7 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
         }
 
         /*
-         * Category 5: Unmapped address (no nexus entry).
+         * Category 5: Unmapped address (no radix tree entry).
          * True segmentation fault - accessing unmapped memory.
          */
         if (!in_radix) {
