@@ -31,6 +31,13 @@ bool linux_mm_range_is_free(VSpace* vs, vaddr hint, size_t page_num);
 error_t linux_mm_store_to_user(VSpace* vs, u64 user_va, const void* src,
                                size_t len);
 
+/** Copy @p len bytes from user VA @p user_va to kernel @p dst (mapped pages only). */
+error_t linux_mm_load_from_user(VSpace* vs, u64 user_va, void* dst, size_t len);
+
+/** Copy between two user VAs (mapped leaf pages only). */
+error_t linux_mm_copy_user_range(VSpace* vs, u64 dst_user_va, u64 src_user_va,
+                                 size_t len);
+
 /** Map @p page_num user pages at @p hint (must be page-aligned; 0 = failure). */
 void* linux_mm_map_user_range(VSpace* vs, vaddr hint, size_t page_num,
                               ENTRY_FLAGS_t flags);

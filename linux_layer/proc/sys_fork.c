@@ -2,6 +2,9 @@
 #include <common/types.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/proc_compat.h>
+#include <linux_compat/signal/signal_deliver.h>
+#include <linux_compat/signal/signal_init.h>
+#include <rendezvos/trap/trap.h>
 #include <linux_compat/proc_registry.h>
 #include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/vspace_copy.h>
@@ -45,19 +48,19 @@ i64 sys_fork(void)
         error_t e;
 
         if (!parent || !parent->vs) {
-                pr_error("[FORK] Invalid parent task\n");
+                pr_error("[PROC] fork: Invalid parent task\n");
                 return -LINUX_ESRCH;
         }
 
         if (!linux_vspace_is_user_table(parent->vs)) {
-                pr_error("[FORK] Parent has no user vspace (radix/page tables)\n");
+                pr_error("[PROC] fork: Parent has no user vspace (radix/page tables)\n");
                 return -LINUX_EINVAL;
         }
 
         /* Create child task structure */
         child = new_task_structure(percpu(kallocator), LINUX_PROC_APPEND_BYTES);
         if (!child) {
-                pr_error("[FORK] Failed to create child task structure\n");
+                pr_error("[PROC] fork: Failed to create child task structure\n");
                 ret = -LINUX_ENOMEM;
                 goto out;
         }
@@ -65,7 +68,7 @@ i64 sys_fork(void)
         /* Copy parent's vspace */
         e = linux_copy_vspace(parent->vs, &child_vs);
         if (e != REND_SUCCESS) {
-                pr_error("[FORK] Failed to copy vspace: %d\n", (int)e);
+                pr_error("[PROC] fork: Failed to copy vspace: %d\n", (int)e);
                 ret = -LINUX_ENOMEM;
                 goto out_free_task;
         }
@@ -89,6 +92,9 @@ i64 sys_fork(void)
                         child_pa->pgid = parent_pa->pgid ?
                                                  parent_pa->pgid :
                                                  parent->pid;
+                        memcpy(child_pa->signal_dispositions,
+                               parent_pa->signal_dispositions,
+                               sizeof(child_pa->signal_dispositions));
                 }
         }
 
@@ -96,7 +102,7 @@ i64 sys_fork(void)
         e = add_task_to_manager(percpu(core_tm), child);
         if (e != REND_SUCCESS) {
                 pr_error(
-                        "[FORK] Failed to add child task to task manager: %d\n",
+                        "[PROC] fork: Failed to add child task to task manager: %d\n",
                         (int)e);
                 ret = -LINUX_EAGAIN;
                 goto out_free_vspace;
@@ -107,14 +113,32 @@ i64 sys_fork(void)
         child_thread =
                 copy_thread(parent_thread, child, 0, LINUX_THREAD_APPEND_BYTES);
         if (!child_thread) {
-                pr_error("[FORK] Failed to create child thread\n");
+                pr_error("[PROC] fork: Failed to create child thread\n");
                 ret = -LINUX_ENOMEM;
                 goto out_del_from_manager;
         }
 
+        {
+                linux_thread_append_t* parent_ta =
+                        linux_thread_append(parent_thread);
+                linux_thread_append_t* child_ta =
+                        linux_thread_append(child_thread);
+
+                if (child_ta) {
+                        linux_signal_init_thread_append(child_ta);
+                        if (parent_ta) {
+                                child_ta->blocked_signals =
+                                        parent_ta->blocked_signals;
+                        }
+                }
+                if (child_pa) {
+                        sigemptyset(&child_pa->pending_signals);
+                }
+        }
+
         e = add_thread_to_manager(percpu(core_tm), child_thread);
         if (e != REND_SUCCESS) {
-                pr_error("[FORK] Failed to add child thread to scheduler: %d\n",
+                pr_error("[PROC] fork: Failed to add child thread to scheduler: %d\n",
                          (int)e);
                 ret = -LINUX_EAGAIN;
                 goto out_free_thread;
@@ -122,10 +146,17 @@ i64 sys_fork(void)
 
         e = register_process(child);
         if (e != REND_SUCCESS) {
-                pr_warn("[FORK] Failed to register child PID: %d\n", (int)e);
+                pr_warn("[PROC] fork: Failed to register child PID: %d\n", (int)e);
         }
 
-        pr_info("[FORK] Fork: parent PID=%d, child PID=%d, child tid=%d\n",
+        {
+                struct trap_frame* child_tf =
+                        (struct trap_frame*)child_thread->kstack_bottom - 1;
+
+                (void)linux_deliver_pending_signals(child_tf);
+        }
+
+        pr_info("[PROC] fork: Fork: parent PID=%d, child PID=%d, child tid=%d\n",
                 parent->pid,
                 child->pid,
                 child_thread->tid);

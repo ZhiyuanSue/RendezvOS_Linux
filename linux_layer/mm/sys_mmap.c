@@ -84,7 +84,7 @@ u64 sys_mmap(u64 addr, u64 length, i64 prot, i64 flags, i64 fd, u64 offset)
                 hint = linux_mmap_default_hint(pa);
         }
 
-        pr_debug("[mmap] searching from hint=%lx, page_num=%lu\n", hint, page_num);
+        pr_debug("[MM] mmap searching from hint=%lx, page_num=%lu\n", hint, page_num);
 
         const int max_probes = 256;
         for (int i = 0; i < max_probes; i++) {
@@ -101,7 +101,7 @@ u64 sys_mmap(u64 addr, u64 length, i64 prot, i64 flags, i64 fd, u64 offset)
                                 u64 end = (u64)p + len_aligned;
                                 if (pa->mmap_hint < end)
                                         pa->mmap_hint = end;
-                                pr_debug("[mmap] success at %p (iteration %d)\n",
+                                pr_debug("[MM] mmap success at %p (iteration %d)\n",
                                          p,
                                          i);
                                 return (u64)p;
@@ -111,6 +111,6 @@ u64 sys_mmap(u64 addr, u64 length, i64 prot, i64 flags, i64 fd, u64 offset)
                 hint += PAGE_SIZE;
         }
 
-        pr_debug("[mmap] failed after %d probes\n", max_probes);
+        pr_debug("[MM] mmap failed after %d probes\n", max_probes);
         return (u64)(-LINUX_ENOMEM);
 }

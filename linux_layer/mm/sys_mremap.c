@@ -50,36 +50,7 @@ static bool linux_mm_range_mapped(VSpace* vs, u64 addr, u64 len_bytes)
 
 static error_t linux_mremap_copy_mapped(VSpace* vs, vaddr src, vaddr dst, u64 len)
 {
-        struct map_handler* h = &percpu(Map_Handler);
-        u64 done = 0;
-
-        while (done < len) {
-                vaddr sva = src + (vaddr)done;
-                vaddr dva = dst + (vaddr)done;
-                vaddr sp = ROUND_DOWN(sva, PAGE_SIZE);
-                vaddr dp = ROUND_DOWN(dva, PAGE_SIZE);
-                u64 so = (u64)(sva - sp);
-                u64 doff = (u64)(dva - dp);
-                u64 chunk = PAGE_SIZE - (so > doff ? so : doff);
-
-                if (chunk > len - done)
-                        chunk = len - done;
-
-                ENTRY_FLAGS_t sf = 0, df = 0;
-                int sl = 0, dl = 0;
-                ppn_t sppn = have_mapped(vs, VPN(sp), &sf, &sl, h);
-                ppn_t dppn = have_mapped(vs, VPN(dp), &df, &dl, h);
-
-                if (invalid_ppn(sppn) || invalid_ppn(dppn) || sl != 3 || dl != 3)
-                        return -E_RENDEZVOS;
-
-                error_t e = map_handler_copy_data_range(
-                        h, PADDR(dppn) + doff, PADDR(sppn) + so, chunk);
-                if (e != REND_SUCCESS)
-                        return e;
-                done += chunk;
-        }
-        return REND_SUCCESS;
+        return linux_mm_copy_user_range(vs, (u64)dst, (u64)src, (size_t)len);
 }
 
 /*

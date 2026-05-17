@@ -1,32 +1,31 @@
 #include <linux_compat/proc_registry.h>
 #include <linux_compat/errno.h>
 #include <rendezvos/registry/name_index.h>
+#include <rendezvos/ipc/port.h>
 #include <rendezvos/task/tcb.h>
 #include <rendezvos/task/initcall.h>
 #include <common/string.h>
 #include <modules/log/log.h>
 
-/*
- * Decimal string for PID (no libc snprintf).
- * buf must hold at least 2 bytes for pid == 0; otherwise NUL-terminated.
- */
-static void format_pid_decimal(char* buf, size_t bufsize, pid_t pid)
+extern struct Port_Table* global_port_table;
+
+size_t proc_format_pid(char* buf, size_t bufsize, pid_t pid)
 {
         u64 v = (u64)pid;
         char rev[32];
         size_t n = 0;
 
         if (bufsize == 0) {
-                return;
+                return 0;
         }
         if (v == 0) {
                 if (bufsize >= 2) {
                         buf[0] = '0';
                         buf[1] = '\0';
-                } else {
-                        buf[0] = '\0';
+                        return 1;
                 }
-                return;
+                buf[0] = '\0';
+                return 0;
         }
         while (v > 0 && n < sizeof(rev)) {
                 rev[n++] = (char)('0' + (v % 10U));
@@ -34,12 +33,38 @@ static void format_pid_decimal(char* buf, size_t bufsize, pid_t pid)
         }
         if (n + 1 > bufsize) {
                 buf[0] = '\0';
-                return;
+                return 0;
         }
         for (size_t i = 0; i < n; i++) {
                 buf[i] = rev[n - 1 - i];
         }
         buf[n] = '\0';
+        return n;
+}
+
+size_t proc_format_wait_port_name(char* buf, size_t bufsize, pid_t pid)
+{
+        static const char prefix[] = "wait_port_";
+        size_t i;
+
+        if (bufsize < sizeof(prefix)) {
+                if (bufsize > 0) {
+                        buf[0] = '\0';
+                }
+                return 0;
+        }
+        for (i = 0; i < sizeof(prefix) - 1; i++) {
+                buf[i] = prefix[i];
+        }
+        {
+                size_t pid_len = proc_format_pid(buf + i, bufsize - i, pid);
+
+                if (pid_len == 0) {
+                        buf[0] = '\0';
+                        return 0;
+                }
+                return i + pid_len;
+        }
 }
 
 /*
@@ -67,29 +92,49 @@ static const char* task_get_name(void* value)
                 return NULL;
         }
 
-        format_pid_decimal(name_buf, sizeof(name_buf), task->pid);
+        proc_format_pid(name_buf, sizeof(name_buf), task->pid);
         return name_buf;
 }
 
-/*
- * Hold callback - increment task refcount.
- */
-static bool task_hold(void* value)
+/* name_index hold: core has no Tcb refcount; pin is registry lifetime only. */
+static bool proc_task_hold_helper(void* value)
 {
         Tcb_Base* task = (Tcb_Base*)value;
-        /* TODO: Implement task refcount if needed */
-        (void)task;
-        return true;
+
+        return task != NULL && task->pid > 0;
 }
 
-/*
- * Drop callback - decrement task refcount.
- */
-static void task_drop(void* value)
+static void proc_task_drop_helper(void* value)
 {
-        Tcb_Base* task = (Tcb_Base*)value;
-        /* TODO: Implement task refcount if needed */
-        (void)task;
+        (void)value;
+}
+
+Message_Port_t* proc_get_or_create_wait_port(pid_t pid)
+{
+        char port_name[PROC_WAIT_PORT_NAME_MAX];
+        Message_Port_t* port;
+
+        if (pid <= 0) {
+                return NULL;
+        }
+        if (proc_format_wait_port_name(port_name, sizeof(port_name), pid) == 0) {
+                return NULL;
+        }
+
+        port = thread_lookup_port(port_name);
+        if (port) {
+                return port;
+        }
+
+        port = create_message_port(port_name);
+        if (!port) {
+                return NULL;
+        }
+        if (register_port(global_port_table, port) != REND_SUCCESS) {
+                delete_message_port_structure(port);
+                return NULL;
+        }
+        return port;
 }
 
 void proc_registry_init(void)
@@ -99,11 +144,11 @@ void proc_registry_init(void)
                         16,
                         NULL,
                         task_get_name,
-                        task_hold,
-                        task_drop,
+                        proc_task_hold_helper,
+                        proc_task_drop_helper,
                         NULL,
                         NULL);
-        pr_info("[proc] PID registry initialized\n");
+        pr_info("[PROC] PID registry initialized\n");
 }
 
 /*
@@ -119,7 +164,7 @@ static void proc_registry_evict_pid(pid_t pid, Tcb_Base* only_task)
                 return;
         }
 
-        format_pid_decimal(name_buf, sizeof(name_buf), pid);
+        proc_format_pid(name_buf, sizeof(name_buf), pid);
 
         for (;;) {
                 name_index_token_t tok;
@@ -169,7 +214,7 @@ error_t register_process(Tcb_Base* task)
                 return -LINUX_EAGAIN;
         }
 
-        pr_debug("[proc] Registered PID %d\n", task->pid);
+        pr_debug("[PROC] Registered PID %d\n", task->pid);
         return REND_SUCCESS;
 }
 
@@ -180,14 +225,14 @@ Tcb_Base* find_task_by_pid(pid_t pid)
         }
 
         char name_buf[16];
-        format_pid_decimal(name_buf, sizeof(name_buf), pid);
+        proc_format_pid(name_buf, sizeof(name_buf), pid);
 
         Tcb_Base* task =
                 (Tcb_Base*)name_index_lookup(&pid_index, name_buf, NULL);
         if (task) {
-                pr_debug("[proc] Found PID %d\n", pid);
+                pr_debug("[PROC] Found PID %d\n", pid);
         } else {
-                pr_debug("[proc] PID %d not found\n", pid);
+                pr_debug("[PROC] PID %d not found\n", pid);
         }
 
         return task;
@@ -200,7 +245,7 @@ void unregister_process(Tcb_Base* task)
         }
 
         proc_registry_evict_pid(task->pid, task);
-        pr_debug("[proc] Unregistered PID %d\n", task->pid);
+        pr_debug("[PROC] Unregistered PID %d\n", task->pid);
 }
 
 /*

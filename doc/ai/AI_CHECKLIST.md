@@ -135,7 +135,7 @@ If any section is missing, review is incomplete.
     mental model as `malloc`/`free` / `realloc`), `s`/`n`/`dst`/`src` alongside
     `memcpy`/`strlen`/`strncpy`-style signatures. In-tree examples (not mandatory
     spellings): `free_pages(void *p, …)` / `user_unfill_range(void *p, …)` in
-    `nexus.h`; `memcpy(void *dst_str, const void *src_str, size_t n)` in
+    `mm_user_utils.h`; `memcpy(void *dst_str, const void *src_str, size_t n)` in
     `common/string.h`. **Contrast:** if **one struct type** is reused for several
     **logical roles** in the same subsystem (tree root vs leaf vs bookkeeping),
     a bare `n` or `p` hides which lock or root applies—use **role-first** names
@@ -231,7 +231,7 @@ When a new bug pattern appears during review/debug:
 - 2026-03: **Wrong root in hierarchical delete/lookup:** search/remove APIs that
   key off a value inserted under a **canonical tree root** must be given the
   same root pointer used at insert time; passing an interior or secondary root
-  breaks lookup/teardown. *(In-tree example: MM nexus delete vs per-vspace node.)*
+  breaks lookup/teardown. *(In-tree example: MM radix tree delete vs per-vspace node.)*
   Checklist: §5 + Pattern Log.
 
 - 2026-03: **Union of two pointers, truthiness bug:** `if (vs.kref)` is true for
@@ -244,7 +244,7 @@ When a new bug pattern appears during review/debug:
 - 2026-03: **`Page.rmap_list` vs lock-free kmem queues:** small-object free may
   use MSQs without touching PMM lists, but `rmap_list` link/unlink/scan must
   synchronize with the zone `pmm` lock. Do not walk `rmap_list` lock-free while
-  other CPUs link/unlink. If unmap needs `nexus_vspace_lock`, detach rmap
+  other CPUs link/unlink. If unmap needs radix tree range locks, detach rmap
   entries under `pmm` lock one at a time, then unmap without holding `pmm`
   (see `unfill_phy_page`). Checklist: §2 + Pattern Log.
 
@@ -330,7 +330,7 @@ When a new bug pattern appears during review/debug:
   allocated `kmsg` (no extra TLV allocation + copy). Checklist: §7 +
   `doc/ai/IPC_MESSAGE.md`.
 
-- 2026-04: **Field repurposing with union + type-safe caching (nexus_update_range_flags):**
+- 2026-04: **Field repurposing with union + type-safe caching (vmm_radix_tree_change_range_flags):**
   - **Pattern**: When repurposing struct fields as temporary cache, use union with
     correct target types, document safety conditions, and ensure symmetric cleanup.
   - **Example**: `union { struct list_entry manage_free_list; struct { ppn_t cached_ppn;

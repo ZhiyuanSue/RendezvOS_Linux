@@ -17,6 +17,9 @@
 #include <rendezvos/limits.h>
 #include <linux_compat/fault.h>
 #include <linux_compat/errno.h>
+#include <linux_compat/signal/signal_deliver.h>
+#include <linux_compat/signal/signal_queue.h>
+#include <linux_compat/signal/signal_types.h>
 
 #if defined(_X86_64_)
 #include <arch/x86_64/mm/pmm.h>
@@ -65,7 +68,7 @@ static error_t linux_handle_cow_fault(vaddr fault_addr, bool is_write,
         struct pmm *pmm = vs->pmm;
 
         if (!vs || !handler || !pmm) {
-                pr_error("[COW] NULL vs/handler/pmm\n");
+                pr_error("[MM] COW: NULL vs/handler/pmm\n");
                 return -E_RENDEZVOS;
         }
 
@@ -97,7 +100,7 @@ static error_t linux_handle_cow_fault(vaddr fault_addr, bool is_write,
          */
         if (old_flags & PAGE_ENTRY_WRITE) {
                 /* Page already writable - not a COW fault */
-                pr_error("[COW] Page already writable at vaddr=0x%lx\n",
+                pr_error("[MM] COW: Page already writable at vaddr=0x%lx\n",
                          fault_addr);
                 return -E_RENDEZVOS;
         }
@@ -117,7 +120,7 @@ static error_t linux_handle_cow_fault(vaddr fault_addr, bool is_write,
          * between these cases and return appropriate error codes.
          */
 
-        pr_debug("[COW] Splitting page at vaddr=0x%lx (old_ppn=0x%lx)\n",
+        pr_debug("[MM] COW: Splitting page at vaddr=0x%lx (old_ppn=0x%lx)\n",
                  fault_addr,
                  (u64)old_ppn);
 
@@ -125,27 +128,27 @@ static error_t linux_handle_cow_fault(vaddr fault_addr, bool is_write,
         size_t alloced_page_number;
         ppn_t new_ppn = pmm->pmm_alloc(pmm, 1, &alloced_page_number);
         if (invalid_ppn(new_ppn) || alloced_page_number != 1) {
-                pr_error("[COW] Failed to allocate new physical page\n");
+                pr_error("[MM] COW: Failed to allocate new physical page\n");
                 return -E_RENDEZVOS;
         }
 
         /* Step 4: Copy page content using map_handler_copy_page() */
         error_t e = map_handler_copy_page(handler, new_ppn, old_ppn);
         if (e != REND_SUCCESS) {
-                pr_error("[COW] Failed to copy page content (e=%d)\n", (int)e);
+                pr_error("[MM] COW: Failed to copy page content (e=%d)\n", (int)e);
                 pmm->pmm_free(pmm, new_ppn, 1);
                 return e;
         }
 
         if (!vs->root_radix) {
-                pr_error("[COW] vs has no radix root va=0x%lx\n", fault_addr);
+                pr_error("[MM] COW: vs has no radix root va=0x%lx\n", fault_addr);
                 pmm->pmm_free(pmm, new_ppn, 1);
                 return -E_RENDEZVOS;
         }
 
         ENTRY_FLAGS_t new_flags = old_flags | PAGE_ENTRY_WRITE;
         pr_debug(
-                "[COW] linux_mm_remap_user_leaf: va=0x%lx new_ppn=0x%lx old_ppn=0x%lx flags=0x%lx\n",
+                "[MM] COW: linux_mm_remap_user_leaf: va=0x%lx new_ppn=0x%lx old_ppn=0x%lx flags=0x%lx\n",
                 fault_addr,
                 (u64)new_ppn,
                 (u64)old_ppn,
@@ -155,9 +158,9 @@ static error_t linux_handle_cow_fault(vaddr fault_addr, bool is_write,
                 vs, fault_addr, new_ppn, new_flags, old_ppn);
 
         if (e != REND_SUCCESS) {
-                pr_error("[COW] Failed to remap page (e=%d)\n", (int)e);
+                pr_error("[MM] COW: Failed to remap page (e=%d)\n", (int)e);
                 pr_error(
-                        "[COW] Details: va=0x%lx, new_ppn=0x%lx, old_ppn=0x%lx, flags=0x%lx, entry_level=%d\n",
+                        "[MM] COW: Details: va=0x%lx, new_ppn=0x%lx, old_ppn=0x%lx, flags=0x%lx, entry_level=%d\n",
                         fault_addr,
                         (u64)new_ppn,
                         (u64)old_ppn,
@@ -168,12 +171,26 @@ static error_t linux_handle_cow_fault(vaddr fault_addr, bool is_write,
         }
 
         pr_debug(
-                "[COW] Successfully split page at vaddr=0x%lx (old_ppn=0x%lx -> new_ppn=0x%lx)\n",
+                "[MM] COW: Successfully split page at vaddr=0x%lx (old_ppn=0x%lx -> new_ppn=0x%lx)\n",
                 fault_addr,
                 (u64)old_ppn,
                 (u64)new_ppn);
 
         return REND_SUCCESS;
+}
+
+static void linux_compat_deliver_segv_or_fatal(struct trap_frame* tf)
+{
+        Thread_Base* th = get_cpu_current_thread();
+        Tcb_Base* task = th ? th->belong_tcb : NULL;
+
+        if (task) {
+                (void)linux_queue_signal(task, SIGSEGV, task->pid);
+                if (linux_deliver_pending_signals(tf)) {
+                        return;
+                }
+        }
+        linux_fatal_user_fault(128 + SIGSEGV);
 }
 
 static void linux_trap_pf_handler(struct trap_frame *tf)
@@ -205,7 +222,7 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
 #endif
 
         pr_debug(
-                "[Linux compat] Page fault at vaddr=0x%lx (write=%d, present=%d, exec=%d)\n",
+                "[MM] Page fault at vaddr=0x%lx (write=%d, present=%d, exec=%d)\n",
                 fault_addr,
                 is_write,
                 is_present,
@@ -219,13 +236,13 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
 
         if (fault_addr < PAGE_SIZE) {
                 pr_error(
-                        "[Linux compat] NULL pointer access at 0x%lx (is_kernel=%d)\n",
+                        "[MM] NULL pointer access at 0x%lx (is_kernel=%d)\n",
                         fault_addr,
                         is_kernel);
                 if (is_kernel) {
                         kernel_panic("NULL pointer dereference in kernel\n");
                 } else {
-                        linux_fatal_user_fault(-LINUX_EFAULT);
+                        linux_compat_deliver_segv_or_fatal(tf);
                 }
                 return;
         }
@@ -234,7 +251,7 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
         struct map_handler *handler = &percpu(Map_Handler);
 
         if (!vs || !handler) {
-                pr_error("[Linux compat] NULL vs or handler\n");
+                pr_error("[MM] NULL vs or handler\n");
                 goto fatal_fault;
         }
 
@@ -243,7 +260,7 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
         ppn_t ppn = have_mapped(vs, VPN(aligned), &pt_flags, &level, handler);
 
         pr_debug(
-                "[Linux compat] have_mapped: va=0x%lx ppn=0x%lx flags=0x%lx level=%d vs=%p asid=%lu root=0x%lx\n",
+                "[MM] have_mapped: va=0x%lx ppn=0x%lx flags=0x%lx level=%d vs=%p asid=%lu root=0x%lx\n",
                 aligned,
                 (u64)ppn,
                 (u64)pt_flags,
@@ -259,12 +276,12 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
         if (invalid_ppn(ppn)) {
                 if (ne == REND_SUCCESS) {
                         pr_debug(
-                                "[Linux compat] radix query: start=0x%lx flags=0x%lx\n",
+                                "[MM] radix query: start=0x%lx flags=0x%lx\n",
                                 (u64)nstart,
                                 (u64)nflags);
                 } else {
                         pr_debug(
-                                "[Linux compat] radix query: not found (e=%d)\n",
+                                "[MM] radix query: not found (e=%d)\n",
                                 (int)ne);
                 }
         }
@@ -302,13 +319,13 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
 
                 if (radix_is_write && !(nflags & PAGE_ENTRY_WRITE)) {
                         pr_error(
-                                "[Linux compat] radix/ fault mismatch: write on RO lazy page at 0x%lx\n",
+                                "[MM] radix/ fault mismatch: write on RO lazy page at 0x%lx\n",
                                 fault_addr);
                         goto handle_read_only_violation;
                 }
                 if (radix_is_exec && !(nflags & PAGE_ENTRY_EXEC)) {
                         pr_error(
-                                "[Linux compat] radix/ fault mismatch: exec on NX lazy page at 0x%lx\n",
+                                "[MM] radix/ fault mismatch: exec on NX lazy page at 0x%lx\n",
                                 fault_addr);
                         goto handle_read_only_violation;
                 }
@@ -348,7 +365,7 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
                                 return;
                         }
                         pr_error(
-                                "[Linux compat] COW handling failed at 0x%lx: e=%d\n",
+                                "[MM] COW handling failed at 0x%lx: e=%d\n",
                                 fault_addr,
                                 (int)e);
                         goto unhandled_fault;
@@ -364,9 +381,9 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
          */
         if (radix_is_write && !is_present && page_mapped) {
         handle_read_only_violation:
-                pr_error("[Linux compat] Write to read-only mapping at 0x%lx\n",
+                pr_error("[MM] Write to read-only mapping at 0x%lx\n",
                          fault_addr);
-                pr_error("[Linux compat] pt_flags=0x%lx, nflags=0x%lx\n",
+                pr_error("[MM] pt_flags=0x%lx, nflags=0x%lx\n",
                          (u64)pt_flags,
                          (u64)nflags);
                 goto unhandled_fault;
@@ -377,19 +394,19 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
          * True segmentation fault - accessing unmapped memory.
          */
         if (!in_radix) {
-                pr_error("[Linux compat] Access to unmapped address at 0x%lx\n",
+                pr_error("[MM] Access to unmapped address at 0x%lx\n",
                          fault_addr);
                 pr_error(
-                        "[Linux compat] Not in radix - true segfault\n");
+                        "[MM] Not in radix - true segfault\n");
                 goto unhandled_fault;
         }
 
         /*
          * Category 6: Other faults (execution violations, etc.)
          */
-        pr_error("[Linux compat] Unhandled page fault at 0x%lx\n", fault_addr);
+        pr_error("[MM] Unhandled page fault at 0x%lx\n", fault_addr);
         pr_error(
-                "[Linux compat] Fault details: write=%d, present=%d, exec=%d\n",
+                "[MM] Fault details: write=%d, present=%d, exec=%d\n",
                 is_write,
                 is_present,
                 is_execute);
@@ -397,7 +414,7 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
 fatal_fault:
 unhandled_fault:
         if (!is_kernel) {
-                linux_fatal_user_fault(-LINUX_EFAULT);
+                linux_compat_deliver_segv_or_fatal(tf);
                 return;
         }
 

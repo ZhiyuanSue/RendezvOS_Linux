@@ -68,7 +68,7 @@ Format: Context / Decision / Consequences.
 ---
 ## 2026-03 | Current user mappings are 4K-only (so COW targets 4K first)
 
-- Context: nexus 用户态分配路径在 `_user_take_range()` 固定调用 `_take_range(false, ...)` 并且 `user_fill_range()` 只 `map(..., level=3)`；当前未维护用户态 2M/huge 节点数据结构。
+- Context: radix tree 用户态分配路径固定调用 4K 页映射并且 `user_fill_range()` 只 `map(..., level=3)`；当前未维护用户态 2M/huge 节点数据结构。
 - Decision: implement fork+COW minimal closure for 4K first; extend to 2M/huge only after the user-side 2M mapping data-path is introduced.
 - Consequences:
   - avoids unnecessary huge-page COW complexity early.
@@ -99,7 +99,7 @@ Format: Context / Decision / Consequences.
     - Future features like `fork+COW` increase the surface area of correctness: page refcounting and rmap coherence must remain consistent under server-driven lifetimes.
   - Targeted improvements for future work:
     - Define a small set of “ownership + teardown” invariants that every server must respect when driving `core` primitives.
-    - For fork/COW, formalize how nexus nodes and rmap entries are duplicated so exit cleanup never mis-frees shared physical pages.
+    - For fork/COW, formalize how radix tree nodes and rmap entries are duplicated so exit cleanup never mis-frees shared physical pages.
     - Expand tests to cover server-driven teardown paths and memory reclamation regressions under concurrent workloads.
 
 ---

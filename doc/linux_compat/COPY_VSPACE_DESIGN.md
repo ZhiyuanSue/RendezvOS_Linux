@@ -35,12 +35,12 @@ error_t copy_vspace(VSpace* src_vs,
 ### 阶段1: 简化版本 (当前实现)
 **目标**: 直接复制所有物理页和映射
 **步骤**:
-1. 遍历源vspace的页表
+1. 遍历源vspace的Radix Tree (通过`vmm_radix_tree_find_first_occupied_interval`)
 2. 对每个有效映射：
    - 分配新的物理页
    - 复制内容
    - 在目标vspace中创建映射
-3. 复制nexus树结构
+3. 复制Radix Tree区间元数据
 
 ### 阶段2: 优化版本 (future)
 **目标**: COW支持
@@ -60,10 +60,11 @@ error_t copy_vspace(VSpace* src_vs,
 - `map()` - 创建页表映射
 - `unmap()` - 删除映射  
 - `VSpace` 结构访问
-- `nexus` 遍历和复制
+- **Radix Tree遍历和查询** - `vmm_radix_tree_find_first_occupied_interval`
+- **mm_user_utils** - `mm_user_utils_set_range_and_fill` 等
 
 ### 新增API (如果需要)
-- `遍历vspace映射` - 可能需要新增页表遍历函数
+- `遍历vspace映射` - 通过Radix Tree API实现
 
 ## 测试计划
 

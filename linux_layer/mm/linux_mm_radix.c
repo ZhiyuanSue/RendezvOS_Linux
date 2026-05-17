@@ -131,41 +131,130 @@ out_unlock:
         return err;
 }
 
-error_t linux_mm_store_to_user(VSpace* vs, u64 user_va, const void* src,
-                               size_t len)
+/*
+ * User VA <-> kernel buffer via have_mapped + map_handler_copy_data_range.
+ *
+ * map_handler_copy_data_range already loops on physical page boundaries
+ * (src_paddr/dst_paddr += chunk). That assumes physically contiguous pages.
+ * Adjacent user VPNs usually map to unrelated PPNs, so we resolve one user
+ * page per outer iteration (have_mapped), then let core copy up to the end
+ * of that user page (and any physically contiguous tail on the kernel side).
+ */
+static error_t linux_mm_copy_user_kernel_helper(VSpace* vs, u64 user_va,
+                                                void* kbuf, size_t len,
+                                                bool to_user)
 {
         struct map_handler* handler = &percpu(Map_Handler);
-        size_t copied = 0;
+        size_t done = 0;
 
-        if (!src || len == 0)
+        if (len == 0) {
                 return REND_SUCCESS;
-        if (!linux_mm_user_vspace_ok(vs))
+        }
+        if (!kbuf || !linux_mm_user_vspace_ok(vs)) {
                 return -E_IN_PARAM;
+        }
 
-        while (copied < len) {
-                vaddr cur = (vaddr)user_va + (vaddr)copied;
-                vaddr page_base = ROUND_DOWN(cur, PAGE_SIZE);
-                size_t page_off = (size_t)(cur - page_base);
+        while (done < len) {
+                vaddr uva = (vaddr)user_va + (vaddr)done;
+                vaddr page_base = ROUND_DOWN(uva, PAGE_SIZE);
+                size_t page_off = (size_t)(uva - page_base);
                 size_t chunk = PAGE_SIZE - page_off;
-
-                if (chunk > len - copied)
-                        chunk = len - copied;
-
                 ENTRY_FLAGS_t pte_flags = 0;
                 int level = 0;
-                ppn_t ppn = have_mapped(
-                        vs, VPN(page_base), &pte_flags, &level, handler);
-                if (invalid_ppn(ppn) || !(pte_flags & PAGE_ENTRY_VALID)
+                ppn_t uppn;
+                paddr user_p;
+                paddr kern_p;
+                error_t e;
+
+                if (chunk > len - done) {
+                        chunk = len - done;
+                }
+
+                uppn = have_mapped(vs, VPN(page_base), &pte_flags, &level,
+                                   handler);
+                if (invalid_ppn(uppn) || !(pte_flags & PAGE_ENTRY_VALID)
                     || level != 3) {
                         return -E_RENDEZVOS;
                 }
 
-                vaddr kva = map_handler_map_slot(handler, 0, ppn);
-                if (!kva)
+                user_p = PADDR(uppn) + (paddr)page_off;
+                kern_p = KERNEL_VIRT_TO_PHY((vaddr)kbuf + (vaddr)done);
+
+                if (to_user) {
+                        e = map_handler_copy_data_range(handler, user_p, kern_p,
+                                                        (u64)chunk);
+                } else {
+                        e = map_handler_copy_data_range(handler, kern_p, user_p,
+                                                        (u64)chunk);
+                }
+                if (e != REND_SUCCESS) {
+                        return e;
+                }
+                done += chunk;
+        }
+        return REND_SUCCESS;
+}
+
+error_t linux_mm_store_to_user(VSpace* vs, u64 user_va, const void* src,
+                               size_t len)
+{
+        if (!src) {
+                return -E_IN_PARAM;
+        }
+        return linux_mm_copy_user_kernel_helper(
+                vs, user_va, (void*)(uintptr_t)src, len, true);
+}
+
+error_t linux_mm_load_from_user(VSpace* vs, u64 user_va, void* dst, size_t len)
+{
+        return linux_mm_copy_user_kernel_helper(vs, user_va, dst, len, false);
+}
+
+error_t linux_mm_copy_user_range(VSpace* vs, u64 dst_user_va, u64 src_user_va,
+                                 size_t len)
+{
+        struct map_handler* handler = &percpu(Map_Handler);
+        u64 done = 0;
+
+        if (len == 0) {
+                return REND_SUCCESS;
+        }
+        if (!linux_mm_user_vspace_ok(vs)) {
+                return -E_IN_PARAM;
+        }
+
+        while (done < len) {
+                vaddr sva = (vaddr)src_user_va + (vaddr)done;
+                vaddr dva = (vaddr)dst_user_va + (vaddr)done;
+                vaddr sp = ROUND_DOWN(sva, PAGE_SIZE);
+                vaddr dp = ROUND_DOWN(dva, PAGE_SIZE);
+                u64 so = (u64)(sva - sp);
+                u64 doff = (u64)(dva - dp);
+                u64 chunk = PAGE_SIZE - (so > doff ? so : doff);
+                ENTRY_FLAGS_t sf = 0;
+                ENTRY_FLAGS_t df = 0;
+                int sl = 0;
+                int dl = 0;
+                ppn_t sppn;
+                ppn_t dppn;
+                error_t e;
+
+                if (chunk > len - done) {
+                        chunk = len - done;
+                }
+
+                sppn = have_mapped(vs, VPN(sp), &sf, &sl, handler);
+                dppn = have_mapped(vs, VPN(dp), &df, &dl, handler);
+                if (invalid_ppn(sppn) || invalid_ppn(dppn) || sl != 3 || dl != 3) {
                         return -E_RENDEZVOS;
-                memcpy((void*)(kva + page_off), (const char*)src + copied, chunk);
-                map_handler_unmap_slot(handler, 0);
-                copied += chunk;
+                }
+
+                e = map_handler_copy_data_range(
+                        handler, PADDR(dppn) + doff, PADDR(sppn) + so, chunk);
+                if (e != REND_SUCCESS) {
+                        return e;
+                }
+                done += chunk;
         }
         return REND_SUCCESS;
 }

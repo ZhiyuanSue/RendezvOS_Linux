@@ -27,7 +27,7 @@ error_t linux_copy_vspace(VSpace *parent_vs, VSpace **child_vs_ptr)
         }
 
         if (!linux_vspace_is_user_table(parent_vs)) {
-                pr_error("[VSPACE_COPY] Parent vspace is not a table vspace\n");
+                pr_error("[MM] Parent vspace is not a table vspace\n");
                 return -E_IN_PARAM;
         }
 

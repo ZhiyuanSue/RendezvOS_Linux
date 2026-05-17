@@ -63,7 +63,7 @@ Linux **VMA** 解决的是：**按用户 VA 区间** 记录映射属性，并支
 - [x] **refcount**：fork 共享只读 PTE 时与 `Page` / buddy 一致性已审计。
 
 **后续阶段可能需要**：
-- [ ] 文件mmap相关的nexus扩展
+- [ ] 文件mmap相关的radix tree扩展
 - [ ] 更复杂的mremap场景支持
 
 具体符号名在实现 PR 中补齐，并同步 [`doc/ai/INVARIANTS.md`](../ai/INVARIANTS.md)。

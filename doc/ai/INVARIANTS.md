@@ -26,31 +26,28 @@ If a change breaks or modifies an invariant, update this file in the same commit
 - Table-internal buffers (`slots`, `ht`) are allocated/freed by the same table allocator.
 - Destroy path must keep allocator valid until table object free completes.
 
-## Nexus / `nexus_node` address-space identity (`VSpace`)
+## Radix Tree / VSpace address-space metadata
 
 - **Multi-role aggregate:** when one `struct` type represents more than one logical
   role (different roots, containers, or records in the same subsystem), pointers
   of that type are **not** interchangeable by shape alone—naming and call-site
   context must reflect **role** (which tree, which lock, which lookup root).
-- `nexus_node` holds `VSpace* vs_common` only. `VSpace` (`vmm.h`) is one
-  struct: `type` (`enum vs_common_kind` as `u64`) + **anonymous** union (C11:
-  members lifted to `VSpace`). **Kernel heap ref:** `vs` points at the shared
-  root `VSpace` (table branch), `cpu_id` is the allocating CPU for kmem
-  routing. **Table vspace:** `vspace_root_addr`, locks, `_vspace_node` (kernel
-  `root_vspace` and per-task roots from `new_vspace_structure()`; same union storage;
-  never interpret without `type`).
-  Never infer role from pointer truthiness. Per-CPU `nexus_kernel_heap_vs_common`
-  is `KERNEL_HEAP_REF`. `new_vspace_structure` returns `VS_COMMON_TABLE_VSPACE`, freed in
-  `del_vspace`.
-- `map` / `unmap` / `have_mapped` take a **table** `VSpace*` (kernel
+- **Radix_tree metadata:** Each `VSpace` has its own `root_radix` (4-level 512-way radix tree)
+  for virtual address space metadata. `VSpace` (`vmm.h`) is one struct: `type`
+  (`enum vs_common_kind` as `u64`) + **anonymous** union (C11: members lifted to `VSpace`).
+  **Kernel heap ref:** `vs` points at the shared root `VSpace` (table branch), `cpu_id`
+  is the allocating CPU for kmem routing.
+- **`map` / `unmap` / `have_mapped`** take a **table** `VSpace*` (kernel
   `root_vspace` or user object from `new_vspace_structure`), not the KERNEL_HEAP_REF
   wrapper.
 - **Kernel SMP:** mutations / walks of `root_vspace` page tables must hold
   `root_vspace.vspace_lock` (MCS, taken inside `map`/`unmap`/`have_mapped` via
-  the per-CPU `map_handler` waiter node). `KERNEL_HEAP_REF.nexus_vspace_lock`
-  only protects that CPU’s kernel nexus RB tree/metadata.
-- `nexus_delete_vspace(nexus_root, vs)` and `nexus_migrate_vspace` take the
-  **per-CPU** `nexus_root` that owns `_vspace_rb_root`, not a per-vspace node.
+  the per-CPU `map_handler` waiter node). **Radix Tree two-tier locking:** L0 big lock
+  (512 GiB granularity) + L2 per-band lock (2 MiB granularity) provides better
+  multi-core scalability than single vspace-wide locks.
+- **Radix tree owner tracking:** Shared high-half (L0[256..511]) uses `tagged_ptr owner`
+  field to track ownership (low-half = vs, high-half = &root_vspace). DELETE operations
+  only clear leaves whose owner matches the caller.
 
 ## kmem / cross-CPU page `kfree`
 
@@ -58,17 +55,17 @@ If a change breaks or modifies an invariant, update this file in the same commit
   queues on that allocator (`kfree_page_msq` for remote whole-page frees,
   `buffer_msq` for remote small-object frees), so neither backlog grows when only
   one allocation size is active.
-- Whole-page `kfree` routes via `nexus_kernel_page_owner_cpu(kva)` to the owner
-  CPU’s `kallocator` MSQ. Owner is **only** `cpu_id` on rmap nodes with
-  `KERNEL_HEAP_REF` (per-CPU `nexus_kernel_heap_vs_common`); do not infer from
-  global `root_vspace`. User rmap entries on the same PPN are ignored for this
-  purpose.
+- Whole-page `kfree` routes via radix owner lookup (`kmem_radix_kernel_heap_owner_cpu`
+  in `kernel/mm/kmalloc.c`) to the owner CPU’s `kallocator` MSQ. Owner is **only**
+  `cpu_id` on rmap nodes with `KERNEL_HEAP_REF` (per-CPU `nexus_kernel_heap_vs_common`,
+  legacy symbol name in `vmm.h`); do not infer from global `root_vspace`. User rmap
+  entries on the same PPN are ignored for this purpose.
 - `Page.rmap_list` is PMM metadata: link/unlink and read-only walks that
   interpret the list run under the zone `pmm` MCS lock (`spin_ptr` +
   `percpu(pmm_spin_lock[zone_id])`). `unfill_phy_page` detaches **one** rmap
   entry under that lock (`list_del_init`), drops the lock, then unmaps — repeat
   until the list is empty — so lock order never inverts with
-  `nexus_vspace_lock` (no fixed cap on how many mappings share a physical page).
+  radix tree range locks (no fixed cap on how many mappings share a physical page).
 - **MCS waiter node (`me`):** the second argument to `lock_mcs` / `unlock_mcs` must
   be **this CPU’s** `percpu(pmm_spin_lock[zone_id])`, never
   `per_cpu(pmm_spin_lock[zone_id], handler->cpu_id)`. The global queue head is

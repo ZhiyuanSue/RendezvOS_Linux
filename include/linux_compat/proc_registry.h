@@ -4,6 +4,10 @@
 #include <common/types.h>
 #include <rendezvos/error.h>
 #include <linux_compat/proc_compat.h>
+#include <rendezvos/ipc/port.h>
+
+#define PROC_PID_STR_MAX        16
+#define PROC_WAIT_PORT_NAME_MAX 32
 
 /*
  * Process registry for PID lookup.
@@ -17,6 +21,15 @@
  * Must be called before any other registry functions.
  */
 void proc_registry_init(void);
+
+/** Decimal PID string; returns bytes written (excluding NUL), or 0 on truncation. */
+size_t proc_format_pid(char* buf, size_t bufsize, pid_t pid);
+
+/** Format @c wait_port_<pid> ; returns bytes written, or 0 on truncation. */
+size_t proc_format_wait_port_name(char* buf, size_t bufsize, pid_t pid);
+
+/** Lookup or create+register the per-process wait IPC port. */
+Message_Port_t* proc_get_or_create_wait_port(pid_t pid);
 
 /*
  * Register a process in the registry.

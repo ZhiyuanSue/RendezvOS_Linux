@@ -10,7 +10,7 @@ i64 sys_getpid(void)
 {
         Tcb_Base* t = get_cpu_current_task();
         if (!t)
-                return -(i64)LINUX_ESRCH;
+                return -LINUX_ESRCH;
         return (i64)t->pid;
 }
 
@@ -18,7 +18,7 @@ i64 sys_gettid(void)
 {
         Thread_Base* t = get_cpu_current_thread();
         if (!t)
-                return -(i64)LINUX_ESRCH;
+                return -LINUX_ESRCH;
 
         /*
          * In single-threaded processes, tid == pid.
@@ -33,7 +33,7 @@ i64 sys_getppid(void)
         linux_proc_append_t* pa = NULL;
 
         if (!t)
-                return -(i64)LINUX_ESRCH;
+                return -LINUX_ESRCH;
 
         pa = linux_proc_append(t);
         if (!pa)

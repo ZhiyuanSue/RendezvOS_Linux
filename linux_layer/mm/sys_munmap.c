@@ -9,12 +9,12 @@
 
 i64 sys_munmap(u64 addr, u64 length)
 {
-        pr_debug("[munmap] called: addr=%lx, length=%lx\n", addr, length);
+        pr_debug("[MM] munmap called: addr=%lx, length=%lx\n", addr, length);
 
         if (length == 0)
                 return -LINUX_EINVAL;
         if ((addr & (PAGE_SIZE - 1)) != 0) {
-                pr_debug("[munmap] addr not page-aligned\n");
+                pr_debug("[MM] addr not page-aligned\n");
                 return -LINUX_EINVAL;
         }
 
@@ -27,13 +27,13 @@ i64 sys_munmap(u64 addr, u64 length)
         if (!tcb || !tcb->vs || !linux_vspace_is_user_table(tcb->vs))
                 return -LINUX_ESRCH;
 
-        pr_debug("[munmap] freeing %d pages at %lx\n", page_num, addr);
+        pr_debug("[MM] freeing %d pages at %lx\n", page_num, addr);
         error_t e = linux_mm_unmap_user_range(
                 tcb->vs, (vaddr)addr, (size_t)page_num);
         if (e != REND_SUCCESS) {
-                pr_debug("[munmap] free_pages failed with error %d\n", e);
+                pr_debug("[MM] free_pages failed with error %d\n", e);
                 return -LINUX_EINVAL;
         }
-        pr_debug("[munmap] success\n");
+        pr_debug("[MM] munmap success\n");
         return 0;
 }
