@@ -16,6 +16,7 @@
 | [`BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md`](BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md) | 曾出现的问题：syscall 路径上 **`copy_thread` 继承陈旧用户栈/TLS**；以及相关 **clean_server/test_cookie** 测例边界 |
 | [`IPC_BASED_SIGNAL_DESIGN.md`](IPC_BASED_SIGNAL_DESIGN.md) | Phase 2B：IPC 辅助 vs 直接 pending；**勿**用信号服务器替代 trap 投递 |
 | [`SIGNAL_DELIVERY_TRAP_PATHS.md`](SIGNAL_DELIVERY_TRAP_PATHS.md) | **信号投递实施**：x86_64 / aarch64 双返回路径、`linux_deliver_pending_signals` 钩子 |
+| [`SYSCALL_USER_RETURN_AND_EXECVE.md`](SYSCALL_USER_RETURN_AND_EXECVE.md) | **路径 A API**（`arch_syscall_*`）、`get` 的 `ctx` 参数、signal 与 **execve** 接线 |
 | [`SIGNAL_IMPLEMENTATION_STATUS.md`](SIGNAL_IMPLEMENTATION_STATUS.md) | **信号实现状态**（已实现/缺口、core 复用表、测试顺序） |
 | [`PHASE2B_SIGNAL_ANALYSIS.md`](PHASE2B_SIGNAL_ANALYSIS.md) | 信号 syscall 分析与 Linux 语义 |
 

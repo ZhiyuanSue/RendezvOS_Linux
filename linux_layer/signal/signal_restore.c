@@ -1,18 +1,9 @@
 #include <common/string.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/signal/signal_restore.h>
-#include <linux_compat/signal/signal_stack.h>
 #include <modules/log/log.h>
-#include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/tcb.h>
 #include <rendezvos/trap/trap.h>
-
-#if defined(_X86_64_)
-#include <arch/x86_64/boot/arch_setup.h>
-#elif defined(_AARCH64_)
-#include <arch/aarch64/sys_ctrl.h>
-#include <arch/aarch64/tcb_arch.h>
-#endif
 
 bool signal_restore_user_context(struct trap_frame* tf)
 {
@@ -42,15 +33,8 @@ bool signal_restore_user_context(struct trap_frame* tf)
                 restore_sp = rs->saved_user_sp;
         }
 
-        signal_restore_user_sp(ta, tf, restore_sp);
-
-#if defined(_X86_64_)
-        tf->rcx = rs->saved_user_pc;
-        tf->rax = rs->saved_syscall_ret;
-#elif defined(_AARCH64_)
-        tf->ELR = rs->saved_user_pc;
-        tf->REGS[0] = rs->saved_syscall_ret;
-#endif
+        arch_syscall_set_user_return(tf, &th->ctx, rs->saved_user_pc, restore_sp,
+                                     rs->saved_syscall_ret);
 
         memset(rs, 0, sizeof(*rs));
         pr_info("[SIGNAL] rt_sigreturn restored user context\n");

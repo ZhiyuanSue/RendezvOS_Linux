@@ -3,22 +3,11 @@
 #include <common/string.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/proc_compat.h>
-#include <linux_compat/signal/signal_stack.h>
 #include <linux_compat/signal/signal_types.h>
 #include <modules/log/log.h>
-#include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/tcb.h>
 #include <rendezvos/trap/trap.h>
 #include <syscall.h>
-
-#if defined(_X86_64_)
-#include <arch/x86_64/boot/arch_setup.h>
-#include <arch/x86_64/tcb_arch.h>
-#elif defined(_AARCH64_)
-#include <arch/aarch64/boot/arch_setup.h>
-#include <arch/aarch64/sys_ctrl.h>
-#include <arch/aarch64/tcb_arch.h>
-#endif
 
 /*
  * Phase 2B: Signal Delivery Implementation
@@ -46,8 +35,14 @@ void linux_restore_main_stack_if_needed(struct trap_frame* tf)
         }
 
         if (thread_append->alt_stack.ss_flags & SS_ONSTACK) {
-                signal_restore_user_sp(thread_append, tf,
-                                       thread_append->saved_main_sp);
+                vaddr user_pc, user_sp, syscall_ret;
+
+                arch_syscall_get_user_return(
+                        tf, &current_thread->ctx, &user_pc, &user_sp,
+                        &syscall_ret);
+                arch_syscall_set_user_return(tf, &current_thread->ctx, user_pc,
+                                             thread_append->saved_main_sp,
+                                             syscall_ret);
                 thread_append->alt_stack.ss_flags &= ~SS_ONSTACK;
                 pr_debug("[SIGNAL] Restored main stack pointer\n");
         }
@@ -117,68 +112,6 @@ static int signal_select_pending_helper(linux_thread_append_t *thread_append,
     return 0; /* No deliverable signal */
 }
 
-/*
- * x86_64 specific: Setup signal delivery on syscall return path
- *
- * According to SIGNAL_DELIVERY_TRAP_PATHS.md:
- * - User PC → handler: modify syscall_ctx->rcx
- * - User SP → signal frame: modify percpu(user_rsp_scratch)
- * - First handler arg (sig): syscall_ctx->rdi (SysV AMD64 ABI)
- * - Do not use rax for the handler argument; syscall_entry sets rax last.
- */
-#if defined(_X86_64_)
-static void signal_x86_install_return_helper(struct trap_frame* tf, void* handler,
-                                             vaddr user_sp, int sig)
-{
-    Thread_Base* th = get_cpu_current_thread();
-
-    pr_info("[SIGNAL] x86_64 installing return: handler=%p, sp=%p, sig=%d\n",
-            handler, (void*)user_sp, sig);
-
-    /*
-     * x86_64 syscall return (sysretq):
-     * - User RIP comes from RCX (not trap_frame->rip!)
-     * - User RSP comes from percpu(user_rsp_scratch) (not trap_frame->rsp!)
-     */
-
-    tf->rcx = (u64)(uintptr_t)handler;
-    tf->rdi = (u64)sig;
-    if (th) {
-        signal_set_user_sp(linux_thread_append(th), tf, user_sp);
-    }
-
-    pr_debug("[SIGNAL] Modified trap_frame: rcx=%p, rdi=%llu\n",
-             (void *)(uintptr_t)tf->rcx, tf->rdi);
-}
-#endif /* _X86_64_ */
-
-/*
- * aarch64 syscall return (el0_trap_exit):
- * - User PC: ELR_EL1 from trap_frame->ELR
- * - User SP: trap_frame->SP (restored via mov SP, x21 before eret)
- * - Handler arg (int sig): REGS[0] (x0); syscall_entry sets REGS[0] before deliver
- */
-#if defined(_AARCH64_)
-static void signal_aarch64_install_return_helper(struct trap_frame *tf,
-                                                 void *handler, vaddr user_sp,
-                                                 int sig)
-{
-    Thread_Base *th = get_cpu_current_thread();
-
-    pr_info("[SIGNAL] aarch64 installing return: handler=%p, sp=%p, sig=%d\n",
-            handler, (void *)user_sp, sig);
-
-    tf->ELR = (u64)(uintptr_t)handler;
-    tf->REGS[0] = (u64)sig;
-    if (th) {
-        signal_set_user_sp(linux_thread_append(th), tf, user_sp);
-    }
-
-    pr_debug("[SIGNAL] Modified trap_frame: ELR=%p, SP=%p, x0=%d\n",
-             (void *)(uintptr_t)tf->ELR, (void *)(uintptr_t)tf->SP, sig);
-}
-#endif /* _AARCH64_ */
-
 static void signal_apply_handler_mask_helper(linux_thread_append_t* thread_append,
                                              const sigaction_t* disp, int sig)
 {
@@ -193,7 +126,8 @@ static void signal_apply_handler_mask_helper(linux_thread_append_t* thread_appen
         }
 }
 
-static void signal_save_handler_context_helper(linux_thread_append_t* thread_append,
+static void signal_save_handler_context_helper(Thread_Base* th,
+                                               linux_thread_append_t* thread_append,
                                                struct trap_frame* tf)
 {
         linux_signal_restore_t* rs = &thread_append->signal_restore;
@@ -201,16 +135,8 @@ static void signal_save_handler_context_helper(linux_thread_append_t* thread_app
         rs->active = 1;
         rs->sig = 0;
         rs->saved_blocked = thread_append->blocked_signals;
-
-#if defined(_X86_64_)
-        rs->saved_user_pc = tf->rcx;
-        rs->saved_user_sp = percpu(user_rsp_scratch);
-        rs->saved_syscall_ret = tf->rax;
-#elif defined(_AARCH64_)
-        rs->saved_user_pc = tf->ELR;
-        rs->saved_user_sp = tf->SP;
-        rs->saved_syscall_ret = tf->REGS[0];
-#endif
+        arch_syscall_get_user_return(tf, th ? &th->ctx : NULL, &rs->saved_user_pc,
+                                     &rs->saved_user_sp, &rs->saved_syscall_ret);
 }
 
 /*
@@ -365,13 +291,10 @@ bool linux_deliver_pending_signals(struct trap_frame *tf)
     /* User handler - build signal frame and modify trap_frame */
     pr_info("[SIGNAL] Delivering to user handler at %p\n", disp->handler);
 
-    /* Get current user stack pointer */
-    vaddr user_sp;
-#if defined(_X86_64_)
-    user_sp = percpu(user_rsp_scratch);
-#elif defined(_AARCH64_)
-    user_sp = tf->SP;
-#endif
+    vaddr user_pc, user_sp, syscall_ret;
+
+    arch_syscall_get_user_return(tf, current_thread ? &current_thread->ctx : NULL,
+                                 &user_pc, &user_sp, &syscall_ret);
 
     /* Check if we should use alternate signal stack */
     if ((disp->flags & SA_ONSTACK) && thread_append->alt_stack.ss_sp != NULL) {
@@ -396,7 +319,7 @@ bool linux_deliver_pending_signals(struct trap_frame *tf)
         }
     }
 
-    signal_save_handler_context_helper(thread_append, tf);
+    signal_save_handler_context_helper(current_thread, thread_append, tf);
     thread_append->signal_restore.sig = sig;
 
     if (disp->flags & SA_RESETHAND) {
@@ -407,14 +330,10 @@ bool linux_deliver_pending_signals(struct trap_frame *tf)
     /* Build signal frame on user stack */
     user_sp = signal_build_frame_helper(user_sp, sig, disp->handler);
 
-    /* Install return to signal handler */
-#if defined(_X86_64_)
-    signal_x86_install_return_helper(tf, disp->handler, user_sp, sig);
-#elif defined(_AARCH64_)
-    signal_aarch64_install_return_helper(tf, disp->handler, user_sp, sig);
-#else
-#error "Unsupported architecture for signal delivery"
-#endif
+    arch_syscall_set_user_return(tf, current_thread ? &current_thread->ctx : NULL,
+                                 (vaddr)(uintptr_t)disp->handler, user_sp,
+                                 syscall_ret);
+    arch_syscall_set_user_int_arg(tf, 0, (u64)sig);
 
     sigdelset(&thread_append->pending_signals, sig);
     sigdelset(&proc_append->pending_signals, sig);

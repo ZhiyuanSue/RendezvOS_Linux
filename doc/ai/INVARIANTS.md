@@ -126,6 +126,12 @@ If a change breaks or modifies an invariant, update this file in the same commit
   idle, kernel code can keep a user CR3. `gen_thread_from_func` attaches new
   kernel threads to `root_task` when present, else `get_cpu_current_task()`.
 
+- **`vspace_clear_user_mappings`:** Caller must end other threads in the owning
+  task first; `vs_tlb_cpu_mask` must be zero. `vmm_radix_tree_clean_user` +
+  `vspace_free_user_pt`; keeps L0 radix page and kernel high-half wiring (exec).
+  **`del_vspace`** (after `unregister_vspace`): same clear, then
+  `vmm_radix_tree_delete`, `vspace_free_root_page`, free `VSpace`/ASID.
+
 - **User `VSpace` teardown vs SMP (CR3 / `current_vspace`):** `delete_task` may
   call `del_vspace`, which tears down page tables. No CPU may still execute with
   that task’s page tables loaded: if another CPU faults while `CR3` (or the
