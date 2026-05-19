@@ -137,6 +137,17 @@ void syscall(struct trap_frame *syscall_ctx)
                                  (u64)syscall_ctx->ARCH_SYSCALL_ARG_4,
                                  (u64)syscall_ctx->ARCH_SYSCALL_ARG_5);
                 break;
+        case __NR_execve:
+                ret = sys_execve(syscall_ctx,
+                                 (u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                 (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                 (u64)syscall_ctx->ARCH_SYSCALL_ARG_3);
+                /*
+                 * execve成功时不会返回（进程已替换）。
+                 * 如果返回了，说明execve失败，ret包含错误码。
+                 * execve失败时需要正常设置返回值。
+                 */
+                break;
         default:
                 pr_debug("[SYSCALL] unimplemented id=%lu\n", (u64)syscall_id);
                 break;

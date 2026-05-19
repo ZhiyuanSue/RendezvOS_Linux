@@ -32,5 +32,6 @@ i64 sys_rt_sigaction(i64 signum, u64 act, u64 oldact, u64 sigsetsize);
 i64 sys_rt_sigprocmask(i64 how, u64 set, u64 oldset, u64 sigsetsize);
 i64 sys_sigaltstack(u64 ss, u64 old_ss);
 i64 sys_rt_sigreturn(struct trap_frame* tf);
+i64 sys_execve(struct trap_frame* syscall_ctx, u64 user_filename, u64 user_argv, u64 user_envp);
 
 #endif
