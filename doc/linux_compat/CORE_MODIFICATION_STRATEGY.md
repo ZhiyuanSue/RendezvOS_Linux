@@ -1,5 +1,7 @@
 # Core/ 修改策略和优先级
 
+> **已过时：** 总体策略与审阅方式见 **[`GOALS_AND_CORE_CONTRACT.md`](GOALS_AND_CORE_CONTRACT.md)**（`clone_vspace` 等已落地，下文部分 API 建议不再适用）。本文仅作历史参考。
+
 ## 🎯 新的约束条件
 
 **原约束**: 不能修改core/代码

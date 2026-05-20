@@ -2,7 +2,7 @@
 
 **日期**: 2026-05-17（初稿） / 2026-05-16（与代码库对齐修订）  
 **状态**: 设计评审通过（有条件实施）  
-**相关**: [`ARCHITECTURE.md`](ARCHITECTURE.md)、[`SIGNAL_DELIVERY_TRAP_PATHS.md`](SIGNAL_DELIVERY_TRAP_PATHS.md)（**trap 返回与双架构投递**）、[`PHASE2B_SIGNAL_ANALYSIS.md`](PHASE2B_SIGNAL_ANALYSIS.md)、[`SYSCALLS.md`](SYSCALLS.md)
+**相关**: [`ARCHITECTURE.md`](ARCHITECTURE.md)、[`SIGNAL_DELIVERY_TRAP_PATHS.md`](SIGNAL_DELIVERY_TRAP_PATHS.md)、[`SIGNAL_IMPLEMENTATION_STATUS.md`](SIGNAL_IMPLEMENTATION_STATUS.md)、[`SYSCALLS.md`](SYSCALLS.md)
 
 ---
 
@@ -241,5 +241,5 @@ sys_kill / sys_tgkill
 
 ---
 
-**文档状态**: 已修订，可与 `PHASE2B_SIGNAL_ANALYSIS.md` 并行作为实施依据  
+**文档状态**: 已修订；实施状态以 `SIGNAL_IMPLEMENTATION_STATUS.md` 为准  
 **版本**: 1.1（代码库对齐）

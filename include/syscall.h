@@ -12,7 +12,7 @@ i64 sys_gettid(void);
 i64 sys_getppid(void);
 u64 sys_brk(u64 new_brk);
 
-i64 sys_write(i32 fd, u64 user_buf, u64 count);
+i64 sys_write_impl(i32 fd, u64 user_buf, u64 count);
 i64 sys_fork();
 u64 sys_mmap(u64 addr, u64 length, i64 prot, i64 flags, i64 fd, u64 offset);
 i64 sys_munmap(u64 addr, u64 length);
@@ -33,5 +33,22 @@ i64 sys_rt_sigprocmask(i64 how, u64 set, u64 oldset, u64 sigsetsize);
 i64 sys_sigaltstack(u64 ss, u64 old_ss);
 i64 sys_rt_sigreturn(struct trap_frame* tf);
 i64 sys_execve(struct trap_frame* syscall_ctx, u64 user_filename, u64 user_argv, u64 user_envp);
+
+/* File system syscalls */
+i64 sys_getcwd(u64 user_buf, u64 size);
+i64 sys_dup(i32 fd);
+i64 sys_dup2(i32 oldfd, i32 newfd);
+i64 sys_openat(i32 dirfd, u64 user_pathname, i32 flags, u64 mode);
+i64 sys_close(i32 fd);
+i64 sys_read(i32 fd, u64 user_buf, u64 count);
+i64 sys_write(i32 fd, u64 user_buf, u64 count);
+i64 sys_fstat(i32 fd, u64 user_statbuf);
+i64 sys_stat(u64 user_pathname, u64 user_statbuf);
+i64 sys_lseek(i32 fd, i64 offset, i32 whence);
+i64 sys_chdir(u64 user_pathname);
+i64 sys_mkdir(u64 user_pathname, u32 mode);
+i64 sys_unlink(u64 user_pathname);
+i64 sys_getdents64(i32 fd, u64 user_dirp, u64 count);
+i64 sys_pipe(u64 user_pipefd);
 
 #endif

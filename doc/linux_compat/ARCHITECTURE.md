@@ -1,5 +1,8 @@
 # 架构：混合内核 + 可演进微内核
 
+> **规划与 core 边界（维护者）：** [`GOALS_AND_CORE_CONTRACT.md`](GOALS_AND_CORE_CONTRACT.md)  
+> **core API 用法：** [`core/docs/USING_CORE.md`](../../core/docs/USING_CORE.md)
+
 ## 1. 分层
 
 ```mermaid
@@ -42,8 +45,9 @@ flowchart LR
 
 ## 2. 原则：能直接调 core 则不调 IPC
 
-- **页级 / vspace 级**：`mm_user_utils_*`、`map`、`unmap`、radix tree 更新——在 **当前 syscall 上下文** 内 **直接调用 core**（按 L0 big lock → L2 band lock → PMM zone lock 顺序），避免无谓 RPC。
-- **何时用 IPC**：全局 **单序列** 策略（pid 分配、父子表、wait 队列的 **可选** 集中化）、或 **明确要避免锁序爆炸** 的子系统；且 **处理线程不能是发起者自身**（防止同步自等死锁）。
+- **机制与调用顺序**（锁序、IPC 步骤、exec/fork 原语）：见 [`core/docs/USING_CORE.md`](../../core/docs/USING_CORE.md) 与 [`core/docs/memory.md`](../../core/docs/memory.md) §0 — **不在此重复**。
+- **本层策略**：哪些 syscall 走直接 core、哪些走 server，见下文 §3 与 [`SYSCALLS.md`](SYSCALLS.md)。
+- **何时用 IPC**：全局单序列策略（pid、父子表、wait 的可选集中化）、或避免锁序爆炸；处理线程不得是发起者自身。
 
 ## 3. IPC 串行化 vs 显式锁
 

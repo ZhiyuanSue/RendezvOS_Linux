@@ -340,4 +340,4 @@ if (condition)
 *版本: 1.0*  
 *创建: 2025-01-17*  
 *维护者: Claude Sonnet*  
-*相关文档: CODE_STYLE_ISSUES.md, ARCHITECTURE.md*
+*相关文档: ARCHITECTURE.md · 历史 style 问题见 archive/CODE_STYLE_ISSUES.md*

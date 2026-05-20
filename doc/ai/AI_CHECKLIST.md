@@ -41,6 +41,14 @@ If any section is missing, review is incomplete.
 - [ ] If an earlier operation fails, do not overwrite its error status with later best-effort cleanup results.
 - [ ] Cleanup errors must be either logged separately or aggregated, but the primary failure cause remains visible.
 
+### 0e) Core reuse (meta-rule)
+- [ ] Before new logic in `linux_layer/` or `servers/`, read `core/docs/USING_CORE.md` and `GUIDE.md` §6; reuse listed core APIs.
+- [ ] Do not reimplement primitives already provided in core (IPC ports/kmsg, `copy_thread`, radix/vmm, arch syscall return helpers, etc.).
+- [ ] Do not duplicate core usage guides in `doc/linux_compat/` or `doc/ai/`—extend `USING_CORE.md` via maintainer.
+- [ ] If an API is missing from `GUIDE.md` §6: record the gap in `doc/ai/` or `doc/linux_compat/` and propose a core doc update.
+- [ ] Do not add compat/Linux-specific documentation under `core/docs/`.
+- [ ] Changes to `core/` still require explicit maintainer approval.
+
 ### 1) Data Structure Invariants
 
 - [ ] **State clarity**: State fields have clear, single-purpose meanings.

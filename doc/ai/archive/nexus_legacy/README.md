@@ -9,7 +9,7 @@
 | 文档 | 原用途 | 现状 |
 |------|--------|------|
 | `NEXUS_API_FREEZE.md` | Nexus API冻结说明 | 历史参考 |
-| `NEXUS_INTERFACE_USAGE.md` | Nexus接口使用指南 | 已被 `RADIX_TREE_API_GUIDE.md` 替代 |
+| `NEXUS_INTERFACE_USAGE.md` | Nexus接口使用指南 | [`core/docs/memory.md`](../../../core/docs/memory.md) |
 | `NEXUS_LAYERING_CROSSWALK.md` | Nexus分层对照表 | 已被 `MM_VSPACE_RADIX_LAYERING.md` 替代 |
 | `NEXUS_LAYERING_TABLE.md` | Nexus层次表 | 历史参考 |
 | `NEXUS_REFACTORING_ANALYSIS.md` | Nexus重构分析 | 重构完成归档 |
@@ -33,7 +33,7 @@
 
 **新的Radix Tree文档**：
 - `core/docs/memory.md` - 内存系统设计（已更新第4节）
-- `doc/ai/RADIX_TREE_API_GUIDE.md` - API使用指南
+- `core/docs/memory.md` §0.7, `core/docs/USING_CORE.md` - radix / MM caller docs
 - `doc/ai/MM_VSPACE_RADIX_LAYERING.md` - 分层架构详解
 - `doc/ai/RADIX_RANGE_LOCK_FIVE_PHASES.md` - Range lock五阶段详解
 - `doc/ai/MM_BACKEND_FRONTEND_API.md` - 前后端API设计

@@ -7,7 +7,6 @@
 #include <modules/elf/elf.h>
 #include <modules/log/log.h>
 #include <rendezvos/error.h>
-#include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/tcb.h>
 #include <rendezvos/trap/trap.h>
 #include <rendezvos/mm/vmm.h>
@@ -60,10 +59,6 @@ static i64 find_embedded_elf_by_name(const char *filename)
         pr_debug("[EXEC] Searching for ELF: %s (total apps: %lu)\n",
                  filename, num_apps);
 
-        /*
-         * Known program name to index mapping.
-         * This matches the order in link_app.S
-         */
         struct {
                 const char *name;
                 int index;
@@ -85,7 +80,7 @@ static i64 find_embedded_elf_by_name(const char *filename)
                 {"oscomp_getpid", 14},
                 {"test_sig_dfl", 15},
                 {"test_fork_wait", 16},
-                {"test_execve_simple", 17},
+                {"test_execve_simple", 50},
                 /* Add new programs here as they are added to link_app.S */
         };
 
@@ -345,9 +340,9 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
                 return -LINUX_ENOEXEC;
         }
 
-        /* Step 4: Clear user mappings (Phase 3a: skip multi-thread handling) */
+        /* Step 4: Clear user mappings (allow_self_use: local tlb_cpu_mask bit OK) */
         pr_debug("[EXEC] Clearing user mappings\n");
-        e = vspace_clear_user_mappings(vs, &percpu(Map_Handler));
+        e = vspace_clear_user_mappings(vs, &percpu(Map_Handler), true);
         if (e != REND_SUCCESS) {
                 pr_error("[EXEC] Failed to clear user mappings: %d\n", (int)e);
                 return -LINUX_EIO;

@@ -6,6 +6,10 @@ This folder stores persistent AI collaboration artifacts for the whole repositor
 
 ## Files
 
+- **Repository documentation map:** [`../README.md`](../README.md).
+- **How to use core (canonical, not in this folder):** [`core/docs/USING_CORE.md`](../../core/docs/USING_CORE.md); API index [`core/docs/GUIDE.md`](../../core/docs/GUIDE.md) §6.
+- Before `linux_layer/` / `servers/`: follow `USING_CORE.md`; record gaps here or in `doc/linux_compat/`, not duplicate core usage docs upstream.
+- **Stale core API drafts:** [`archive/core_api_stale/README.md`](archive/core_api_stale/README.md).
 - `AI_CHECKLIST.md`: mandatory review checklist for AI-assisted changes.
 - `CODE_QUALITY_PATTERNS.md`: abstract patterns distilled from real optimizations (patterns > specific rules).
 - `ASSIST_HISTORY.md`: append-only change history for AI-assisted commits.
@@ -43,9 +47,12 @@ This folder stores persistent AI collaboration artifacts for the whole repositor
 - **Checklist hygiene:** When a lesson applies broadly (e.g. naming), fold it into **one abstract pattern** (role, symmetry, ownership). Use in-repo code as **examples only**.
 
 **Documentation discipline**:
+- `core/docs/USING_CORE.md`: **canonical “how to use core”** for any external code. Do not duplicate in `doc/linux_compat/` or here.
+- `core/docs/GUIDE.md`: in-tree API/header map (§6–§7).
 - `AI_CHECKLIST.md`: single authoritative place for **checkable abstract patterns**.
 - `INVARIANTS.md`: **runtime/design** truths only. Cross-reference checklist, don't duplicate.
 - After substantive AI-assisted work, update checklist/history **before** considering the change "closed".
+- When discovering undocumented core helpers: propose updates to `core/docs/GUIDE.md` §6–§7 and `USING_CORE.md`; maintainer review—**do not modify `core/` without approval**.
 
 **Verification and commits**:
 - Do not claim correctness without verification or maintainer review.

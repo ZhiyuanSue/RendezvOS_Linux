@@ -57,8 +57,8 @@ If a change breaks or modifies an invariant, update this file in the same commit
   one allocation size is active.
 - Whole-page `kfree` routes via radix owner lookup (`kmem_radix_kernel_heap_owner_cpu`
   in `kernel/mm/kmalloc.c`) to the owner CPU’s `kallocator` MSQ. Owner is **only**
-  `cpu_id` on rmap nodes with `KERNEL_HEAP_REF` (per-CPU `nexus_kernel_heap_vs_common`,
-  legacy symbol name in `vmm.h`); do not infer from global `root_vspace`. User rmap
+  `cpu_id` on rmap nodes with `KERNEL_HEAP_REF` on **`root_vspace`** kernel-heap
+  mappings; do not infer owner from arbitrary user `VSpace`. User rmap
   entries on the same PPN are ignored for this purpose.
 - `Page.rmap_list` is PMM metadata: link/unlink and read-only walks that
   interpret the list run under the zone `pmm` MCS lock (`spin_ptr` +
@@ -126,10 +126,12 @@ If a change breaks or modifies an invariant, update this file in the same commit
   idle, kernel code can keep a user CR3. `gen_thread_from_func` attaches new
   kernel threads to `root_task` when present, else `get_cpu_current_task()`.
 
-- **`vspace_clear_user_mappings`:** Caller must end other threads in the owning
-  task first; `vs_tlb_cpu_mask` must be zero. `vmm_radix_tree_clean_user` +
+- **`vspace_clear_user_mappings`:** Caller must quiesce other threads on this
+  `vs` (compat policy). Core TLB check via `allow_self_use`: exec passes
+  `true` (remote clear; local bit OK when `current_vspace == vs`); `del_vspace`
+  passes `false` (mask must be zero on all CPUs). Then `vmm_radix_tree_clean_user` +
   `vspace_free_user_pt`; keeps L0 radix page and kernel high-half wiring (exec).
-  **`del_vspace`** (after `unregister_vspace`): same clear, then
+  **`del_vspace`** (after `unregister_vspace`): same clear with `allow_self_use=false`, then
   `vmm_radix_tree_delete`, `vspace_free_root_page`, free `VSpace`/ASID.
 
 - **User `VSpace` teardown vs SMP (CR3 / `current_vspace`):** `delete_task` may

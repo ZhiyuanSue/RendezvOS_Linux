@@ -10,6 +10,7 @@
 #include <rendezvos/ipc/port.h>
 #include <rendezvos/task/tcb.h>
 #include <rendezvos/task/thread_loader.h>
+#include <linux_compat/ipc/rpc.h>
 #include <linux_compat/test_sync_ipc.h>
 #ifdef LINUX_COMPAT_TEST
 #include <linux_compat/proc_compat.h>
@@ -214,68 +215,17 @@ static void clean_handle_message(Message_t *msg)
         }
 }
 
+static void clean_server_on_message(Message_t* msg, u16 service_id)
+{
+        (void)service_id;
+        clean_handle_message(msg);
+}
+
 void clean_server_thread(void)
 {
-        Message_Port_t *port = NULL;
-
-        pr_info("[clean_server] CPU %lu: clean_server_thread started, looking up port '%s'\n",
-                (u64)percpu(cpu_number),
-                CLEAN_SERVER_PORT_NAME);
-
-        /* Lookup global clean server port via global table */
-        while (!port) {
-                port = thread_lookup_port(CLEAN_SERVER_PORT_NAME);
-                if (!port) {
-                        schedule(percpu(core_tm));
-                        continue;
-                }
-        }
-
-        pr_info("[clean_server] CPU %lu: Port found, entering message loop (port=%p, service_id=%u)\n",
-                (u64)percpu(cpu_number),
-                (void *)port,
-                port->service_id);
-
-        /* We hold a reference to the port via thread_lookup_port */
-        while (1) {
-                error_t ret = recv_msg(port);
-                if (ret) {
-                        /* recv_msg failed, maybe port deleted?
-                         * Release reference and re-lookup port.
-                         */
-                        ref_put(&port->refcount, free_message_port_ref);
-                        port = NULL;
-                        while (!port) {
-                                port = thread_lookup_port(
-                                        CLEAN_SERVER_PORT_NAME);
-                                if (!port) {
-                                        schedule(percpu(core_tm));
-                                        continue;
-                                }
-                        }
-                        continue;
-                }
-
-                /*
-                 * Process all messages in the receive queue before calling
-                 * recv_msg() again. This ensures we don't miss any messages
-                 * that arrived while we were processing.
-                 */
-                while (1) {
-                        Message_t *msg = dequeue_recv_msg();
-                        if (!msg)
-                                break;
-
-                        clean_handle_message(msg);
-                        ref_put(&msg->ms_queue_node.refcount, free_message_ref);
-                }
-        }
-
-        /* Should never reach here, but for completeness: release port reference
-         */
-        if (port) {
-                ref_put(&port->refcount, free_message_port_ref);
-        }
+        pr_info("[clean_server] CPU %lu: entering ipc_server_recv_loop on '%s'\n",
+                (u64)percpu(cpu_number), CLEAN_SERVER_PORT_NAME);
+        ipc_server_recv_loop(CLEAN_SERVER_PORT_NAME, clean_server_on_message);
 }
 
 extern cpu_id_t BSP_ID;

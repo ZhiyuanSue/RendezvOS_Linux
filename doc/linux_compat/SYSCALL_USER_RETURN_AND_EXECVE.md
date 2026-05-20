@@ -129,7 +129,7 @@ arch_syscall_set_user_int_arg(tf, 0, (u64)sig);
 | 项 | 选择 |
 |----|------|
 | 地址空间 | **原地**：同一 `Tcb_Base` / `VSpace` / ASID；**不** `create_vspace` / `del_vspace` |
-| 清映射 | `vspace_clear_user_mappings(vs, &percpu(Map_Handler))` |
+| 清映射 | `vspace_clear_user_mappings(vs, &percpu(Map_Handler), true)` |
 | 加载 | `load_elf_to_vs` |
 | 栈映射 | `generate_user_stack`（`thread_loader.h`） |
 | 栈内容 | linux：`argv` / `envp` / `auxv`（`exec_stack.c` 一类） |
@@ -144,7 +144,7 @@ arch_syscall_set_user_int_arg(tf, 0, (u64)sig);
 1. 校验并 copy_from_user：filename、argv、envp
 2. 解析 ELF（Phase 3a：内嵌镜像按名匹配；3b：文件系统读入）
 3. 校验 ELF（在 vspace_clear 之前失败则不动 vs）
-4. de_thread：结束同 task 其它线程（仿 exit_group 设 EXIT_REQUESTED）
+4. de_thread：结束同 task 其它线程（仿 exit_group 设 EXIT_REQUESTED）— **政策见** [`GOALS_AND_CORE_CONTRACT.md`](GOALS_AND_CORE_CONTRACT.md) §3.1
 5. 等待 TLB quiesce（tlb_cpu_mask == 0）
 6. vspace_clear_user_mappings
 7. load_elf_to_vs → entry、max_load_end

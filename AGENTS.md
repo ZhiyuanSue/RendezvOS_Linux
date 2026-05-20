@@ -1,8 +1,14 @@
 # Agent instructions (RendezvOS_Linux)
 
-Use **Chat / Agent** with this repo. For full workflow and file index, read:
+Use **Chat / Agent** with this repo. Documentation map:
+
+@doc/README.md
+
+Workflow and AI rules:
 
 @doc/ai/README.md
+
+Read @doc/README.md first. Before `linux_layer/` / `servers/`: @core/docs/USING_CORE.md (how to use core). Compat policy: @doc/linux_compat/README.md.
 
 Before treating a change as done:
 

@@ -35,7 +35,7 @@ static bool user_buf_range_ok(u64 user_buf, u64 count)
         return true;
 }
 
-i64 sys_write(i32 fd, u64 user_buf, u64 count)
+i64 sys_write_impl(i32 fd, u64 user_buf, u64 count)
 {
         if (count == 0)
                 return 0;

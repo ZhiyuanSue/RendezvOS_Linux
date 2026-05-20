@@ -1,34 +1,66 @@
 # Linux 兼容层设计文档
 
-本目录描述在 **方案 A（混合内核）** 下，以 [`linux_layer/`](../../linux_layer/) 为主、**不侵入 [`core/`](../../core/) 的 Linux 专用逻辑** 的前提下，实现基础 Linux syscall 兼容的路径。实现时 **按需** 向 `core` 提交 **通用、可文档化** 的窄接口（见 [`MM_AND_COW.md`](MM_AND_COW.md)）。
+在 **方案 A（混合内核）** 下，以 [`linux_layer/`](../../linux_layer/) 实现 Linux syscall 语义；**不侵入 [`core/`](../../core/)**。
 
-## 文档索引
+**如何使用 core（API/调用顺序）：** 仅 [`core/docs/USING_CORE.md`](../../core/docs/USING_CORE.md)（本目录不再维护 core 使用说明）。
+
+**仓库文档总入口：** [`doc/README.md`](../README.md)
+
+---
+
+## 必读（canonical）
 
 | 文档 | 内容 |
 |------|------|
-| [`ARCHITECTURE.md`](ARCHITECTURE.md) | 边界、数据流、IPC 与锁的分工、与微内核演进 |
-| [`DATA_MODEL.md`](DATA_MODEL.md) | 进程/线程组、append 区、`pid`/`tid`、登记簿演进 |
-| [`MM_AND_COW.md`](MM_AND_COW.md) | **Radix Tree 作为虚存真源**、COW、页故障、core 变更清单 |
-| [`SYSCALLS.md`](SYSCALLS.md) | **推荐实现顺序**、逐步文件/函数清单、独立 server 条目 |
-| [`STDIO_SHIM.md`](STDIO_SHIM.md) | **无 VFS 阶段**：`write(1|2, …)` 控制台 shim、与后续 fd 表/VFS 的衔接 |
-| [`USER_TESTS.md`](USER_TESTS.md) | 用户态 ELF 测例：single/smp 分层、case 同步边界、输出乱序期望 |
-| [`BUGFIX_MAP_INTERMEDIATE_PTE_FLAGS.md`](BUGFIX_MAP_INTERMEDIATE_PTE_FLAGS.md) | 曾出现的问题：多级页表里 **中间目录项**错误复用 **叶子映射 flags**；根因与修复思路 |
-| [`BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md`](BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md) | 曾出现的问题：syscall 路径上 **`copy_thread` 继承陈旧用户栈/TLS**；以及相关 **clean_server/test_cookie** 测例边界 |
-| [`IPC_BASED_SIGNAL_DESIGN.md`](IPC_BASED_SIGNAL_DESIGN.md) | Phase 2B：IPC 辅助 vs 直接 pending；**勿**用信号服务器替代 trap 投递 |
-| [`SIGNAL_DELIVERY_TRAP_PATHS.md`](SIGNAL_DELIVERY_TRAP_PATHS.md) | **信号投递实施**：x86_64 / aarch64 双返回路径、`linux_deliver_pending_signals` 钩子 |
-| [`SYSCALL_USER_RETURN_AND_EXECVE.md`](SYSCALL_USER_RETURN_AND_EXECVE.md) | **路径 A API**（`arch_syscall_*`）、`get` 的 `ctx` 参数、signal 与 **execve** 接线 |
-| [`SIGNAL_IMPLEMENTATION_STATUS.md`](SIGNAL_IMPLEMENTATION_STATUS.md) | **信号实现状态**（已实现/缺口、core 复用表、测试顺序） |
-| [`PHASE2B_SIGNAL_ANALYSIS.md`](PHASE2B_SIGNAL_ANALYSIS.md) | 信号 syscall 分析与 Linux 语义 |
+| [`GOALS_AND_CORE_CONTRACT.md`](GOALS_AND_CORE_CONTRACT.md) | **总目标、compat 政策、对 core 契约、维护者审阅包** |
+| [`ARCHITECTURE.md`](ARCHITECTURE.md) | 边界、数据流、IPC vs 直接调 core |
+| [`DATA_MODEL.md`](DATA_MODEL.md) | 进程/线程、`pid`/`tid`、登记簿 |
+| [`SYSCALLS.md`](SYSCALLS.md) | **实现顺序**与文件清单 |
+| [`MM_AND_COW.md`](MM_AND_COW.md) | Radix 虚存真源、COW、页故障 |
+| [`IPC_RPC_FRAMEWORK.md`](IPC_RPC_FRAMEWORK.md) | RPC / one-way server 模板 |
+| [`../ai/IPC_MESSAGE.md`](../ai/IPC_MESSAGE.md) | kmsg、TLV、reply port `t` |
+| [`SYSCALL_USER_RETURN_AND_EXECVE.md`](SYSCALL_USER_RETURN_AND_EXECVE.md) | Path A 返回、exec 接线 |
+| [`SIGNAL_IMPLEMENTATION_STATUS.md`](SIGNAL_IMPLEMENTATION_STATUS.md) | 信号实现状态（持续更新） |
+| [`SIGNAL_DELIVERY_TRAP_PATHS.md`](SIGNAL_DELIVERY_TRAP_PATHS.md) | trap 路径投递 |
+| [`IPC_BASED_SIGNAL_DESIGN.md`](IPC_BASED_SIGNAL_DESIGN.md) | IPC 辅助 vs pending（勿用信号服务器替代 trap） |
+| [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md) | vfs_server 协议 |
+| [`USER_TESTS.md`](USER_TESTS.md) | 用户态测例 |
+| [`STDIO_SHIM.md`](STDIO_SHIM.md) | 无 VFS 阶段 console shim |
+| [`LINUX_COMPAT_CODING_STYLE.md`](LINUX_COMPAT_CODING_STYLE.md) | 代码风格 |
 
-## 与仓库规范的关系
+---
 
-- 运行时不变式与 SMP 注意点：[`doc/ai/INVARIANTS.md`](../ai/INVARIANTS.md)
-- 协作流程与检查项：[`doc/ai/README.md`](../ai/README.md)、[`doc/ai/AI_CHECKLIST.md`](../ai/AI_CHECKLIST.md)
+## 参考（bugfix / 专项设计）
 
-## 叙述一致性说明（避免矛盾）
+| 文档 | 内容 |
+|------|------|
+| [`BUGFIX_MAP_INTERMEDIATE_PTE_FLAGS.md`](BUGFIX_MAP_INTERMEDIATE_PTE_FLAGS.md) | 中间页表项 flags |
+| [`BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md`](BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md) | fork 陈旧 user SP/TLS |
+| [`COPY_VSPACE_DESIGN.md`](COPY_VSPACE_DESIGN.md) | 地址空间复制 |
+| [`CODE_STRUCTURE.md`](CODE_STRUCTURE.md) | 目录结构 |
+| [`WAIT4_IMPLEMENTATION_STATUS.md`](WAIT4_IMPLEMENTATION_STATUS.md) | wait4 状态 |
+| [`CORE_MODIFICATION_STRATEGY.md`](CORE_MODIFICATION_STRATEGY.md) | 提议 core 变更策略 |
+| [`CORE_MODIFICATION_BRK_FIX.md`](CORE_MODIFICATION_BRK_FIX.md) | brk 相关 core 变更 |
 
-1. **虚存**：不另建 Linux 式 VMA 链表；**用户 VA 区间以 Radix Tree 为真源**（见 `MM_AND_COW.md`）。
-2. **进程元数据与 wait**：**阶段 1** 可在 `linux_layer` 内用 **登记簿 + 显式锁** 实现 `wait`/`exit` 交互；**阶段 2** 可将同一登记逻辑 **迁入 `proc_coordinator` 线程**，通过 IPC 串行化，与 [`ARCHITECTURE.md`](ARCHITECTURE.md) 中的 IPC 域一致，二者不是互斥叙述。
-3. **直接调 core**：syscall 热路径上 **能安全直接调用** 的 **Radix Tree/mm_user_utils/map**/调度 API **应直接调用**；仅 **全局策略/多 CPU 易死锁** 的块用 IPC server（见 `ARCHITECTURE.md`）。
+与 **必读** 冲突时，以必读为准。
 
-后续只改文档时，优先更新本 README 的「一致性说明」以免与正文漂移。
+---
+
+## 已归档
+
+阶段报告、可行性分析、已被上述 canonical 文档取代的草稿 → [`archive/README.md`](archive/README.md)
+
+---
+
+## 协作规范
+
+- 运行时不变式：[`doc/ai/INVARIANTS.md`](../ai/INVARIANTS.md)
+- 审查清单：[`doc/ai/AI_CHECKLIST.md`](../ai/AI_CHECKLIST.md)
+
+## 一致性说明
+
+1. **虚存**：用户 VA 以 Radix 为真源（`MM_AND_COW.md`），不另建 Linux 式 VMA 链表。
+2. **wait/exit**：可先登记簿 + 锁，再迁入 `proc_coordinator` IPC（`ARCHITECTURE.md`）。
+3. **调 core**：热路径能直接调 radix/mm/调度则直接调；仅全局序列化用 server。
+
+更新文档时同步维护本 README 的 canonical / 参考 分区。

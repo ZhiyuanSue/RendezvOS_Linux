@@ -113,6 +113,68 @@ void syscall(struct trap_frame *syscall_ctx)
                                 (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
                                 (u64)syscall_ctx->ARCH_SYSCALL_ARG_3);
                 break;
+        case __NR_read:
+                ret = sys_read((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                               (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                               (u64)syscall_ctx->ARCH_SYSCALL_ARG_3);
+                break;
+        case __NR_close:
+                ret = sys_close((i32)syscall_ctx->ARCH_SYSCALL_ARG_1);
+                break;
+        case __NR_dup:
+                ret = sys_dup((i32)syscall_ctx->ARCH_SYSCALL_ARG_1);
+                break;
+        case __NR_dup2:
+#if defined(_X86_64_)
+        case __NR_dup3:
+#endif
+                ret = sys_dup2((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                               (i32)syscall_ctx->ARCH_SYSCALL_ARG_2);
+                break;
+        case __NR_fstat:
+                ret = sys_fstat((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                               (u64)syscall_ctx->ARCH_SYSCALL_ARG_2);
+                break;
+        case __NR_stat:
+                ret = sys_stat((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                               (u64)syscall_ctx->ARCH_SYSCALL_ARG_2);
+                break;
+        case __NR_lseek:
+                ret = sys_lseek((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                (i64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                (i32)syscall_ctx->ARCH_SYSCALL_ARG_3);
+                break;
+        case __NR_getcwd:
+                ret = sys_getcwd((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                 (u64)syscall_ctx->ARCH_SYSCALL_ARG_2);
+                break;
+        case __NR_chdir:
+                ret = sys_chdir((u64)syscall_ctx->ARCH_SYSCALL_ARG_1);
+                break;
+        case __NR_mkdir:
+#if defined(_X86_64_)
+        case __NR_mkdirat:
+#endif
+                ret = sys_mkdir((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                (u32)syscall_ctx->ARCH_SYSCALL_ARG_2);
+                break;
+        case __NR_unlink:
+#if defined(_X86_64_)
+        case __NR_unlinkat:
+#endif
+                ret = sys_unlink((u64)syscall_ctx->ARCH_SYSCALL_ARG_1);
+                break;
+        case __NR_getdents64:
+                ret = sys_getdents64((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                    (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                    (u64)syscall_ctx->ARCH_SYSCALL_ARG_3);
+                break;
+        case __NR_pipe:
+#if defined(_X86_64_)
+        case __NR_pipe2:
+#endif
+                ret = sys_pipe((u64)syscall_ctx->ARCH_SYSCALL_ARG_1);
+                break;
         case __NR_mmap:
                 ret = (i64)sys_mmap((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
                                     (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
@@ -147,6 +209,12 @@ void syscall(struct trap_frame *syscall_ctx)
                  * 如果返回了，说明execve失败，ret包含错误码。
                  * execve失败时需要正常设置返回值。
                  */
+                break;
+        case __NR_openat:
+                ret = sys_openat((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                 (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                 (i32)syscall_ctx->ARCH_SYSCALL_ARG_3,
+                                 (u64)syscall_ctx->ARCH_SYSCALL_ARG_4);
                 break;
         default:
                 pr_debug("[SYSCALL] unimplemented id=%lu\n", (u64)syscall_id);

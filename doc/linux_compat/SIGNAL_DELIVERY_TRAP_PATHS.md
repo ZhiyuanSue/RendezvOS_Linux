@@ -4,7 +4,7 @@
 **读者**：实现 `kill` / `rt_sigaction` / 信号投递的 `linux_layer` 与（必要时）`core` 维护者  
 **相关**：
 - [`IPC_BASED_SIGNAL_DESIGN.md`](IPC_BASED_SIGNAL_DESIGN.md) — IPC 仅作辅助，不可替代投递
-- [`PHASE2B_SIGNAL_ANALYSIS.md`](PHASE2B_SIGNAL_ANALYSIS.md) — syscall 清单与 Linux 语义
+- [`SIGNAL_IMPLEMENTATION_STATUS.md`](SIGNAL_IMPLEMENTATION_STATUS.md) — 实现状态与缺口
 - [`BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md`](BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md) — syscall 内 fork 须 `arch_ctx_refresh`
 - [`ARCHITECTURE.md`](ARCHITECTURE.md) — 能直接调 core 则不用 IPC
 

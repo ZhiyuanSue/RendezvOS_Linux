@@ -1,5 +1,7 @@
 # 内存：Radix Tree 作为虚存真源 + COW + 页故障
 
+**Core API / 锁序 / 调用流程：** [`core/docs/USING_CORE.md`](../../core/docs/USING_CORE.md)、[`core/docs/memory.md`](../../core/docs/memory.md) §0–§0.7（本文件只写 **Linux 侧策略与实现状态**）。
+
 > **📅 阶段状态**：
 > - ✅ **Phase 1 完成**：brk, mmap, munmap, mprotect, mremap, COW机制, fork地址空间复制
 > - 📋 **后续阶段**：文件mmap, 更复杂的mremap场景
