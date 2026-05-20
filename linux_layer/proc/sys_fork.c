@@ -156,11 +156,6 @@ i64 sys_fork(void)
                 (void)linux_deliver_pending_signals(child_tf);
         }
 
-        pr_info("[PROC] fork: Fork: parent PID=%d, child PID=%d, child tid=%d\n",
-                parent->pid,
-                child->pid,
-                child_thread->tid);
-
         return (i64)child->pid;
 
 out_free_thread:

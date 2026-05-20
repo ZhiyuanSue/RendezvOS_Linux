@@ -62,13 +62,6 @@ i64 sys_mremap(u64 old_address, u64 old_size, u64 new_size, u64 flags,
 {
         (void)new_address;
 
-        pr_debug(
-                "[mremap] called: old_address=%lx old_size=%lx new_size=%lx flags=%lx\n",
-                old_address,
-                old_size,
-                new_size,
-                flags);
-
         if (old_size == 0 || new_size == 0)
                 return -LINUX_EINVAL;
         if ((old_address & (PAGE_SIZE - 1)) != 0)

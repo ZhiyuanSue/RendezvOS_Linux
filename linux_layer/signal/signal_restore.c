@@ -1,7 +1,6 @@
 #include <common/string.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/signal/signal_restore.h>
-#include <modules/log/log.h>
 #include <rendezvos/task/tcb.h>
 #include <rendezvos/trap/trap.h>
 
@@ -17,7 +16,6 @@ bool signal_restore_user_context(struct trap_frame* tf)
 
         rs = &ta->signal_restore;
         if (!rs->active) {
-                pr_debug("[SIGNAL] rt_sigreturn: no saved handler context\n");
                 return false;
         }
 
@@ -37,6 +35,5 @@ bool signal_restore_user_context(struct trap_frame* tf)
                                      rs->saved_syscall_ret);
 
         memset(rs, 0, sizeof(*rs));
-        pr_info("[SIGNAL] rt_sigreturn restored user context\n");
         return true;
 }

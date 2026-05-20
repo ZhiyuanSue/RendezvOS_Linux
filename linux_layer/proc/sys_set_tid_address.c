@@ -40,10 +40,6 @@ i64 sys_set_tid_address(u64 tidptr)
         /* Store the tidptr for clearing on exit */
         append->clear_tid = tidptr;
 
-        pr_debug("[SET_TID_ADDRESS] Thread %d set clear_tid to 0x%llx\n",
-                 current_thread->tid,
-                 tidptr);
-
         /* Return current thread ID */
         return (i64)current_thread->tid;
 }

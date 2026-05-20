@@ -113,34 +113,12 @@ static error_t linux_spawn_and_wait_test(u64 app_index)
         slot->cookie = 0; /* Clear cookie to indicate waiting */
         slot->in_use = true;
 
-        pr_info("[linux_spawn_and_wait_test] CPU %lu: Waiting for test %lu, cookie=0x%lx\n",
-                (u64)cpu,
-                app_index,
-                cookie);
-
         /* Wait for test completion */
-        u64 loop_count = 0;
         while (slot->cookie != cookie) {
                 schedule(percpu(core_tm));
-                loop_count++;
-                if (loop_count % 100000 == 0) {
-                        pr_debug(
-                                "[linux_spawn_and_wait_test] CPU %lu: Still waiting, loop=%lu, current_cookie=0x%lx, expected=0x%lx\n",
-                                (u64)cpu,
-                                loop_count,
-                                slot->cookie,
-                                cookie);
-                }
         }
 
-        i64 exit_code = slot->exit_code;
         slot->in_use = false;
-
-        pr_info("[linux_spawn_and_wait_test] CPU %lu: Test %lu completed, cookie matched (0x%lx), exit_code=%ld\n",
-                (u64)cpu,
-                app_index,
-                cookie,
-                exit_code);
 
         /*
          * Treat cookie match as completion.

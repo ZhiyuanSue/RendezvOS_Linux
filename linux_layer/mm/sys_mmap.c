@@ -2,7 +2,6 @@
 #include <common/types.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/proc_compat.h>
-#include <modules/log/log.h>
 #include <linux_compat/linux_mm_radix.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/tcb.h>
@@ -26,15 +25,6 @@ static vaddr linux_mmap_default_hint(const linux_proc_append_t* pa)
 
 u64 sys_mmap(u64 addr, u64 length, i64 prot, i64 flags, i64 fd, u64 offset)
 {
-        pr_debug(
-                "[mmap] called: addr=%lx, length=%lx, prot=%lx, flags=%lx, fd=%d, offset=%lx\n",
-                addr,
-                length,
-                prot,
-                flags,
-                fd,
-                offset);
-
         if (length == 0)
                 return (u64)(-LINUX_EINVAL);
 
@@ -84,8 +74,6 @@ u64 sys_mmap(u64 addr, u64 length, i64 prot, i64 flags, i64 fd, u64 offset)
                 hint = linux_mmap_default_hint(pa);
         }
 
-        pr_debug("[MM] mmap searching from hint=%lx, page_num=%lu\n", hint, page_num);
-
         const int max_probes = 256;
         for (int i = 0; i < max_probes; i++) {
                 if (hint >= USER_SPACE_TOP
@@ -101,9 +89,6 @@ u64 sys_mmap(u64 addr, u64 length, i64 prot, i64 flags, i64 fd, u64 offset)
                                 u64 end = (u64)p + len_aligned;
                                 if (pa->mmap_hint < end)
                                         pa->mmap_hint = end;
-                                pr_debug("[MM] mmap success at %p (iteration %d)\n",
-                                         p,
-                                         i);
                                 return (u64)p;
                         }
                 }
@@ -111,6 +96,5 @@ u64 sys_mmap(u64 addr, u64 length, i64 prot, i64 flags, i64 fd, u64 offset)
                 hint += PAGE_SIZE;
         }
 
-        pr_debug("[MM] mmap failed after %d probes\n", max_probes);
         return (u64)(-LINUX_ENOMEM);
 }

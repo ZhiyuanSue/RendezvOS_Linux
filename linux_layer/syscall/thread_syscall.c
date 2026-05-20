@@ -62,11 +62,6 @@ void sys_exit(i64 exit_code)
                 if (pa) {
                         pa->exit_code = (i32)exit_code;
                         pa->exit_state = 1; /* 1 = zombie (wait4 can find us) */
-                        pr_info("[PROC] sys_exit: Task PID=%d exit_code=%d exit_state=%d, ppid=%d\n",
-                                task->pid,
-                                pa->exit_code,
-                                pa->exit_state,
-                                pa->ppid);
                 }
         }
 
@@ -94,30 +89,18 @@ void sys_exit(i64 exit_code)
                                 if (parent_pa) {
                                         chld_disp = &parent_pa->signal_dispositions
                                                              [SIGCHLD - 1];
-                                        if (!(chld_disp->flags & SA_NOCLDWAIT)) {
+                                        if (!(chld_disp->sa_flags & SA_NOCLDWAIT)) {
                                                 (void)linux_queue_signal(
                                                         parent_task, SIGCHLD,
                                                         task->pid);
                                         }
                                 }
 
-                                pr_debug("[PROC] sys_exit: Parent PID=%d exists, sending exit notification\n",
-                                         pa->ppid);
-
                                 Message_Port_t* wait_port =
                                         proc_get_or_create_wait_port(pa->ppid);
                                 if (wait_port) {
-                                        char port_name[PROC_WAIT_PORT_NAME_MAX];
-
-                                        proc_format_wait_port_name(
-                                                port_name, sizeof(port_name),
-                                                pa->ppid);
                                         /* Send exit message to parent using kmsg
                                          * Format: "qi" = i64(pid) + i32(exit_code) */
-                                        pr_debug(
-                                                "[PROC] sys_exit: Sending exit notification to parent PID=%d via port '%s'\n",
-                                                pa->ppid,
-                                                port_name);
                                         Msg_Data_t* exit_md =
                                                 kmsg_create(KMSG_MOD_LINUX_COMPAT,
                                                             KMSG_LINUX_EXIT_NOTIFY,
@@ -134,11 +117,7 @@ void sys_exit(i64 exit_code)
                                                                         exit_msg);
                                                         if (e == REND_SUCCESS) {
                                                                 e = send_msg(wait_port);
-                                                                if (e == REND_SUCCESS) {
-                                                                        pr_debug(
-                                                                                "[PROC] sys_exit: Sent exit notification to parent PID=%d\n",
-                                                                                pa->ppid);
-                                                                } else {
+                                                                if (e != REND_SUCCESS) {
                                                                         pr_error(
                                                                                 "[PROC] sys_exit: Failed to send exit message: %d\n",
                                                                                 (int)e);
@@ -152,18 +131,12 @@ void sys_exit(i64 exit_code)
                                                         pr_error(
                                                                 "[PROC] sys_exit: Failed to create exit message\n");
                                                 }
-                                        } else {
-                                                pr_debug(
-                                                        "[PROC] sys_exit: Failed to create exit message data\n");
                                         }
                                         ref_put(&wait_port->refcount, free_message_port_ref);
                                 } else {
                                         pr_warn("[PROC] sys_exit: Parent wait_port for ppid=%d not found\n",
                                                 pa->ppid);
                                 }
-                        } else {
-                                pr_debug("[PROC] sys_exit: Parent PID=%d not found, child is orphan\n",
-                                         pa->ppid);
                         }
                 }
         }
@@ -192,25 +165,17 @@ void sys_exit(i64 exit_code)
                 linux_thread_append_t* ta = linux_thread_append(self);
                 if (ta && ta->test_cookie != 0) {
                         need_clean_server_notify = true;
-                        pr_debug("[PROC] sys_exit: test_cookie present, notifying clean_server for test sync\n");
                 }
         }
 
         if (need_clean_server_notify) {
                 /* Notify clean_server (orphan or test sync). */
-                if (!parent_exists)
-                        pr_debug("[PROC] sys_exit: Orphan process, notifying clean_server directly\n");
                 port = thread_lookup_port(CLEAN_SERVER_PORT_NAME);
                 if (!port) {
                         pr_error("[PROC] sys_exit: port %s not found\n",
                                  CLEAN_SERVER_PORT_NAME);
                         goto out;
                 }
-
-                pr_debug(
-                        "[PROC] sys_exit: Sending cleanup request to clean_server for orphan thread tid=%lu, exit_code=%ld\n",
-                        (u64)self->tid,
-                        exit_code);
 
                 md = kmsg_create(port->service_id,
                                  KMSG_OP_CORE_THREAD_REAP,
@@ -244,13 +209,8 @@ void sys_exit(i64 exit_code)
                 if (ie != REND_SUCCESS) {
                         pr_error("[PROC] sys_exit: send_msg to clean_server failed e=%d\n",
                                  (int)ie);
-                } else {
-                        pr_debug(
-                                "[PROC] sys_exit: Cleanup request sent to clean_server successfully\n");
                 }
                 ref_put(&port->refcount, free_message_port_ref);
-        } else {
-                pr_debug("[PROC] sys_exit: Parent exists, skipping clean_server notification (wait4 will handle it)\n");
         }
 
 out:
@@ -369,18 +329,10 @@ void sys_exit_group(i64 exit_code)
                 /* Set exit flag for this thread */
                 thread_or_flags(thread, THREAD_FLAG_EXIT_REQUESTED);
 
-                pr_debug(
-                        "[PROC] exit_group: Killing thread %s (tid=%lu) in task PID=%d\n",
-                        thread->name ? thread->name : "(unnamed)",
-                        (u64)thread->tid,
-                        task->pid);
         }
 
         unlock_cas(&task->thread_list_lock);
 
         /* Finally kill current thread */
-        pr_info("[PROC] exit_group: Exiting task PID=%d with code %ld\n",
-                task->pid,
-                exit_code);
         sys_exit(exit_code);
 }

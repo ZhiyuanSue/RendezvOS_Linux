@@ -45,9 +45,6 @@ void *linux_elf_init_handler(Arch_Task_Context *ctx,
         pa->brk = brk0;
         pa->start_brk = brk0;
         pa->mmap_hint = ROUND_UP(brk0, PAGE_SIZE) + PAGE_SIZE;
-        pr_info("[LINUX_ELF_INIT] Set brk to %lx (max_load_end=%lx)\n",
-                brk0,
-                (u64)info->max_load_end);
 
         /*
          * Register this process in proc_registry so wait4 can find it.
@@ -59,10 +56,6 @@ void *linux_elf_init_handler(Arch_Task_Context *ctx,
                         tcb->pid,
                         (int)reg_e);
                 /* Non-fatal: process still works, but wait4 won't find it */
-        } else {
-                pr_debug(
-                        "[LINUX_ELF_INIT] Registered PID=%d in proc_registry\n",
-                        tcb->pid);
         }
 
         {

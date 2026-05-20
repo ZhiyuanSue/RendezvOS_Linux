@@ -120,10 +120,6 @@ static error_t linux_handle_cow_fault(vaddr fault_addr, bool is_write,
          * between these cases and return appropriate error codes.
          */
 
-        pr_debug("[MM] COW: Splitting page at vaddr=0x%lx (old_ppn=0x%lx)\n",
-                 fault_addr,
-                 (u64)old_ppn);
-
         /* Step 3: Allocate new physical page */
         size_t alloced_page_number;
         ppn_t new_ppn = pmm->pmm_alloc(pmm, 1, &alloced_page_number);
@@ -147,12 +143,6 @@ static error_t linux_handle_cow_fault(vaddr fault_addr, bool is_write,
         }
 
         ENTRY_FLAGS_t new_flags = old_flags | PAGE_ENTRY_WRITE;
-        pr_debug(
-                "[MM] COW: linux_mm_remap_user_leaf: va=0x%lx new_ppn=0x%lx old_ppn=0x%lx flags=0x%lx\n",
-                fault_addr,
-                (u64)new_ppn,
-                (u64)old_ppn,
-                (u64)new_flags);
 
         e = linux_mm_remap_user_leaf(
                 vs, fault_addr, new_ppn, new_flags, old_ppn);
@@ -169,12 +159,6 @@ static error_t linux_handle_cow_fault(vaddr fault_addr, bool is_write,
                 pmm->pmm_free(pmm, new_ppn, 1);
                 return e;
         }
-
-        pr_debug(
-                "[MM] COW: Successfully split page at vaddr=0x%lx (old_ppn=0x%lx -> new_ppn=0x%lx)\n",
-                fault_addr,
-                (u64)old_ppn,
-                (u64)new_ppn);
 
         return REND_SUCCESS;
 }
@@ -221,13 +205,6 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
 #error "Unsupported architecture"
 #endif
 
-        pr_debug(
-                "[MM] Page fault at vaddr=0x%lx (write=%d, present=%d, exec=%d)\n",
-                fault_addr,
-                is_write,
-                is_present,
-                is_execute);
-
         /*
          * First, determine if this is a kernel or user fault.
          * This must be done early for proper error handling.
@@ -259,32 +236,9 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
         int level = 0;
         ppn_t ppn = have_mapped(vs, VPN(aligned), &pt_flags, &level, handler);
 
-        pr_debug(
-                "[MM] have_mapped: va=0x%lx ppn=0x%lx flags=0x%lx level=%d vs=%p asid=%lu root=0x%lx\n",
-                aligned,
-                (u64)ppn,
-                (u64)pt_flags,
-                level,
-                (void *)vs,
-                (u64)vs->asid,
-                (u64)vs->vspace_root_addr);
-
         vaddr nstart = 0;
         ENTRY_FLAGS_t nflags = 0;
         error_t ne = linux_mm_query_vaddr(vs, aligned, &nstart, &nflags);
-
-        if (invalid_ppn(ppn)) {
-                if (ne == REND_SUCCESS) {
-                        pr_debug(
-                                "[MM] radix query: start=0x%lx flags=0x%lx\n",
-                                (u64)nstart,
-                                (u64)nflags);
-                } else {
-                        pr_debug(
-                                "[MM] radix query: not found (e=%d)\n",
-                                (int)ne);
-                }
-        }
 
         /*
          * Page fault handling decision tree based on radix shadow flags.

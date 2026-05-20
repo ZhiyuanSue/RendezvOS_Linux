@@ -3,6 +3,7 @@
 #include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/signal/signal_types.h>
+#include <linux_compat/signal/signal_uapi.h>
 #include <rendezvos/error.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/tcb.h>
@@ -35,7 +36,7 @@ i64 sys_rt_sigprocmask(i64 how_i, u64 set_ptr, u64 oldset_ptr, u64 sigsetsize)
                 return -LINUX_EFAULT;
         }
 
-        if (sigsetsize != sizeof(sigset_t)) {
+        if (!linux_sigsetsize_valid(sigsetsize)) {
                 return -LINUX_EINVAL;
         }
 

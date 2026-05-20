@@ -3,7 +3,7 @@
 #include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/signal/signal_types.h>
-#include <modules/log/log.h>
+#include <linux_compat/signal/signal_uapi.h>
 #include <rendezvos/error.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/tcb.h>
@@ -26,7 +26,6 @@ i64 sys_rt_sigaction(i64 signum_i, u64 act_ptr, u64 oldact_ptr, u64 sigsetsize)
         VSpace* vs;
         int signum = (int)signum_i;
         sigaction_t new_action;
-        error_t e;
 
         if (!current || !(proc_append = linux_proc_append(current)) || !current->vs) {
                 return -LINUX_ESRCH;
@@ -37,7 +36,7 @@ i64 sys_rt_sigaction(i64 signum_i, u64 act_ptr, u64 oldact_ptr, u64 sigsetsize)
                 return -LINUX_EFAULT;
         }
 
-        if (!signal_is_valid(signum) || sigsetsize != sizeof(sigset_t)) {
+        if (!signal_is_valid(signum) || !linux_sigsetsize_valid(sigsetsize)) {
                 return -LINUX_EINVAL;
         }
 
@@ -46,23 +45,23 @@ i64 sys_rt_sigaction(i64 signum_i, u64 act_ptr, u64 oldact_ptr, u64 sigsetsize)
         }
 
         if (oldact_ptr != 0) {
-                e = linux_mm_store_to_user(
+                error_t e = linux_copy_sigaction_to_user(
                         vs, oldact_ptr,
-                        &proc_append->signal_dispositions[signum - 1],
-                        sizeof(sigaction_t));
-                if (e != REND_SUCCESS) {
-                        return -LINUX_EFAULT;
+                        &proc_append->signal_dispositions[signum - 1]);
+                i64 err = linux_mm_errno_from_copy(e);
+                if (err != 0) {
+                        return err;
                 }
         }
 
         if (act_ptr != 0) {
-                e = linux_mm_load_from_user(vs, act_ptr, &new_action,
-                                            sizeof(sigaction_t));
-                if (e != REND_SUCCESS) {
-                        return -LINUX_EFAULT;
+                error_t e = linux_copy_sigaction_from_user(vs, act_ptr, &new_action);
+                i64 err = linux_mm_errno_from_copy(e);
+                if (err != 0) {
+                        return err;
                 }
 
-                if (new_action.flags
+                if (new_action.sa_flags
                     & ~(SA_NOCLDSTOP | SA_NOCLDWAIT | SA_SIGINFO | SA_ONSTACK
                         | SA_RESTART | SA_NODEFER | SA_RESETHAND | SA_RESTORER)) {
                         return -LINUX_EINVAL;

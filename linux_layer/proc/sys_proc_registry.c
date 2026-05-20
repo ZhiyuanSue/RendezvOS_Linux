@@ -214,7 +214,6 @@ error_t register_process(Tcb_Base* task)
                 return -LINUX_EAGAIN;
         }
 
-        pr_debug("[PROC] Registered PID %d\n", task->pid);
         return REND_SUCCESS;
 }
 
@@ -227,15 +226,7 @@ Tcb_Base* find_task_by_pid(pid_t pid)
         char name_buf[16];
         proc_format_pid(name_buf, sizeof(name_buf), pid);
 
-        Tcb_Base* task =
-                (Tcb_Base*)name_index_lookup(&pid_index, name_buf, NULL);
-        if (task) {
-                pr_debug("[PROC] Found PID %d\n", pid);
-        } else {
-                pr_debug("[PROC] PID %d not found\n", pid);
-        }
-
-        return task;
+        return (Tcb_Base*)name_index_lookup(&pid_index, name_buf, NULL);
 }
 
 void unregister_process(Tcb_Base* task)
@@ -245,7 +236,6 @@ void unregister_process(Tcb_Base* task)
         }
 
         proc_registry_evict_pid(task->pid, task);
-        pr_debug("[PROC] Unregistered PID %d\n", task->pid);
 }
 
 /*
@@ -277,10 +267,6 @@ Tcb_Base* find_zombie_child(pid_t ppid)
 
                 /* Check if this is our child and in zombie state */
                 if (pa->ppid == ppid && pa->exit_state == 1) {
-                        pr_debug(
-                                "[proc] Found zombie child PID=%d of parent PID=%d\n",
-                                candidate,
-                                ppid);
                         return child;
                 }
         }
@@ -314,11 +300,6 @@ Tcb_Base* find_zombie_child_in_pgid(pid_t ppid, pid_t pgid)
                  */
                 if (pa->ppid == ppid && pa->exit_state == 1
                     && pa->pgid == pgid) {
-                        pr_debug(
-                                "[proc] Found zombie child PID=%d of parent PID=%d in pgid %d\n",
-                                candidate,
-                                ppid,
-                                pgid);
                         return child;
                 }
         }

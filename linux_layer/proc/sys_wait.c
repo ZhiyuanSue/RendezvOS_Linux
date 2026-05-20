@@ -73,15 +73,6 @@ i64 sys_wait4(i32 pid, u64 user_wstatus, i32 options, u64 user_rusage)
                 return -LINUX_ESRCH;
         }
 
-        pr_debug("[PROC] wait4: PID=%d waiting for pid=%d, options=0x%x\n",
-                 parent->pid,
-                 pid,
-                 options);
-
-        /* Ignore rusage for now */
-        if (user_rusage) {
-                pr_debug("[PROC] wait4: rusage not supported, ignoring\n");
-        }
         (void)user_rusage;
 
         Tcb_Base* child = NULL;
@@ -100,7 +91,6 @@ i64 sys_wait4(i32 pid, u64 user_wstatus, i32 options, u64 user_rusage)
                 /* Wait for specific child PID */
                 child = find_task_by_pid(pid);
                 if (!child) {
-                        pr_debug("[PROC] wait4: Child PID=%d not found\n", pid);
                         return -LINUX_ECHILD;
                 }
 
@@ -112,9 +102,6 @@ i64 sys_wait4(i32 pid, u64 user_wstatus, i32 options, u64 user_rusage)
 
                 /* Check if this is actually our child */
                 if (child_pa->ppid != parent->pid) {
-                        pr_debug("[PROC] wait4: PID=%d is not our child (ppid=%d)\n",
-                                 pid,
-                                 child_pa->ppid);
                         return -LINUX_ECHILD;
                 }
 
@@ -123,9 +110,6 @@ i64 sys_wait4(i32 pid, u64 user_wstatus, i32 options, u64 user_rusage)
                 /* Wait for any child */
                 child = find_zombie_child(parent->pid);
                 if (!child) {
-                        pr_debug(
-                                "[PROC] wait4: No zombie children found for parent PID=%d\n",
-                                parent->pid);
                         return -LINUX_ECHILD;
                 }
 
@@ -145,9 +129,6 @@ i64 sys_wait4(i32 pid, u64 user_wstatus, i32 options, u64 user_rusage)
 
                 child = find_zombie_child_in_pgid(parent->pid, parent_pa->pgid);
                 if (!child) {
-                        pr_debug(
-                                "[PROC] wait4: No zombie children found in pgid %d\n",
-                                parent_pa->pgid);
                         return -LINUX_ECHILD;
                 }
 
@@ -163,9 +144,6 @@ i64 sys_wait4(i32 pid, u64 user_wstatus, i32 options, u64 user_rusage)
                 pid_t pgid = -pid;
                 child = find_zombie_child_in_pgid(parent->pid, pgid);
                 if (!child) {
-                        pr_debug(
-                                "[PROC] wait4: No zombie children found in pgid %d\n",
-                                pgid);
                         return -LINUX_ECHILD;
                 }
 
@@ -181,9 +159,6 @@ i64 sys_wait4(i32 pid, u64 user_wstatus, i32 options, u64 user_rusage)
         /* Check if child already exited (zombie) */
         if (child_pa->exit_state == 1) {
                 i32 exit_code = child_pa->exit_code;
-
-                pr_debug("[PROC] wait4: Child PID=%d already exited (zombie)\n",
-                         child_pid);
 
                 /* Mark child as reaped */
                 child_pa->exit_state = 2; /* 2 = reaped */
@@ -213,15 +188,11 @@ i64 sys_wait4(i32 pid, u64 user_wstatus, i32 options, u64 user_rusage)
                  * - exit_state==1 (zombie) orphan: delete immediately
                  * - exit_state==2 (reaped): delete immediately
                  */
-                pr_debug("[PROC] wait4: Child PID=%d marked as reaped, exit_code=%d, status=0x%x\n",
-                         child_pid, exit_code, encoded_status);
-
                 return (i64)child_pid;
         }
 
         /* Handle WNOHANG: non-blocking check */
         if (options & LINUX_WNOHANG) {
-                pr_debug("[PROC] wait4: WNOHANG: child still running\n");
                 return 0;
         }
 
@@ -238,12 +209,6 @@ i64 sys_wait4(i32 pid, u64 user_wstatus, i32 options, u64 user_rusage)
                         pr_error("[PROC] wait4: Failed to get wait port\n");
                         return -LINUX_EAGAIN;
                 }
-
-                pr_debug(
-                        "[PROC] wait4: PID=%d waiting on port '%s' for child PID=%d\n",
-                        parent->pid,
-                        port_name,
-                        child_pid);
 
                 /*
                  * thread_lookup_port / port_table_lookup success holds one ref
@@ -304,11 +269,6 @@ i64 sys_wait4(i32 pid, u64 user_wstatus, i32 options, u64 user_rusage)
 
                 ref_put(&msg->ms_queue_node.refcount, free_message_ref);
 
-                pr_debug(
-                        "[PROC] wait4: Received exit notification: child_pid=%d, exit_code=%d\n",
-                        (pid_t)child_pid_i64,
-                        exit_code);
-
                 /*
                  * Encode exit status in Linux format.
                  * For normal exit: status = (exit_code << 8) | 0x00
@@ -328,9 +288,6 @@ i64 sys_wait4(i32 pid, u64 user_wstatus, i32 options, u64 user_rusage)
                 }
 
                 ref_put(&wait_port->refcount, free_message_port_ref);
-
-                pr_debug("[PROC] wait4: Returning child_pid=%d, exit_code=%d, status=0x%x\n",
-                         (pid_t)child_pid_i64, exit_code, encoded_status);
 
                 return (i64)child_pid_i64;
         } else {

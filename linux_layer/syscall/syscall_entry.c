@@ -12,13 +12,11 @@ void syscall(struct trap_frame *syscall_ctx)
         /* Phase 2B: Restore main stack pointer if returning from signal handler */
         linux_restore_main_stack_if_needed(syscall_ctx);
 
-        pr_debug("Syscall id=%d arg1=%llx\n",
-                 syscall_ctx->ARCH_SYSCALL_ID,
-                 syscall_ctx->ARCH_SYSCALL_ARG_1);
         const u64 syscall_id = (u64)syscall_ctx->ARCH_SYSCALL_ID;
         /* Linux compat: user-visible errors must be Linux errno (negative). */
         i64 ret = -LINUX_ENOSYS;
         bool skip_syscall_ret_assign = false;
+        bool skip_signal_deliver = false;
 
         switch (syscall_id) {
         case __NR_exit:
@@ -97,6 +95,7 @@ void syscall(struct trap_frame *syscall_ctx)
                 ret = sys_rt_sigreturn(syscall_ctx);
                 if (ret == 0) {
                         skip_syscall_ret_assign = true;
+                        skip_signal_deliver = true;
                 }
                 break;
         case __NR_wait4:
@@ -226,7 +225,9 @@ void syscall(struct trap_frame *syscall_ctx)
         }
 
         /* Deliver after syscall return value is set (handler uses rdi/x0, not ret reg). */
-        (void)linux_deliver_pending_signals(syscall_ctx);
+        if (!skip_signal_deliver) {
+                (void)linux_deliver_pending_signals(syscall_ctx);
+        }
 
         return;
 }

@@ -139,13 +139,14 @@ typedef struct {
 #define si_value	_sifields._rt.si_value
 
 /*
- * Signal disposition (per-process, per-signal)
+ * struct sigaction — must match Linux uapi layout (arch-generic/signal.h).
+ * x86_64/aarch64: sa_handler, sa_flags (unsigned long), sa_restorer, sa_mask.
  */
 typedef struct {
-	__sighandler_t	handler;	/* Signal handler (SIG_DFL, SIG_IGN, or function) */
-	sigset_t		mask;		/* Signals to block during handler execution */
-	int		flags;		/* SA_* flags */
-	void		(*restorer)(void);	/* Signal trampoline (obsolete) */
+	__sighandler_t sa_handler;
+	unsigned long sa_flags;
+	void (*sa_restorer)(void);
+	sigset_t sa_mask;
 } sigaction_t;
 
 /*

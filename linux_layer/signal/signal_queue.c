@@ -65,11 +65,6 @@ static i64 signal_queue_on_thread_helper(Tcb_Base* target,
                 return -LINUX_ESRCH;
         }
 
-        if (!signal_is_uncatchable(sig) &&
-            sigismember(&thread_append->blocked_signals, sig)) {
-                pr_debug("[SIGNAL] Signal %d blocked, queue as pending\n", sig);
-        }
-
         sigaddset(&proc_append->pending_signals, sig);
         sigaddset(&thread_append->pending_signals, sig);
 
@@ -102,14 +97,12 @@ i64 linux_queue_signal(Tcb_Base* target, int sig, pid_t sender_tid)
         }
 
         disp = &proc_append->signal_dispositions[sig - 1];
-        if (disp->handler == SIG_IGN) {
+        if (disp->sa_handler == SIG_IGN) {
                 return 0;
         }
 
         target_thread = signal_select_thread_helper(target, sig);
         if (!target_thread) {
-                pr_debug("[SIGNAL] No thread in PID %d for signal %d\n",
-                         target->pid, sig);
                 return -LINUX_ESRCH;
         }
 
@@ -144,7 +137,7 @@ i64 linux_queue_signal_thread(Thread_Base* target_thread, int sig,
         }
 
         disp = &proc_append->signal_dispositions[sig - 1];
-        if (disp->handler == SIG_IGN) {
+        if (disp->sa_handler == SIG_IGN) {
                 return 0;
         }
 

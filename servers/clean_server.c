@@ -92,23 +92,11 @@ static void clean_handle_message(Message_t *msg)
                 return;
         }
 
-        /* Debug output: show which thread is being cleaned up on which core */
-        pr_info("[clean_server] CPU %lu: cleaning up thread %s (tid=%lu, exit_code=%ld)\n",
-                (u64)percpu(cpu_number),
-                target->name ? target->name : "(unnamed)",
-                (u64)target->tid,
-                exit_code);
-
 #ifdef LINUX_COMPAT_TEST
         /* Notify linux compat user test runner (if this was a test-managed user
          * thread). */
         linux_thread_append_t *ta = linux_thread_append(target);
         if (ta && ta->test_cookie != 0 && target->tm) {
-                pr_info("[clean_server] CPU %lu: Notifying linux_user_test_notify_exit: owner_cpu=%d, cookie=0x%lx, exit_code=%ld\n",
-                        (u64)percpu(cpu_number),
-                        (i32)target->tm->owner_cpu,
-                        ta->test_cookie,
-                        exit_code);
                 linux_user_test_notify_exit(
                         (i32)target->tm->owner_cpu, ta->test_cookie, exit_code);
         }
@@ -139,43 +127,15 @@ static void clean_handle_message(Message_t *msg)
 #ifdef LINUX_COMPAT_TEST
                 linux_proc_append_t *pa = linux_proc_append(task);
                 if (pa && pa->exit_state == 1) {
-                        /* Zombie child - check if parent task still exists */
-                        pr_debug(
-                                "[clean_server] Task PID=%d is zombie, checking parent PID=%d\n",
-                                task->pid,
-                                pa->ppid);
-
-                        /* Check if parent task exists in proc_registry */
                         if (pa->ppid > 0) {
                                 Tcb_Base *parent_task =
                                         find_task_by_pid(pa->ppid);
-                                if (parent_task) {
-                                        pr_debug(
-                                                "[clean_server] Parent PID=%d still exists, keeping zombie child PID=%d for wait4\n",
-                                                pa->ppid,
-                                                task->pid);
+                                if (parent_task)
                                         should_delete = false;
-                                } else {
-                                        pr_debug(
-                                                "[clean_server] Parent PID=%d not found in registry, deleting orphan zombie child PID=%d\n",
-                                                pa->ppid,
-                                                task->pid);
-                                        should_delete = true;
-                                }
-                        } else {
-                                /* No parent (ppid <= 0), safe to delete */
-                                pr_debug(
-                                        "[clean_server] Task PID=%d has no parent, safe to delete\n",
-                                        task->pid);
-                                should_delete = true;
                         }
                 }
-                if (pa && pa->exit_state == 2) {
-                        pr_debug(
-                                "[clean_server] Task PID=%d already reaped by wait4, safe to delete\n",
-                                task->pid);
+                if (pa && pa->exit_state == 2)
                         should_delete = true;
-                }
 #endif
 
                 if (should_delete) {
@@ -196,12 +156,8 @@ static void clean_handle_message(Message_t *msg)
 #ifdef LINUX_COMPAT_TEST
                         /* Unregister from proc_registry before deleting */
                         linux_proc_append_t *pa = linux_proc_append(task);
-                        if (pa) {
-                                pr_debug(
-                                        "[clean_server] Unregistering PID=%d from proc_registry\n",
-                                        task->pid);
+                        if (pa)
                                 unregister_process(task);
-                        }
 #endif
 
                         error_t e = delete_task(task);

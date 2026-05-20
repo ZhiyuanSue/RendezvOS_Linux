@@ -12,10 +12,10 @@ void linux_signal_init_proc_append(linux_proc_append_t* pa)
 
         sigemptyset(&pa->pending_signals);
         for (i = 0; i < NSIG; i++) {
-                pa->signal_dispositions[i].handler = SIG_DFL;
-                pa->signal_dispositions[i].flags = 0;
-                sigemptyset(&pa->signal_dispositions[i].mask);
-                pa->signal_dispositions[i].restorer = NULL;
+                pa->signal_dispositions[i].sa_handler = SIG_DFL;
+                pa->signal_dispositions[i].sa_flags = 0;
+                sigemptyset(&pa->signal_dispositions[i].sa_mask);
+                pa->signal_dispositions[i].sa_restorer = NULL;
         }
 }
 

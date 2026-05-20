@@ -56,31 +56,16 @@ static i64 find_embedded_elf_by_name(const char *filename)
 
         u64 num_apps = _num_app;
 
-        pr_debug("[EXEC] Searching for ELF: %s (total apps: %lu)\n",
-                 filename, num_apps);
-
         struct {
                 const char *name;
                 int index;
         } program_map[] = {
-                {"test_mremap_simple", 0},
-                {"oscomp_munmap", 1},
-                {"test_signal_delivery", 2},
-                {"test_phase2b_signal_basic", 3},
-                {"test_brk_init", 4},
-                {"test_execve", 5},
-                {"test_sigaltstack", 6},
-                {"ch2b_exit", 7},
-                {"test_mprotect_simple", 8},
-                {"test_mmap_simple", 9},
-                {"oscomp_brk", 10},
-                {"test_phase2a_clone", 11},
-                {"oscomp_mmap", 12},
-                {"test_phase1", 13},
-                {"oscomp_getpid", 14},
-                {"test_sig_dfl", 15},
-                {"test_fork_wait", 16},
+                /* Indices must match user_payload/link_app.S (_num_app table). */
+                {"test_echo", 41},
+                {"test_execve", 17},
                 {"test_execve_simple", 50},
+                {"test_signal_delivery", 7},
+                {"test_phase2b_signal_basic", 8},
                 /* Add new programs here as they are added to link_app.S */
         };
 
@@ -89,14 +74,11 @@ static i64 find_embedded_elf_by_name(const char *filename)
         for (int i = 0; i < num_programs; i++) {
                 if (strcmp_s(program_map[i].name, filename, EXEC_MAX_PATH) == 0) {
                         if (program_map[i].index < (i64)num_apps) {
-                                pr_debug("[EXEC] Found match at index %d: %s\n",
-                                         program_map[i].index, filename);
                                 return program_map[i].index;
                         }
                 }
         }
 
-        pr_debug("[EXEC] No match found for: %s\n", filename);
         return -1;
 }
 
@@ -159,9 +141,6 @@ static vaddr build_initial_stack(vaddr stack_top, char **user_argv, i64 argc,
                                VSpace *vs)
 {
         vaddr current_sp = stack_top;
-
-        pr_debug("[EXEC] Building initial stack: argc=%ld, stack_top=0x%lx\n",
-                 argc, stack_top);
 
         /*
          * Linux initial stack layout (simplified):
@@ -243,9 +222,6 @@ static vaddr build_initial_stack(vaddr stack_top, char **user_argv, i64 argc,
         current_sp -= sizeof(u64);
         ((u64 *)current_sp)[0] = (u64)argc;
 
-        pr_debug("[EXEC] Initial stack built: argc=%ld, sp=0x%lx\n",
-                 argc, current_sp);
-
         return current_sp;
 }
 
@@ -271,7 +247,6 @@ static void linux_exec_reset_proc_state(Tcb_Base *task)
         sigemptyset(&pa->pending_signals);
 
         /* Note: We don't call register_process() since PID stays the same */
-        pr_debug("[EXEC] Reset proc state for PID=%d\n", task->pid);
 }
 
 /*
@@ -312,12 +287,9 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
         /* Ensure filename is null-terminated */
         filename[EXEC_MAX_PATH - 1] = '\0';
 
-        pr_info("[EXEC] execve called: filename=%s\n", filename);
-
         /* Step 2: Find embedded ELF by name */
         app_index = find_embedded_elf_by_name(filename);
         if (app_index < 0) {
-                pr_debug("[EXEC] ELF not found: %s\n", filename);
                 return -LINUX_ENOENT;
         }
 
@@ -330,9 +302,6 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
         elf_start = *app_start_ptr;
         elf_end = *app_end_ptr;
 
-        pr_debug("[EXEC] Found ELF: range=0x%lx-0x%lx\n",
-                 elf_start, elf_end);
-
         /* Step 3: Validate ELF (before clearing mappings) */
         extern bool check_elf_header(vaddr elf_header_ptr);
         if (!check_elf_header(elf_start)) {
@@ -341,7 +310,6 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
         }
 
         /* Step 4: Clear user mappings (allow_self_use: local tlb_cpu_mask bit OK) */
-        pr_debug("[EXEC] Clearing user mappings\n");
         e = vspace_clear_user_mappings(vs, &percpu(Map_Handler), true);
         if (e != REND_SUCCESS) {
                 pr_error("[EXEC] Failed to clear user mappings: %d\n", (int)e);
@@ -349,7 +317,6 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
         }
 
         /* Step 5: Load ELF to VSpace */
-        pr_debug("[EXEC] Loading ELF to VSpace\n");
         e = load_elf_to_vs(elf_start, elf_end, vs, &max_load_end);
         if (e != REND_SUCCESS) {
                 pr_error("[EXEC] Failed to load ELF: %d\n", (int)e);
@@ -365,11 +332,7 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
         Elf64_Ehdr *elf_header = (Elf64_Ehdr *)elf_start;
         entry_addr = elf_header->e_entry;
 
-        pr_info("[EXEC] ELF loaded: entry=0x%lx, max_load_end=0x%lx\n",
-                entry_addr, max_load_end);
-
         /* Step 6: Generate user stack */
-        pr_debug("[EXEC] Generating user stack\n");
         user_sp = generate_user_stack(vs);
         if (!user_sp) {
                 pr_error("[EXEC] Failed to generate user stack\n");
@@ -394,9 +357,6 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
         linux_exec_reset_proc_state(current);
 
         /* Step 10: Set user return state (Path A) */
-        pr_info("[EXEC] Entering user mode: entry=0x%lx, sp=0x%lx, argc=%ld\n",
-                entry_addr, initial_stack_sp, argc);
-
         arch_syscall_set_user_return(
                 syscall_ctx,
                 &current_thread->ctx,

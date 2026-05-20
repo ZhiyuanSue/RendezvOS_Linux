@@ -80,19 +80,16 @@ static i64 validate_clone_flags(u64 flags)
 {
         /* CLONE_SIGHAND requires CLONE_VM */
         if ((flags & CLONE_SIGHAND) && !(flags & CLONE_VM)) {
-                pr_debug("[PROC] clone: CLONE_SIGHAND requires CLONE_VM\n");
                 return -LINUX_EINVAL;
         }
 
         /* CLONE_THREAD requires CLONE_SIGHAND (which requires CLONE_VM) */
         if ((flags & CLONE_THREAD) && !(flags & CLONE_SIGHAND)) {
-                pr_debug("[PROC] clone: CLONE_THREAD requires CLONE_SIGHAND\n");
                 return -LINUX_EINVAL;
         }
 
         /* Thread creation requires CLONE_VM */
         if ((flags & CLONE_THREAD) && !(flags & CLONE_VM)) {
-                pr_debug("[PROC] clone: CLONE_THREAD requires CLONE_VM\n");
                 return -LINUX_EINVAL;
         }
 
@@ -110,6 +107,8 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
         i64 ret;
         error_t e;
 
+        (void)tls; /* used when CLONE_SETTLS TLS setup is implemented */
+
         if (!parent || !parent->vs) {
                 pr_error("[PROC] clone: Invalid parent task\n");
                 return -LINUX_ESRCH;
@@ -123,7 +122,6 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
 
         /* Validate stack pointer */
         if ((flags & CLONE_VM) && stack == 0) {
-                pr_debug("[PROC] clone: Stack cannot be NULL with CLONE_VM\n");
                 return -LINUX_EINVAL;
         }
 
@@ -140,7 +138,6 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
         if (flags & CLONE_VM) {
                 /* Share parent's VSpace - no refcount increment needed */
                 child_vs = parent->vs;
-                pr_debug("[PROC] clone: Sharing VSpace for thread creation\n");
         } else {
                 /* Copy parent's VSpace */
                 e = linux_copy_vspace(parent->vs, &child_vs);
@@ -148,7 +145,6 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
                         pr_error("[PROC] clone: Failed to copy vspace: %d\n", (int)e);
                         return -LINUX_ENOMEM;
                 }
-                pr_debug("[PROC] clone: Copying VSpace for process creation\n");
         }
 
         /* Create child task structure */
@@ -247,7 +243,6 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
 
         /* TODO: Set TLS if CLONE_SETTLS is specified */
         if (flags & CLONE_SETTLS) {
-                pr_debug("[PROC] clone: CLONE_SETTLS requested (tls=0x%llx)\n", tls);
                 /* Architecture-specific TLS setup goes here */
                 /* For x86_64: this would set the %fs base register */
         }
@@ -295,13 +290,6 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
 
                 (void)linux_deliver_pending_signals(child_tf);
         }
-
-        pr_info("[PROC] clone: Clone: parent PID=%d, child PID=%d, child TID=%d, "
-                "flags=0x%llx\n",
-                parent->pid,
-                child->pid,
-                child_thread->tid,
-                flags);
 
         /* TODO: Implement CLONE_FS, CLONE_FILES, CLONE_SIGHAND in Phase 2B/2C */
 

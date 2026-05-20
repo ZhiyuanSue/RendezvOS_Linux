@@ -44,11 +44,8 @@ i64 sys_set_robust_list(u64 head_ptr, u64 len)
 
         /* TODO: Extend linux_thread_append to store robust_list head and len */
         /* For now, we just acknowledge the call */
-        pr_debug("[SET_ROBUST_LIST] Thread %d set robust_list to 0x%llx "
-                 "(len=%llu)\n",
-                 current_thread->tid,
-                 head_ptr,
-                 len);
+        (void)head_ptr;
+        (void)len;
 
         /* TODO: Store head_ptr and len in thread append */
         /* append->robust_list_head = head_ptr; */
