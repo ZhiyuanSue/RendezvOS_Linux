@@ -31,13 +31,4 @@
  */
 bool linux_deliver_pending_signals(struct trap_frame *tf);
 
-/**
- * @brief Restore main stack pointer if returning from alternate signal stack
- *
- * This function checks if the current thread is executing on an alternate
- * signal stack and restores the main stack pointer if needed. Should be
- * called from syscall entry to detect when returning from signal handlers.
- */
-void linux_restore_main_stack_if_needed(struct trap_frame *tf);
-
 #endif /* _LINUX_COMPAT_SIGNAL_DELIVER_H_ */

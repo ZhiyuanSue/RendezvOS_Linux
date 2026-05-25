@@ -18,33 +18,6 @@
  * before returning to user space to deliver pending signals.
  */
 
-void linux_restore_main_stack_if_needed(struct trap_frame* tf)
-{
-        Thread_Base* current_thread = get_cpu_current_thread();
-        linux_thread_append_t* thread_append;
-
-        if (!current_thread) {
-                return;
-        }
-
-        thread_append = linux_thread_append(current_thread);
-        if (!thread_append) {
-                return;
-        }
-
-        if (thread_append->alt_stack.ss_flags & SS_ONSTACK) {
-                vaddr user_pc, user_sp, syscall_ret;
-
-                arch_syscall_get_user_return(
-                        tf, &current_thread->ctx, &user_pc, &user_sp,
-                        &syscall_ret);
-                arch_syscall_set_user_return(tf, &current_thread->ctx, user_pc,
-                                             thread_append->saved_main_sp,
-                                             syscall_ret);
-                thread_append->alt_stack.ss_flags &= ~SS_ONSTACK;
-        }
-}
-
 static bool signal_thread_has_pending_helper(void)
 {
     Thread_Base *current_thread = get_cpu_current_thread();

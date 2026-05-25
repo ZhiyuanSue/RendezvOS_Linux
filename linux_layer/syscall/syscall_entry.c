@@ -9,8 +9,6 @@
 
 void syscall(struct trap_frame *syscall_ctx)
 {
-        /* Phase 2B: Restore main stack pointer if returning from signal handler */
-        linux_restore_main_stack_if_needed(syscall_ctx);
 
         const u64 syscall_id = (u64)syscall_ctx->ARCH_SYSCALL_ID;
         /* Linux compat: user-visible errors must be Linux errno (negative). */
