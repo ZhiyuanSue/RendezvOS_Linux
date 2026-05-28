@@ -213,6 +213,12 @@ void syscall(struct trap_frame *syscall_ctx)
                                  (i32)syscall_ctx->ARCH_SYSCALL_ARG_3,
                                  (u64)syscall_ctx->ARCH_SYSCALL_ARG_4);
                 break;
+#if defined(_X86_64_)
+        case __NR_arch_prctl:
+                ret = sys_arch_prctl((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                     (u64)syscall_ctx->ARCH_SYSCALL_ARG_2);
+                break;
+#endif
         default:
                 pr_debug("[SYSCALL] unimplemented id=%lu\n", (u64)syscall_id);
                 break;

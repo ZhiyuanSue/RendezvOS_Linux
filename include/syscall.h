@@ -26,6 +26,7 @@ i64 sys_waitpid(i32 pid, i64* wstatus, i32 options);
 i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls);
 i64 sys_set_tid_address(u64 tidptr);
 i64 sys_set_robust_list(u64 head_ptr, u64 len);
+i64 sys_arch_prctl(i32 code, u64 addr);
 
 i64 sys_kill(i64 pid, i64 sig);
 i64 sys_rt_sigaction(i64 signum, u64 act, u64 oldact, u64 sigsetsize);

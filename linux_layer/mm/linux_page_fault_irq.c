@@ -24,7 +24,6 @@
 #if defined(_X86_64_)
 #include <arch/x86_64/mm/pmm.h>
 #include <arch/x86_64/boot/arch_setup.h>
-#include <arch/x86_64/tcb_arch.h>
 #elif defined(_AARCH64_)
 #include <arch/aarch64/mm/pmm.h>
 #include <arch/aarch64/boot/arch_setup.h>

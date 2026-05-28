@@ -107,7 +107,6 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
         i64 ret;
         error_t e;
 
-        (void)tls; /* used when CLONE_SETTLS TLS setup is implemented */
 
         if (!parent || !parent->vs) {
                 pr_error("[PROC] clone: Invalid parent task\n");
@@ -241,10 +240,8 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
                 #endif
         }
 
-        /* TODO: Set TLS if CLONE_SETTLS is specified */
         if (flags & CLONE_SETTLS) {
-                /* Architecture-specific TLS setup goes here */
-                /* For x86_64: this would set the %fs base register */
+                arch_set_user_tls_base(&child_thread->ctx, tls);
         }
 
         e = add_thread_to_manager(percpu(core_tm), child_thread);
