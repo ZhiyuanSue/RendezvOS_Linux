@@ -121,20 +121,32 @@ void syscall(struct trap_frame *syscall_ctx)
         case __NR_dup:
                 ret = sys_dup((i32)syscall_ctx->ARCH_SYSCALL_ARG_1);
                 break;
-        case __NR_dup2:
 #if defined(_X86_64_)
-        case __NR_dup3:
-#endif
+        case __NR_dup2:
                 ret = sys_dup2((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
-                               (i32)syscall_ctx->ARCH_SYSCALL_ARG_2);
+                              (i32)syscall_ctx->ARCH_SYSCALL_ARG_2);
+                break;
+#endif
+        case __NR_dup3:
+                ret = sys_dup3((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                              (i32)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                              (i32)syscall_ctx->ARCH_SYSCALL_ARG_3);
                 break;
         case __NR_fstat:
                 ret = sys_fstat((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_2);
                 break;
+#if defined(_X86_64_)
         case __NR_stat:
                 ret = sys_stat((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_2);
+                break;
+#endif
+        case __NR_newfstatat:
+                ret = sys_newfstatat((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                    (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                    (u64)syscall_ctx->ARCH_SYSCALL_ARG_3,
+                                    (i32)syscall_ctx->ARCH_SYSCALL_ARG_4);
                 break;
         case __NR_lseek:
                 ret = sys_lseek((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
@@ -148,29 +160,40 @@ void syscall(struct trap_frame *syscall_ctx)
         case __NR_chdir:
                 ret = sys_chdir((u64)syscall_ctx->ARCH_SYSCALL_ARG_1);
                 break;
-        case __NR_mkdir:
 #if defined(_X86_64_)
-        case __NR_mkdirat:
-#endif
+        case __NR_mkdir:
                 ret = sys_mkdir((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
                                 (u32)syscall_ctx->ARCH_SYSCALL_ARG_2);
                 break;
-        case __NR_unlink:
-#if defined(_X86_64_)
-        case __NR_unlinkat:
 #endif
+        case __NR_mkdirat:
+                ret = sys_mkdirat((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                  (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                  (u32)syscall_ctx->ARCH_SYSCALL_ARG_3);
+                break;
+#if defined(_X86_64_)
+        case __NR_unlink:
                 ret = sys_unlink((u64)syscall_ctx->ARCH_SYSCALL_ARG_1);
+                break;
+#endif
+        case __NR_unlinkat:
+                ret = sys_unlinkat((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                  (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                  (i32)syscall_ctx->ARCH_SYSCALL_ARG_3);
                 break;
         case __NR_getdents64:
                 ret = sys_getdents64((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
                                     (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
                                     (u64)syscall_ctx->ARCH_SYSCALL_ARG_3);
                 break;
-        case __NR_pipe:
 #if defined(_X86_64_)
-        case __NR_pipe2:
-#endif
+        case __NR_pipe:
                 ret = sys_pipe((u64)syscall_ctx->ARCH_SYSCALL_ARG_1);
+                break;
+#endif
+        case __NR_pipe2:
+                ret = sys_pipe2((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                              (i32)syscall_ctx->ARCH_SYSCALL_ARG_2);
                 break;
         case __NR_mmap:
                 ret = (i64)sys_mmap((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,

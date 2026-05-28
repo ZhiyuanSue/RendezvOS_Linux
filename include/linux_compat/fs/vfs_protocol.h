@@ -20,8 +20,13 @@
 #define KMSG_OP_VFS_FSTAT    5u
 #define KMSG_OP_VFS_STAT     6u
 #define KMSG_OP_VFS_LSEEK    7u
-#define KMSG_OP_VFS_GETCWD   8u
-#define KMSG_OP_VFS_CHDIR    9u
+#define KMSG_OP_VFS_GETCWD      8u
+#define KMSG_OP_VFS_CHDIR       9u
+#define KMSG_OP_VFS_DUP3        10u
+#define KMSG_OP_VFS_PIPE2       11u
+#define KMSG_OP_VFS_MKDIRAT     12u
+#define KMSG_OP_VFS_UNLINKAT    13u
+#define KMSG_OP_VFS_NEWFSTATAT  14u
 
 /* Response: single i64 (Linux errno or non-negative syscall result). */
 #define KMSG_OP_VFS_RESP     0u
@@ -31,10 +36,15 @@
  * Request TLV format strings (without reply port).
  * Client appends reply port name as final TLV type 't' (see fs_ipc.c).
  */
-#define VFS_KMSG_FMT_GETCWD  "pu"
-#define VFS_KMSG_FMT_CLOSE   "i"
-#define VFS_KMSG_FMT_READ    "ipp"
-#define VFS_KMSG_FMT_WRITE   "ipp"
-#define VFS_KMSG_FMT_OPEN    "sippu"
+#define VFS_KMSG_FMT_GETCWD     "pu"
+#define VFS_KMSG_FMT_CLOSE      "i"
+#define VFS_KMSG_FMT_READ       "ipp"
+#define VFS_KMSG_FMT_WRITE      "ipp"
+#define VFS_KMSG_FMT_OPEN       "sippu"
+#define VFS_KMSG_FMT_DUP3       "iii"
+#define VFS_KMSG_FMT_PIPE2      "pi"
+#define VFS_KMSG_FMT_MKDIRAT    "isu"
+#define VFS_KMSG_FMT_UNLINKAT   "isi"
+#define VFS_KMSG_FMT_NEWFSTATAT "ispu"
 
 #endif /* _LINUX_COMPAT_FS_VFS_PROTOCOL_H_ */

@@ -28,6 +28,7 @@ static i64 vfs_rpc_handler(u16 opcode, const kmsg_t* km, char** reply_port_out)
         u64 param1 = 0;
         u64 param2 = 0;
         u64 param3 = 0;
+        char* str_param = NULL;
 
         if (!km || !reply_port_out) {
                 return -LINUX_EINVAL;
@@ -47,6 +48,37 @@ static i64 vfs_rpc_handler(u16 opcode, const kmsg_t* km, char** reply_port_out)
                         return 0;
                 }
                 return -LINUX_EINVAL;
+        case KMSG_OP_VFS_DUP3:
+                decode_err = ipc_serial_decode(km->payload, km->hdr.payload_len,
+                                              VFS_KMSG_FMT_DUP3 "t", &param1,
+                                              &param2, &param3, reply_port_out);
+                return (decode_err == REND_SUCCESS) ? -LINUX_ENOSYS
+                                                    : -LINUX_EINVAL;
+        case KMSG_OP_VFS_PIPE2:
+                decode_err = ipc_serial_decode(km->payload, km->hdr.payload_len,
+                                              VFS_KMSG_FMT_PIPE2 "t", &param1,
+                                              &param2, reply_port_out);
+                return (decode_err == REND_SUCCESS) ? -LINUX_ENOSYS
+                                                    : -LINUX_EINVAL;
+        case KMSG_OP_VFS_MKDIRAT:
+                decode_err = ipc_serial_decode(km->payload, km->hdr.payload_len,
+                                              VFS_KMSG_FMT_MKDIRAT "t", &param1,
+                                              &str_param, &param2, reply_port_out);
+                return (decode_err == REND_SUCCESS) ? -LINUX_ENOSYS
+                                                    : -LINUX_EINVAL;
+        case KMSG_OP_VFS_UNLINKAT:
+                decode_err = ipc_serial_decode(km->payload, km->hdr.payload_len,
+                                              VFS_KMSG_FMT_UNLINKAT "t", &param1,
+                                              &str_param, &param2, reply_port_out);
+                return (decode_err == REND_SUCCESS) ? -LINUX_ENOSYS
+                                                    : -LINUX_EINVAL;
+        case KMSG_OP_VFS_NEWFSTATAT:
+                decode_err = ipc_serial_decode(km->payload, km->hdr.payload_len,
+                                              VFS_KMSG_FMT_NEWFSTATAT "t", &param1,
+                                              &str_param, &param2, &param3,
+                                              reply_port_out);
+                return (decode_err == REND_SUCCESS) ? -LINUX_ENOSYS
+                                                    : -LINUX_EINVAL;
         case KMSG_OP_VFS_CLOSE:
                 decode_err = ipc_serial_decode(km->payload, km->hdr.payload_len,
                                               VFS_KMSG_FMT_CLOSE "t", &param1,
