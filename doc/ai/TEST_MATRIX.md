@@ -71,3 +71,23 @@ If blocked, state blocker explicitly in review output/history.
   - <what still not covered>
 ```
 
+## G) User Payload Test Changes
+
+- Minimum:
+  - **qemu-user validation**: All test cases MUST be validated on qemu-user BEFORE
+    testing on RendezvOS kernel
+  - Required steps:
+    1. Build static-linked test binary
+    2. Run on appropriate qemu-user (e.g., `qemu-aarch64-static`)
+    3. Only test on kernel after qemu-user validation passes
+  - Required checks:
+  - No test debugging on kernel unless test passes on qemu-user
+  - Verify test logic is correct on standard Linux first
+- Rationale:
+  - Distinguishes test bugs from kernel implementation bugs
+  - Prevents wasting time debugging test case issues
+  - Ensures tests have correct expected behavior
+
+### See Also
+- `user_payload/README.md` - Detailed validation guidelines and scripts
+
