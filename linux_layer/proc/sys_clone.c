@@ -106,7 +106,6 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
         i64 ret;
         error_t e;
 
-
         if (!parent || !parent->vs) {
                 pr_error("[PROC] clone: Invalid parent task\n");
                 return -LINUX_ESRCH;
@@ -131,7 +130,8 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
 
         /*
          * For thread creation (CLONE_VM), we share the address space.
-         * For process creation (no CLONE_VM), we copy the address space (like fork).
+         * For process creation (no CLONE_VM), we copy the address space (like
+         * fork).
          */
         if (flags & CLONE_VM) {
                 /* Share parent's VSpace - no refcount increment needed */
@@ -140,7 +140,8 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
                 /* Copy parent's VSpace */
                 e = linux_copy_vspace(parent->vs, &child_vs);
                 if (e != REND_SUCCESS) {
-                        pr_error("[PROC] clone: Failed to copy vspace: %d\n", (int)e);
+                        pr_error("[PROC] clone: Failed to copy vspace: %d\n",
+                                 (int)e);
                         return -LINUX_ENOMEM;
                 }
         }
@@ -148,7 +149,8 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
         /* Create child task structure */
         child = new_task_structure(percpu(kallocator), LINUX_PROC_APPEND_BYTES);
         if (!child) {
-                pr_error("[PROC] clone: Failed to create child task structure\n");
+                pr_error(
+                        "[PROC] clone: Failed to create child task structure\n");
                 ret = -LINUX_ENOMEM;
                 goto out_put_vspace;
         }
@@ -163,19 +165,21 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
                 memset(child_pa, 0, sizeof(*child_pa));
                 if (parent_pa) {
                         if (flags & CLONE_VM) {
-                                /* Shared address space: share brk and mmap_hint */
+                                /* Shared address space: share brk and mmap_hint
+                                 */
                                 child_pa->start_brk = parent_pa->start_brk;
                                 child_pa->brk = parent_pa->brk;
                                 child_pa->mmap_hint = parent_pa->mmap_hint;
                         } else {
-                                /* Separate address space: copy brk, reset hint */
+                                /* Separate address space: copy brk, reset hint
+                                 */
                                 child_pa->start_brk = parent_pa->brk;
                                 child_pa->brk = parent_pa->brk;
                                 child_pa->mmap_hint = 0;
                         }
                         child_pa->ppid = parent->pid;
                         child_pa->pgid = parent_pa->pgid ? parent_pa->pgid :
-                                                          parent->pid;
+                                                           parent->pid;
                         if (!(flags & CLONE_VM)) {
                                 memcpy(child_pa->signal_dispositions,
                                        parent_pa->signal_dispositions,
@@ -187,8 +191,9 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
         /* Add child to task manager */
         e = add_task_to_manager(percpu(core_tm), child);
         if (e != REND_SUCCESS) {
-                pr_error("[PROC] clone: Failed to add child task to task manager: %d\n",
-                         (int)e);
+                pr_error(
+                        "[PROC] clone: Failed to add child task to task manager: %d\n",
+                        (int)e);
                 ret = -LINUX_EAGAIN;
                 goto out_free_task;
         }
@@ -196,33 +201,33 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
         /*
          * Create child thread.
          *
-         * Important: We need to pass the user-provided stack pointer to the child.
-         * The stack parameter points to the TOP of the stack (stacks grow downward).
+         * Important: We need to pass the user-provided stack pointer to the
+         * child. The stack parameter points to the TOP of the stack (stacks
+         * grow downward).
          */
         child_thread =
-            copy_thread(parent_thread, child, 0, LINUX_THREAD_APPEND_BYTES);
+                copy_thread(parent_thread, child, 0, LINUX_THREAD_APPEND_BYTES);
         if (!child_thread) {
                 pr_error("[PROC] clone: Failed to create child thread\n");
                 ret = -LINUX_ENOMEM;
                 goto out_del_from_manager;
         }
 
-        if (!(flags & CLONE_VM)) {
-                linux_thread_append_t* parent_ta =
-                        linux_thread_append(parent_thread);
-                linux_thread_append_t* child_ta =
-                        linux_thread_append(child_thread);
+        linux_thread_append_t *parent_ta = linux_thread_append(parent_thread);
+        linux_thread_append_t *child_ta = linux_thread_append(child_thread);
 
-                if (child_ta) {
+        if (child_ta) {
+                child_ta->test_cookie = 0;
+                if (!(flags & CLONE_VM)) {
                         linux_signal_init_thread_append(child_ta);
                         if (parent_ta) {
                                 child_ta->blocked_signals =
                                         parent_ta->blocked_signals;
                         }
                 }
-                if (child_pa) {
-                        sigemptyset(&child_pa->pending_signals);
-                }
+        }
+        if (child_pa && !(flags & CLONE_VM)) {
+                sigemptyset(&child_pa->pending_signals);
         }
 
         /*
@@ -241,23 +246,25 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
 
         e = add_thread_to_manager(percpu(core_tm), child_thread);
         if (e != REND_SUCCESS) {
-                pr_error("[PROC] clone: Failed to add child thread to scheduler: %d\n",
-                         (int)e);
+                pr_error(
+                        "[PROC] clone: Failed to add child thread to scheduler: %d\n",
+                        (int)e);
                 ret = -LINUX_EAGAIN;
                 goto out_free_thread;
         }
 
         e = register_process(child);
         if (e != REND_SUCCESS) {
-                pr_warn("[PROC] clone: Failed to register child PID: %d\n", (int)e);
+                pr_warn("[PROC] clone: Failed to register child PID: %d\n",
+                        (int)e);
         }
 
         if ((flags & CLONE_PARENT_SETTID) && parent_tid != 0 && parent->vs
             && linux_vspace_is_user_table(parent->vs)) {
                 tid_t ctid = child_thread->tid;
 
-                if (linux_mm_store_to_user(parent->vs, parent_tid, &ctid,
-                                           sizeof(ctid))
+                if (linux_mm_store_to_user(
+                            parent->vs, parent_tid, &ctid, sizeof(ctid))
                     != REND_SUCCESS) {
                         ret = -LINUX_EFAULT;
                         goto out_free_thread;
@@ -268,22 +275,21 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
             && linux_vspace_is_user_table(child->vs)) {
                 tid_t ctid = child_thread->tid;
 
-                if (linux_mm_store_to_user(child->vs, child_tid, &ctid,
-                                           sizeof(ctid))
+                if (linux_mm_store_to_user(
+                            child->vs, child_tid, &ctid, sizeof(ctid))
                     != REND_SUCCESS) {
                         ret = -LINUX_EFAULT;
                         goto out_free_thread;
                 }
         }
 
-        {
-                struct trap_frame* child_tf =
-                        (struct trap_frame*)child_thread->kstack_bottom - 1;
+        struct trap_frame *child_tf =
+                (struct trap_frame *)child_thread->kstack_bottom - 1;
 
-                (void)linux_deliver_pending_signals(child_tf);
-        }
+        (void)linux_deliver_pending_signals(child_tf);
 
-        /* TODO: Implement CLONE_FS, CLONE_FILES, CLONE_SIGHAND in Phase 2B/2C */
+        /* TODO: Implement CLONE_FS, CLONE_FILES, CLONE_SIGHAND in Phase 2B/2C
+         */
 
         /*
          * Linux clone(2): parent gets child TID for CLONE_THREAD threads,

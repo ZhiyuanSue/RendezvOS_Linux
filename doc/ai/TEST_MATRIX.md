@@ -88,6 +88,29 @@ If blocked, state blocker explicitly in review output/history.
   - Prevents wasting time debugging test case issues
   - Ensures tests have correct expected behavior
 
+## H) Linux compat proc/signal/wait changes
+
+- Minimum:
+  - **Paired** `make ARCH=x86_64 run` and `make ARCH=aarch64 run`
+  - Record in [`doc/linux_compat/CROSS_ARCH_VERIFICATION_LOG.md`](../linux_compat/CROSS_ARCH_VERIFICATION_LOG.md)
+- Required checks (see log for grep targets):
+  - Harness 52/52 both arches
+  - #44 `PASS: SIG_IGN still works`; no `[SIGNAL] deliver: invalid user handler`
+  - #49 `[TEST 49/52] PASS` **after** `=== Test Summary ===`
+  - #49 multiple children: exit_code 10, 20, 30
+  - Fork/clone diff: child `test_cookie == 0`
+
+## I) Linux compat time syscall changes
+
+- Minimum:
+  - Paired harness run after `gettimeofday` / `nanosleep` / `times` changes
+  - Record in [`doc/linux_compat/CROSS_ARCH_VERIFICATION_LOG.md`](../linux_compat/CROSS_ARCH_VERIFICATION_LOG.md)
+- Required checks:
+  - #16 no `gettimeofday ... not implemented`
+  - #17 no `unimplemented id=96` / Assert Fatal from sleep test
+  - #20 no `times ... not implemented`
+- Plan: [`TIME_SUBSYSTEM_PLAN.md`](../linux_compat/TIME_SUBSYSTEM_PLAN.md)
+
 ### See Also
 - `user_payload/README.md` - Detailed validation guidelines and scripts
 

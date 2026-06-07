@@ -370,6 +370,34 @@ Append one entry for each user-approved commit.
   avoids tree lookup; full rollback atomicity.
 - Checklist update: yes (`AI_CHECKLIST.md` Pattern Log + referenced sections).
 
+## 2026-05-19 | Phase 2 cross-arch gate: signal + wait + fork parity | uncommitted
+
+- Scope: `linux_layer/signal/` (arch split, flush pending, deliver helpers);
+  `linux_layer/proc/sys_fork.c`, `sys_clone.c`, `sys_rt_sigaction.c`;
+  `user_payload/user/src/test/test_sig_dfl.c`, `test_fork_wait.c`;
+  docs: `CROSS_ARCH_VERIFICATION_LOG.md`, `SIGNAL_IMPLEMENTATION_STATUS.md`,
+  `WAIT4_IMPLEMENTATION_STATUS.md`, `SYSCALLS.md`, `DECISIONS.md`.
+- Why: aarch64 lagged x86 on clone SP, rt_sigreturn, SIG_IGN warn, runner early PASS
+  on fork children, and #49 multiple-children exit codes; needed paired verification record.
+- Design decision(s):
+  - Signal save/restore in `linux_layer/signal/arch/`, not inline `#ifdef` in deliver.
+  - `linux_signal_flush_pending()` on SIG_IGN/SIG_DFL (rt_sigaction + queue path).
+  - Fork/clone: `test_cookie = 0` on child thread append.
+  - Tests: no `snprintf` in minimal-linked payloads; fork loop uses literal child indices.
+- Data structure/API impact:
+  - `linux_signal_restore_t` + `linux_signal_restore_arch_t` per arch.
+  - New export: `linux_signal_flush_pending()`.
+  - Invariants: only runner main thread may carry non-zero `test_cookie`.
+- Failure-path strategy:
+  - Invalid user handler `< PAGE_SIZE`: deliver clears pending, no warn (no jump to low VA).
+  - Fork child exit: must not notify runner cookie.
+- Verification:
+  - **Run (maintainer)**: `make ARCH=x86_64 run`, `make ARCH=aarch64 run` → 52/52 both;
+    #44 SIG_IGN PASS; #49 Summary then PASS; reaped 10/20/30 both arches.
+  - Logs: repo-root `x86_64_run.log`, `aarch64_run.log` (2026-05-19).
+- Pattern: fork loop shared-stack `i`; test_cookie runner false completion; aarch64 partial rt_sigreturn frame.
+- Checklist update: recommended (test_cookie + fork loop) — pending maintainer commit batch.
+
 ## 2026-04-21 | syscall实现进展记录 | commit TBD
 
 - Scope: `doc/ai/SYSCALL_IMPLEMENTATION_STATUS.md` (new),

@@ -104,6 +104,27 @@ Format: Context / Decision / Consequences.
 
 ---
 
+## 2026-05 | Signal context: arch files under `linux_layer/signal/arch/`
+
+- Context: `rt_sigreturn` on aarch64 requires restoring the **full** EL0 syscall trap frame (`REGS[]`, `SPSR`, `SP_EL0`), not only PC/SP/x0. Inline `#ifdef` in deliver/restore was hard to maintain; x86 benefits from symmetric full-frame save for robustness.
+- Decision: Add `linux_signal_arch_save_context` / `linux_signal_arch_restore_context` in `linux_layer/signal/arch/signal_context_{x86_64,aarch64}.c`; keep `signal_deliver.c` / `signal_restore.c` arch-neutral. Extend `linux_signal_restore_t` with `linux_signal_restore_arch_t` selected by header.
+- Consequences:
+  - Makefile wildcard `linux_layer/*/*/*.c` builds both arch files; each `.c` guarded by `#if defined(_AARCH64_)` / `_X86_64_`.
+  - No core/ change required for this split.
+  - Future arches add one pair of files + one restore arch header.
+
+---
+
+## 2026-05 | Fork/clone children must not inherit `test_cookie`
+
+- Context: Integrated user test runner waits on `linux_thread_append_t.test_cookie` via `clean_server` → `linux_user_test_notify_exit`. `copy_thread` memcpy’s the whole thread append; fork children inherited the cookie and **prematurely completed** harness test #49 while the parent was still in `wait4`.
+- Decision: In `sys_fork` / `sys_clone`, set `child_ta->test_cookie = 0` after `copy_thread`. Only the ELF spawned by `gen_task_from_elf` keeps the runner cookie.
+- Consequences:
+  - Documented in [`BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md`](linux_compat/BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md) §B and [`CROSS_ARCH_VERIFICATION_LOG.md`](linux_compat/CROSS_ARCH_VERIFICATION_LOG.md) checklist.
+  - Any new `copy_thread` consumer with integrated tests must apply the same rule.
+
+---
+
 ## Add New Decision Template
 
 ```md

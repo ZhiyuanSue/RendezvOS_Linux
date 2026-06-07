@@ -2,7 +2,9 @@
 
 ## 🎯 阶段总览
 
-> **📅 2026-04-25**: Phase 1 已完成！详见 [Phase 1 总结文档](PHASE1_SUMMARY.md)
+> **📅 2026-04-25**: Phase 1 已完成！详见 [Phase 1 总结文档](archive/PHASE1_SUMMARY.md)  
+> **📅 2026-05-19**: Phase 2 **cross-arch gate** — x86_64 + aarch64 52/52; 见 [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md)  
+> **追溯索引**: [`PROGRESS.md`](PROGRESS.md) — 当前缺口与文档链
 
 | 阶段 | 状态 | 目标 | 主要syscall |
 |------|------|------|-------------|
@@ -12,9 +14,10 @@
 | **Phase 2B** | ✅ **完成** | **信号排队机制** | rt_sigaction, rt_sigprocmask, kill |
 | **Phase 2C** | ✅ **完成** | **信号投递机制** | rt_sigreturn, sigaltstack, 信号处理器调用 |
 | **Phase 2D** | ✅ **完成** | **缺页信号处理** | SIGSEGV信号投递, 用户空间错误处理 |
-| **Phase 3** | 📋 计划中 | 程序执行 | execve |
-| **Phase 4** | 📋 计划中 | 文件系统 | open, close, read, write, stat |
-| **Phase 5** | 📋 计划中 | 高级功能 | IPC, socket, 时间等 |
+| **Phase 3** | 🔧 进行中 | 程序执行 | execve（3a 内嵌 ELF 部分完成） |
+| **Phase 3.5** | 📋 下一步 | 时间 | gettimeofday, nanosleep, times, clock_gettime |
+| **Phase 4** | 📋 待做 | 文件系统 | open, close, read, pipe, mount, … |
+| **Phase 5** | 📋 待做 | 高级功能 | socket, rlimit, 完整 IPC |
 
 ## 目标和策略
 
@@ -45,14 +48,15 @@
 - ✅ 用户态多进程程序正常运行
 - ✅ 测试框架支持多核可扩展性
 
-**详细文档**: [Phase 1 总结文档](PHASE1_SUMMARY.md)
+**详细文档**: [Phase 1 总结文档](archive/PHASE1_SUMMARY.md)
 
 ---
 
 ## ✅ Phase 2：线程控制与信号机制（已完成）
 
-**完成时间**: 2026-05-17
-**测试状态**: 双架构编译验证通过，信号处理机制完善
+**完成时间**: 2026-05-17 (features) · **cross-arch gate**: 2026-05-19  
+**测试状态**: x86_64 + aarch64 **52/52 harness PASS**; proc/signal/wait key tests aligned  
+**验证日志**: [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md)
 
 ### Phase 2A：线程控制（已完成）
 
@@ -136,171 +140,73 @@
 - ✅ 错误处理完善：所有用户空间访问都有错误检查
 - ✅ 注释详细清晰：关键逻辑都有解释性注释
 
-**详细审阅报告**: [Cursor技术改进审阅报告](CURSOR_IMPROVEMENTS_REVIEW.md)
+**代码质量**: 见 Phase 2 status 文档与 [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md)。
 
 ---
 
-## 📋 Phase 3：程序执行（计划中）
+## Cross-arch verification log (maintainer)
 
-**目标**：支持pthread库
+After Phase 2 proc/signal/wait work, record **paired** runs here:
 
-| Syscall | 功能 | 优先级 |
-|---------|------|--------|
-| `clone` | 创建线程/进程 | ⭐⭐⭐ 核心 |
-| `set_tid_address` | 设置线程ID | ⭐⭐ pthread需要 |
-| `set_robust_list` | robust futex列表 | ⭐ 后续 |
+| Date | Gate | Result | Log |
+|------|------|--------|-----|
+| 2026-05-19 | Phase 1/2 wait+signal+fork | ✅ x86_64 + aarch64 52/52; #07/#08/#39/#41/#44/#49 stdout parity | [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md) |
 
-**实现要点**：
-- `clone`支持基础flags（CLONE_VM, CLONE_FS, CLONE_FILES等）
-- 共享地址空间 vs 独立地址空间
-- 线程本地存储（TLS）基础
-
-**依赖**：Phase 1（进程管理、内存管理）✅
-
-**测试验证**：
-- 简单clone测试（共享地址空间）
-- pthread_create基础功能
-
-**里程碑**：支持pthread库基础功能
-
-### Phase 2B：信号机制
-
-**目标**：支持基本的信号语义
-
-| Syscall | 功能 | 优先级 |
-|---------|------|--------|
-| `rt_sigaction` | 设置信号处理函数 | ⭐⭐⭐ 核心 |
-| `rt_sigprocmask` | 信号掩码 | ⭐⭐⭐ 核心 |
-| `kill` / `tgkill` | 发送信号 | ⭐⭐⭐ 核心 |
-| `sigaltstack` | 信号栈 | ⭐⭐ 栈溢出保护 |
-| `rt_sigreturn` | 从信号处理返回 | ⭐⭐⭐ 核心 |
-
-**实现要点**：
-- 信号递送机制（基于IPC的异步通知）
-- 信号处理函数调用（构造trap frame）
-- 信号掩码管理
-- 基础信号（SIGKILL, SIGTERM, SIGCHLD等）
-
-**依赖**：Phase 1（进程管理、IPC机制）✅
-
-**测试验证**：
-- kill + 信号处理函数
-- sigprocmask阻塞/解除阻塞
-- SIGCHLD（子进程退出通知）
-
-**里程碑**：支持基本的信号语义
-
-### Phase 2C：文件系统基础（VFS + initramfs）
-
-**目标**：建立文件系统基础，支持基本的文件操作
-
-**架构设计**：
-- **VFS Server**（单线程，全局唯一）
-  - 统一的VFS层
-  - 文件描述符管理
-  - 块设备缓存（统一的页缓存）
-  - 挂载点管理
-- **initramfs驱动**（cpio格式）
-  - 打包在内核镜像中
-  - 启动时解压并挂载到根目录
-  - 用于测试和execve
-- **块设备层**（简化，无真实磁盘）
-  - 内存块设备
-  - 暂不实现真实磁盘驱动
-
-**实现的Syscall**：
-
-| Syscall | 功能 | 优先级 |
-|---------|------|--------|
-| `open` / `openat` | 打开文件 | ⭐⭐⭐ 核心 |
-| `close` | 关闭文件 | ⭐⭐⭐ 核心 |
-| `read` | 读文件 | ⭐⭐⭐ 核心 |
-| `write` | 写文件 | ⭐⭐⭐ 核心 |
-| `lseek` | 文件定位 | ⭐⭐ 重要 |
-| `stat` / `fstat` | 文件信息 | ⭐⭐ 重要 |
-| `getcwd` | 当前目录 | ⭐ 基础 |
-
-**代码组织**：
-```
-servers/fs/
-├── vfs_server.c          # VFS server主循环
-├── vfs.c                  # VFS核心逻辑
-├── vfs_cache.c            # 块设备缓存
-├── file_table.c           # 文件描述符表
-├── mount.c                # 挂载点管理
-└── initramfs/             # initramfs支持
-    ├── initramfs.c        # initramfs驱动
-    ├── cpio.c             # cpio格式解析
-    └── cpio.h
-```
-
-**测试策略**：
-1. **cpio打包工具**：将测试文件打包成cpio格式
-2. **initramfs测试**：从内存文件系统读取文件
-3. **集成测试**：用户程序通过文件系统加载配置
-
-**IPC机制说明**：
-- 使用现有无锁IPC基础设施
-- VFS server作为单线程server运行
-- 支持批处理和Token缓存
-
-**里程碑**：
-- ✅ 能够从initramfs读取文件
-- ✅ 支持基本的文件操作
-- ✅ 为execve奠定基础
+**Rule**: Harness PASS is necessary but not sufficient — check #49 `Test Summary` before `[TEST 49/52] PASS`, and #44 `SIG_IGN` subtest.
 
 ---
 
-## 📋 Phase 3：程序执行（计划中）
+## 🔧 Phase 3：程序执行（进行中）
 
-**目标**：能够运行shell和不同的用户程序
+**状态文档**: [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md)  
+**设计**: [`SYSCALL_USER_RETURN_AND_EXECVE.md`](SYSCALL_USER_RETURN_AND_EXECVE.md)
 
-| 组 | syscall | 依赖 |
-|----|---------|------|
-| 程序加载 | execve | Phase 2（文件系统） |
-| 环境变量 | execve相关 | - |
+| 子阶段 | 内容 | 状态 |
+|--------|------|------|
+| 3a | 单线程、内嵌 ELF、argv | ✅ 部分（5 个镜像名） |
+| 3b | de_thread、TLB、多线程 exec | ❌ |
+| 3c | envp、auxv、完整 post-exec 重置 | ❌ |
+| 3d | FS 读 ELF、shebang、PT_INTERP | ❌（依赖 Phase 4） |
 
-**里程碑**：能够运行shell和复杂的用户程序
-
----
-
-## 📋 Phase 4：高级功能（计划中）
-
-**目标**：实现更多Linux功能
-
-**功能组**：
-- **IPC**：pipe, socket, shm, msgq
-- **时间**：clock相关syscall
-- **资源限制**：getrlimit, setrlimit
-- **用户/组**：getuid, setuid等
-
-**里程碑**：逐步接近完整的Linux兼容性
+**Syscall**: `execve`
 
 ---
 
-## 📋 Phase 5：文件系统（计划中）
+## 📋 Phase 3.5：时间（VFS 之前）
 
-**目标**：实现基本的文件系统访问
+**计划**: [`TIME_SUBSYSTEM_PLAN.md`](TIME_SUBSYSTEM_PLAN.md)
 
-| 组 | syscall | 依赖 |
-|----|---------|------|
-| 文件描述符 | open, close, read, write | - |
-| 文件操作 | lseek, stat, fstat | - |
-| 目录操作 | getdents | - |
+| Syscall | 测例 # | 优先级 |
+|---------|--------|--------|
+| `gettimeofday` | 16 | ⭐⭐⭐ |
+| `nanosleep` / `clock_nanosleep` | 17 | ⭐⭐⭐ |
+| `times` | 20 | ⭐⭐ |
+| `clock_gettime` | — | ⭐⭐ |
+| `uname` | 19 | ⭐ stub |
 
-**里程碑**：支持基本的文件操作
+**依赖**: Phase 1 调度 ✅；细粒度 sleep 可能需要 core P2（见 time 计划 §4）。
 
 ---
 
-## 📋 Phase 6：高级功能（计划中）
+## 📋 Phase 4：文件系统（time + sigaltstack 之后）
 
-**目标**：实现更多Linux功能
+**设计**: [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md)
 
-**功能组**：
-- **IPC**：pipe, socket, shm, msgq
-- **时间**：clock相关syscall
-- **资源限制**：getrlimit, setrlimit
-- **用户/组**：getuid, setuid等
+| Syscall 组 | 示例 | 测例 stdout FAIL |
+|------------|------|------------------|
+| fd / IO | open, openat, read, close, dup, dup2 | #10–#11, #23, #25–#26, #37, #50–#51 |
+| path | mkdir, chdir, unlink, mount | #15, #28, #45, #48 |
+| stat | fstat, getdents | #14, #25 |
+| 文件 mmap | MAP_PRIVATE file | #13, #40（依赖 open） |
 
-**里程碑**：逐步接近完整的Linux兼容性
+**里程碑**: initramfs 可读 → execve 3d → 消除 ~14 个 FS stdout FAIL。
 
+---
+
+## 📋 Phase 5：高级功能
+
+- socket、shm、msgq、futex 完整语义
+- rlimit、uid/gid
+- 更多 arch（riscv64 timer 等）
+
+详细 syscall 清单与当前缺口见 [`PROGRESS.md`](PROGRESS.md)。

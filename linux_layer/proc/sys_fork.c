@@ -126,6 +126,14 @@ i64 sys_fork(void)
 
                 if (child_ta) {
                         linux_signal_init_thread_append(child_ta);
+                        /*
+                         * copy_thread copies append_thread_info verbatim; only
+                         * the runner-spawned main thread may carry test_cookie.
+                         * Fork children must not notify clean_server early or
+                         * user_test_runner will mark PASS while parent still
+                         * runs (e.g. test_fork_wait WNOHANG blocking wait4).
+                         */
+                        child_ta->test_cookie = 0;
                         if (parent_ta) {
                                 child_ta->blocked_signals =
                                         parent_ta->blocked_signals;

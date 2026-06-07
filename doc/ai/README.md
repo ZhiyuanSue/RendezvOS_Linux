@@ -17,6 +17,8 @@ This folder stores persistent AI collaboration artifacts for the whole repositor
 - `INVARIANTS.md`: runtime/design invariants that must stay true.
 - `DECISIONS.md`: short architecture/design decision log (ADR-lite).
 - `TEST_MATRIX.md`: minimum tests by change type.
+- **Linux compat verification log**: [`../linux_compat/CROSS_ARCH_VERIFICATION_LOG.md`](../linux_compat/CROSS_ARCH_VERIFICATION_LOG.md) (paired x86_64/aarch64 runs).
+- **Linux compat progress index**: [`../linux_compat/PROGRESS.md`](../linux_compat/PROGRESS.md) (roadmap → status → gaps).
 - `RED_TEAM_REVIEW.md`: adversarial review checklist for regression hunting.
 - `archive/`: monthly archived history files (including nexus legacy docs).
 

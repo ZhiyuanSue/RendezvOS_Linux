@@ -1,20 +1,21 @@
 # Phase 2B Signal Implementation Status
 
-> Last updated: compat-layer iteration (kernel restore + rt_sigreturn + safe user copy).  
+> Last updated: **2026-05-19** — cross-arch verification gate (see [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md)).  
 > Design reference: [`SIGNAL_DELIVERY_TRAP_PATHS.md`](SIGNAL_DELIVERY_TRAP_PATHS.md), [`IPC_BASED_SIGNAL_DESIGN.md`](IPC_BASED_SIGNAL_DESIGN.md).
 
 ## Summary
 
 | Area | x86_64 | aarch64 | Notes |
 |------|--------|---------|-------|
-| Layer A `linux_queue_signal` | ✅ | ✅ | Thread walk + pending; SIGCHLD on child exit |
-| Layer B syscall return delivery | ✅ | ✅ | Path A: rcx/ELR + SP |
-| `rt_sigaction` / `rt_sigprocmask` | ✅ | ✅ | `linux_mm_*_user` |
-| `sigaltstack` | ✅ | ✅ | map_handler |
-| `rt_sigreturn` | ✅ | ✅ | Kernel `linux_signal_restore_t` |
+| Layer A `linux_queue_signal` | ✅ | ✅ | SIG_IGN flushes pending; thread walk |
+| Layer B syscall return delivery | ✅ | ✅ | Path A + invalid low handler dropped silently |
+| `rt_sigaction` / `rt_sigprocmask` | ✅ | ✅ | `linux_mm_*_user`; flush on SIG_IGN/SIG_DFL |
+| `sigaltstack` | ⚠️ | ⚠️ | #21 fix: field copy + alt region validate (2026-05-19) |
+| `rt_sigreturn` | ✅ | ✅ | **Full trap frame** on both arches via `signal/arch/` |
+| Integrated tests #08, #44 | ✅ | ✅ | delivery + SIG_DFL/SIG_IGN (2026-05-19 log) |
 | User-stack `rt_sigframe` | ❌ | ❌ | glibc needs layout + restorer |
-| Path B (fork first return) | ❌ | ❌ | Needs hook at `kstack_bottom-1` |
-| Page-fault → SIGSEGV queue | ❌ | ❌ | See core/trap + compat fault |
+| Path B (fork first return) | ⚠️ | ⚠️ | `linux_deliver_pending_signals` called on child bootstrap TF in `sys_fork` |
+| Page-fault → SIGSEGV queue | ⚠️ | ⚠️ | `linux_page_fault_irq.c` (partial) |
 | SA_SIGINFO 3-arg handlers | ❌ | ❌ | Flag stored only |
 | Core dump on SIGQUIT/… | ❌ | ❌ | No ELF core yet |
 
@@ -36,13 +37,28 @@
 ### Layer B — `linux_layer/signal/signal_deliver.c`
 
 - Default actions: terminate (`sys_exit(128+sig)`), ignore, stop (stub)
-- User handler: path A register install (x86: `rcx`/`rdi`/`user_rsp_scratch`; aarch64: `ELR`/`SP`/`REGS[0]`/`SP_EL0`)
+- User handler: path A via `arch_syscall_set_user_return` + arg0
 - **SA_RESETHAND**, **SA_NODEFER**, handler **mask** on entry
-- Saves **`linux_signal_restore_t`** in thread append for `rt_sigreturn`
+- Saves context via **`linux_signal_arch_save_context()`** (`signal/arch/signal_context_*.c`)
+- SIG_IGN / invalid `< PAGE_SIZE` handler: clear thread **and** proc pending (no spurious warn)
 
 ### Return from handler — `signal_restore.c` + `sys_rt_sigreturn.c`
 
-- Restores PC, SP, syscall return value (aarch64 x0), blocked mask, alt-stack `SS_ONSTACK`
+- **`linux_signal_arch_restore_context()`**: x86 via `arch_syscall_set_user_return`; aarch64 restores full `REGS[]`, `ELR`, `SPSR`, `SP_EL0`
+- Restores blocked mask, alt-stack `SS_ONSTACK`
+
+### Arch layout (2026-05 refactor)
+
+```
+include/linux_compat/signal/
+  signal_context.h
+  signal_restore_arch.h → signal_restore_arch_{x86_64,aarch64}.h
+linux_layer/signal/
+  signal_deliver.c          # arch-neutral Linux semantics
+  signal_restore.c
+  arch/signal_context_x86_64.c
+  arch/signal_context_aarch64.c
+```
 
 ### Safe user memory
 
@@ -109,14 +125,14 @@ Logged / stub; needs scheduler + job control semantics.
 
 ## Suggested test order
 
-1. `rt_sigaction` + `kill(self)` + handler calls `rt_sigreturn`
+1. `rt_sigaction` + `kill(self)` + handler calls `rt_sigreturn` — **#08, #44**
 2. Blocked signal + `sigprocmask` unblock + delivery on next syscall
-3. `fork` + child exit → parent `SIGCHLD` pending
-4. Repeat on `ARCH=aarch64`
+3. `fork` + child exit → parent `SIGCHLD` pending — **#07, #49**
+4. **Paired** `make ARCH=x86_64 run` and `make ARCH=aarch64 run`; diff per [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md)
 
 ```bash
-make ARCH=x86_64 config && make ARCH=x86_64 user && make ARCH=x86_64 build
-make ARCH=x86_64 run
+make ARCH=x86_64 config && make ARCH=x86_64 user && make ARCH=x86_64 build && make ARCH=x86_64 run | tee x86_64_run.log
+make ARCH=aarch64 config && make ARCH=aarch64 user && make ARCH=aarch64 build && make ARCH=aarch64 run | tee aarch64_run.log
 ```
 
 ---
@@ -125,10 +141,11 @@ make ARCH=x86_64 run
 
 | File | Role |
 |------|------|
-| `linux_layer/signal/signal_queue.c` | Layer A |
-| `linux_layer/signal/signal_deliver.c` | Layer B |
-| `linux_layer/signal/signal_restore.c` | rt_sigreturn restore |
-| `linux_layer/signal/signal_stack.c` | User SP restore (x86 scratch / aarch64 SP_EL0) |
+| `linux_layer/signal/signal_queue.c` | Layer A; `linux_signal_flush_pending()` |
+| `linux_layer/signal/signal_deliver.c` | Layer B (arch-neutral) |
+| `linux_layer/signal/signal_restore.c` | rt_sigreturn orchestration |
+| `linux_layer/signal/arch/signal_context_*.c` | Arch save/restore |
 | `linux_layer/signal/signal_init.c` | Disposition/mask init |
+| `linux_layer/proc/sys_rt_sigaction.c` | Syscall; flush on SIG_IGN/SIG_DFL |
 | `linux_layer/proc/sys_rt_sigreturn.c` | Syscall wrapper |
-| `include/linux_compat/proc_compat.h` | `linux_signal_restore_t` |
+| `include/linux_compat/proc_compat.h` | `linux_signal_restore_t` + arch sub-struct |

@@ -12,6 +12,7 @@
 
 | 文档 | 内容 |
 |------|------|
+| [`PROGRESS.md`](PROGRESS.md) | **进展索引**：阶段状态、缺口、文档追溯链 |
 | [`GOALS_AND_CORE_CONTRACT.md`](GOALS_AND_CORE_CONTRACT.md) | **总目标、compat 政策、对 core 契约、维护者审阅包** |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | 边界、数据流、IPC vs 直接调 core |
 | [`DATA_MODEL.md`](DATA_MODEL.md) | 进程/线程、`pid`/`tid`、登记簿 |
@@ -21,6 +22,9 @@
 | [`../ai/IPC_MESSAGE.md`](../ai/IPC_MESSAGE.md) | kmsg、TLV、reply port `t` |
 | [`SYSCALL_USER_RETURN_AND_EXECVE.md`](SYSCALL_USER_RETURN_AND_EXECVE.md) | Path A 返回、exec 接线 |
 | [`SIGNAL_IMPLEMENTATION_STATUS.md`](SIGNAL_IMPLEMENTATION_STATUS.md) | 信号实现状态（持续更新） |
+| [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md) | execve 实现状态（Phase 3） |
+| [`TIME_SUBSYSTEM_PLAN.md`](TIME_SUBSYSTEM_PLAN.md) | 时间子系统计划（Phase 3.5） |
+| [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md) | 双架构配对验证日志 |
 | [`SIGNAL_DELIVERY_TRAP_PATHS.md`](SIGNAL_DELIVERY_TRAP_PATHS.md) | trap 路径投递 |
 | [`IPC_BASED_SIGNAL_DESIGN.md`](IPC_BASED_SIGNAL_DESIGN.md) | IPC 辅助 vs pending（勿用信号服务器替代 trap） |
 | [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md) | vfs_server 协议 |

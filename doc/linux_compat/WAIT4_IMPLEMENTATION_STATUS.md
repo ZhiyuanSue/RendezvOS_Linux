@@ -2,9 +2,10 @@
 
 ## ✅ 完整实现状态
 
-**实现时间**: 2026-04-25
-**架构**: 无需core/修改，纯linux_layer扩展
-**测试状态**: 所有测试通过 (10/10)
+**实现时间**: 2026-04-25  
+**cross-arch gate**: 2026-05-19 (x86_64 + aarch64 52/52 harness; #07/#38/#41/#49)  
+**架构**: 无需 core/ 修改，纯 linux_layer 扩展  
+**测试状态**: integrated harness PASS both arches — see [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md)
 
 ## 核心实现
 
@@ -104,17 +105,22 @@ if (pa->exit_state == 2) {
 
 ## 测试结果
 
-**测试环境**: aarch64
-**测试结果**: 10/10 全部通过
+**Integrated harness (2026-05-19)**: x86_64 and aarch64 both **52/52 PASS**, Failed 0/52.
+
+| Test # | Focus | x86_64 | aarch64 |
+|--------|-------|--------|---------|
+| 07 | basic wait | PASS | PASS |
+| 38 | fork + wait4 + WNOHANG | PASS | PASS |
+| 41 | waitpid | PASS | PASS |
+| 49 | fork/wait4 (basic + WNOHANG + 3 children) | PASS | PASS |
+
+**#49 multiple children** (both arches): reaped exit_code **10 / 20 / 30**; `[TEST 49/52] PASS` after `Test Summary`.
+
+Full paired log checklist: [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md).
+
+**Earlier unit-style run (2026-04-25, aarch64 only)**: 10/10 PASS (standalone wait suite).
+
 ```
-[TEST 01/10] PASS - 基础进程退出
-[TEST 02/10] PASS - 进程退出码
-[TEST 03/10] PASS - 异常退出码
-[TEST 04/10] PASS - 进程等待
-[TEST 05/10] PASS - 多进程
-[TEST 06/10] PASS - brk系统调用
-[TEST 07/10] PASS - mmap基础
-[TEST 08/10] PASS - munmap
 [TEST 09/10] PASS - fork + wait4完整流程 ✅
 [TEST 10/10] PASS - WNOHANG选项 ✅
 ```

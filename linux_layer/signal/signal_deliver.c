@@ -6,6 +6,7 @@
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/signal/signal_types.h>
 #include <linux_compat/signal/signal_context.h>
+#include <linux_compat/signal/signal_altstack.h>
 #include <rendezvos/error.h>
 #include <rendezvos/mm/vmm.h>
 #include <rendezvos/task/tcb.h>
@@ -230,12 +231,23 @@ bool linux_deliver_pending_signals(struct trap_frame *tf)
     arch_syscall_get_user_return(tf, current_thread ? &current_thread->ctx : NULL,
                                  &user_pc, &user_sp, &syscall_ret);
 
-    if ((disp->sa_flags & SA_ONSTACK) && thread_append->alt_stack.ss_sp != NULL) {
+    if ((disp->sa_flags & SA_ONSTACK) && thread_append->alt_stack.ss_sp != NULL
+        && !(thread_append->alt_stack.ss_flags & SS_DISABLE)
+        && thread_append->alt_stack.ss_size >= MINSIGSTKSZ) {
         stack_t *alt_stack = &thread_append->alt_stack;
+        vaddr alt_base = (vaddr)(uintptr_t)alt_stack->ss_sp;
+
+        if (!linux_signal_altstack_region_mapped(
+                    current_process->vs, alt_base, alt_stack->ss_size)) {
+                signal_clear_pending(thread_append, proc_append, sig);
+                sys_exit(128 + sig);
+                __builtin_unreachable();
+        }
 
         if (!(alt_stack->ss_flags & SS_ONSTACK)) {
             thread_append->saved_main_sp = user_sp;
-            user_sp = (vaddr)alt_stack->ss_sp + alt_stack->ss_size;
+            user_sp = ((vaddr)(uintptr_t)alt_stack->ss_sp + alt_stack->ss_size)
+                      & ~((vaddr)0xF);
             alt_stack->ss_flags |= SS_ONSTACK;
         }
     }
