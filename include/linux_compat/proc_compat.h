@@ -59,6 +59,11 @@ typedef struct linux_thread_append {
         stack_t alt_stack;         /* Alternate signal stack (embedded structure) */
         vaddr saved_main_sp;       /* Saved main stack pointer when using alt stack */
         linux_signal_restore_t signal_restore;
+        /*
+         * Single-slot handler depth: 0 = none, 1 = in handler awaiting
+         * rt_sigreturn. Must match signal_restore.active (0/1 only).
+         */
+        u8 signal_inflight;
 } linux_thread_append_t;
 
 #define LINUX_PROC_APPEND_BYTES   ((size_t)sizeof(linux_proc_append_t))

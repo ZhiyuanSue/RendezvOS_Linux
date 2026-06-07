@@ -18,7 +18,7 @@ bool signal_restore_user_context(struct trap_frame* tf)
         }
 
         rs = &ta->signal_restore;
-        if (!rs->active) {
+        if (!rs->active || ta->signal_inflight != 1) {
                 return false;
         }
 
@@ -35,5 +35,6 @@ bool signal_restore_user_context(struct trap_frame* tf)
         linux_signal_arch_restore_context(tf, &th->ctx, rs, restore_sp);
 
         memset(rs, 0, sizeof(*rs));
+        ta->signal_inflight = 0;
         return true;
 }

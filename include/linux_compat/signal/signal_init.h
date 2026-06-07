@@ -5,5 +5,6 @@
 
 void linux_signal_init_proc_append(linux_proc_append_t* pa);
 void linux_signal_init_thread_append(linux_thread_append_t* ta);
+void linux_signal_reset_thread_handler_state(linux_thread_append_t* ta);
 
 #endif /* _LINUX_COMPAT_SIGNAL_INIT_H_ */

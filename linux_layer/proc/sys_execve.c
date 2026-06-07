@@ -3,6 +3,7 @@
 #include <linux_compat/errno.h>
 #include <linux_compat/fault.h>
 #include <linux_compat/linux_mm_radix.h>
+#include <linux_compat/signal/signal_init.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/signal/signal_types.h>
 #include <modules/elf/elf.h>
@@ -399,6 +400,8 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
         }
 
         linux_exec_reset_proc_state(current);
+        linux_signal_reset_thread_handler_state(
+                linux_thread_append(current_thread));
 
         arch_syscall_set_user_return(syscall_ctx,
                                      &current_thread->ctx,

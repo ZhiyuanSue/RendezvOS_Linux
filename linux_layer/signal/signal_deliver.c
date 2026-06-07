@@ -2,12 +2,10 @@
 #include <common/types.h>
 #include <common/string.h>
 #include <linux_compat/errno.h>
-#include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/signal/signal_types.h>
 #include <linux_compat/signal/signal_context.h>
 #include <linux_compat/signal/signal_altstack.h>
-#include <rendezvos/error.h>
 #include <rendezvos/mm/vmm.h>
 #include <rendezvos/task/tcb.h>
 #include <rendezvos/trap/trap.h>
@@ -93,15 +91,21 @@ static inline void signal_clear_pending(linux_thread_append_t* thread_append,
         }
 }
 
-static void signal_save_handler_context_helper(Thread_Base* th,
+static bool signal_save_handler_context_helper(Thread_Base* th,
                                                linux_thread_append_t* thread_append,
                                                struct trap_frame* tf)
 {
         linux_signal_restore_t* rs = &thread_append->signal_restore;
 
+        if (thread_append->signal_inflight != 0 || rs->active) {
+                return false;
+        }
+
         rs->active = 1;
+        thread_append->signal_inflight = 1;
         rs->saved_blocked = thread_append->blocked_signals;
         linux_signal_arch_save_context(tf, th ? &th->ctx : NULL, rs);
+        return true;
 }
 
 static vaddr signal_build_frame_helper(vaddr base_sp, int sig, void *handler)
@@ -113,27 +117,6 @@ static vaddr signal_build_frame_helper(vaddr base_sp, int sig, void *handler)
     user_sp = user_sp & ~0xF;
 
     return user_sp;
-}
-
-/*
- * Push the saved user return PC so a handler that ends with "ret" can fall
- * back to the pre-signal site. rt_sigreturn remains the preferred path.
- */
-static vaddr signal_push_user_return_link(VSpace* vs, vaddr user_sp, vaddr return_pc)
-{
-        vaddr sp;
-        u64 link;
-
-        if (!vs || !linux_vspace_is_user_table(vs) || return_pc == 0) {
-                return user_sp;
-        }
-
-        sp = (user_sp - 8) & ~0xF;
-        link = (u64)return_pc;
-        if (linux_mm_store_to_user(vs, sp, &link, sizeof(link)) != REND_SUCCESS) {
-                return user_sp;
-        }
-        return sp;
 }
 
 bool linux_deliver_pending_signals(struct trap_frame *tf)
@@ -226,10 +209,18 @@ bool linux_deliver_pending_signals(struct trap_frame *tf)
         return false;
     }
 
-    vaddr user_pc, user_sp, syscall_ret;
+    /*
+     * Single kernel restore slot: defer nested delivery until rt_sigreturn.
+     * Also prevents overwriting saved context (SROP / forged-return hardening).
+     */
+    if (thread_append->signal_inflight != 0) {
+        return false;
+    }
+
+    vaddr user_sp, syscall_ret, user_pc_discarded;
 
     arch_syscall_get_user_return(tf, current_thread ? &current_thread->ctx : NULL,
-                                 &user_pc, &user_sp, &syscall_ret);
+                                 &user_pc_discarded, &user_sp, &syscall_ret);
 
     if ((disp->sa_flags & SA_ONSTACK) && thread_append->alt_stack.ss_sp != NULL
         && !(thread_append->alt_stack.ss_flags & SS_DISABLE)
@@ -252,7 +243,9 @@ bool linux_deliver_pending_signals(struct trap_frame *tf)
         }
     }
 
-    signal_save_handler_context_helper(current_thread, thread_append, tf);
+    if (!signal_save_handler_context_helper(current_thread, thread_append, tf)) {
+        return false;
+    }
     thread_append->signal_restore.sig = sig;
 
     if (disp->sa_flags & SA_RESETHAND) {
@@ -261,7 +254,6 @@ bool linux_deliver_pending_signals(struct trap_frame *tf)
     signal_apply_handler_mask_helper(thread_append, disp, sig);
 
     user_sp = signal_build_frame_helper(user_sp, sig, disp->sa_handler);
-    user_sp = signal_push_user_return_link(current_process->vs, user_sp, user_pc);
 
     arch_syscall_set_user_return(tf, current_thread ? &current_thread->ctx : NULL,
                                  (vaddr)(uintptr_t)disp->sa_handler, user_sp,
