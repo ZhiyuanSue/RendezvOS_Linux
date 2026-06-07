@@ -4,6 +4,7 @@
 #include <common/types.h>
 #include <rendezvos/task/tcb.h>
 #include <linux_compat/signal/signal_types.h>
+#include <linux_compat/signal/signal_restore_arch.h>
 
 /*
  * Linux compat append model:
@@ -44,6 +45,7 @@ typedef struct linux_signal_restore {
         u64 saved_syscall_ret;
         u64 saved_user_pc;
         u64 saved_user_sp;
+        linux_signal_restore_arch_t arch;
 } linux_signal_restore_t;
 
 typedef struct linux_thread_append {

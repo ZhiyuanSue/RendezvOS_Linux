@@ -67,6 +67,12 @@ Tcb_Base* find_zombie_child(pid_t ppid);
 Tcb_Base* find_zombie_child_in_pgid(pid_t ppid, pid_t pgid);
 
 /*
+ * True if @p ppid has a non-reaped child (running or zombie).
+ * When @p filter_by_pgid, only children in @p pgid match.
+ */
+bool proc_parent_has_unreaped_child(pid_t ppid, pid_t pgid, bool filter_by_pgid);
+
+/*
  * Unregister a process from the registry.
  *
  * @param task: Task to unregister

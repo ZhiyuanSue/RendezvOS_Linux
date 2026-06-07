@@ -99,8 +99,12 @@ void sys_exit(i64 exit_code)
                                 Message_Port_t* wait_port =
                                         proc_get_or_create_wait_port(pa->ppid);
                                 if (wait_port) {
-                                        /* Send exit message to parent using kmsg
-                                         * Format: "qi" = i64(pid) + i32(exit_code) */
+                                        /*
+                                         * Wakeup hook for parent wait4: parent
+                                         * blocks on recv_msg(wait_port) then
+                                         * reaps via exit_state (see sys_wait.c).
+                                         * Payload is not the reap source of truth.
+                                         */
                                         Msg_Data_t* exit_md =
                                                 kmsg_create(KMSG_MOD_LINUX_COMPAT,
                                                             KMSG_LINUX_EXIT_NOTIFY,

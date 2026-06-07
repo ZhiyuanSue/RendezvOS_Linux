@@ -42,6 +42,12 @@ i64 sys_getppid(void)
         return (i64)pa->ppid;
 }
 
+i64 sys_sched_yield(void)
+{
+        schedule(percpu(core_tm));
+        return 0;
+}
+
 i64 sys_waitpid(i32 pid, i64* wstatus, i32 options)
 {
         /*

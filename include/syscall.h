@@ -21,6 +21,8 @@ i64 sys_mremap(u64 old_address, u64 old_size, u64 new_size, u64 flags,
                u64 new_address);
 
 i64 sys_wait4(i32 pid, u64 user_wstatus, i32 options, u64 user_rusage);
+i64 sys_waitid(i32 idtype, u32 id, u64 infop, i32 options);
+i64 sys_sched_yield(void);
 i64 sys_waitpid(i32 pid, i64* wstatus, i32 options);
 
 i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls);

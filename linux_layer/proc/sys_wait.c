@@ -4,27 +4,32 @@
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/proc_registry.h>
 #include <modules/log/log.h>
+#include <rendezvos/ipc/ipc.h>
+#include <rendezvos/ipc/port.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/tcb.h>
 #include <syscall.h>
-#include <rendezvos/ipc/ipc.h>
-#include <rendezvos/ipc/port.h>
-#include <rendezvos/ipc/kmsg.h>
-#include <rendezvos/ipc/ipc_serial.h>
 
-/* External reference to global port table */
 extern struct Port_Table* global_port_table;
 
-/* Linux wait4 options */
-#define LINUX_WNOHANG    0x00000001 /* Don't block if no child exited */
-#define LINUX_WUNTRACED  0x00000002 /* Report stopped children */
-#define LINUX_WCONTINUED 0x00000008 /* Report continued children */
+#define LINUX_WNOHANG    0x00000001
+#define LINUX_WUNTRACED  0x00000002
+#define LINUX_WCONTINUED 0x00000008
 
-/* Linux compat IPC module and opcodes */
-#define KMSG_MOD_LINUX_COMPAT  2u
-#define KMSG_LINUX_EXIT_NOTIFY 1u
+/*
+ * wait4 / waitid (linux_layer)
+ *
+ * Source of truth for reap: linux_proc_append_t.exit_state / exit_code
+ * (set in sys_exit before the parent is woken).
+ *
+ * IPC (per-process wait_port) is used only to block the parent until a child
+ * calls sys_exit -> send_msg(wait_port). After recv_msg() returns, always
+ * reap via proc_registry zombie scan — do not treat the kmsg payload as the
+ * authoritative exit record (see core/docs/ipc.md recv + drain pattern).
+ */
 
-static error_t proc_put_wstatus_helper(Tcb_Base* task, u64 user_wstatus, i32 encoded)
+static error_t proc_put_wstatus_helper(Tcb_Base* task, u64 user_wstatus,
+                                       i32 encoded)
 {
         if (!user_wstatus) {
                 return REND_SUCCESS;
@@ -32,35 +37,165 @@ static error_t proc_put_wstatus_helper(Tcb_Base* task, u64 user_wstatus, i32 enc
         if (!task || !task->vs) {
                 return -LINUX_EFAULT;
         }
-        if (linux_mm_store_to_user(
-                    task->vs, user_wstatus, &encoded, sizeof(i32))
+        if (linux_mm_store_to_user(task->vs, user_wstatus, &encoded,
+                                   sizeof(i32))
             != REND_SUCCESS) {
                 return -LINUX_EFAULT;
         }
         return REND_SUCCESS;
 }
 
+static i32 wait4_encode_status(i32 exit_code)
+{
+        if (exit_code >= 0 && exit_code <= 255) {
+                return (exit_code << 8) | 0x00;
+        }
+        return (255 << 8) | 0x00;
+}
+
+static i64 wait4_reap_child(Tcb_Base* parent, u64 user_wstatus,
+                            Tcb_Base* child, linux_proc_append_t* child_pa)
+{
+        i32 encoded_status = wait4_encode_status(child_pa->exit_code);
+
+        child_pa->exit_state = 2;
+
+        if (proc_put_wstatus_helper(parent, user_wstatus, encoded_status)
+            != REND_SUCCESS) {
+                return -LINUX_EFAULT;
+        }
+        return (i64)child->pid;
+}
+
+static Tcb_Base* wait4_find_zombie(i32 pid, Tcb_Base* parent,
+                                   linux_proc_append_t* parent_pa)
+{
+        if (pid > 0) {
+                Tcb_Base* child = find_task_by_pid(pid);
+                linux_proc_append_t* child_pa;
+
+                if (!child) {
+                        return NULL;
+                }
+                child_pa = linux_proc_append(child);
+                if (!child_pa || child_pa->ppid != parent->pid
+                    || child_pa->exit_state != 1) {
+                        return NULL;
+                }
+                return child;
+        }
+        if (pid == -1) {
+                return find_zombie_child(parent->pid);
+        }
+        if (pid == 0) {
+                if (!parent_pa) {
+                        return NULL;
+                }
+                return find_zombie_child_in_pgid(parent->pid, parent_pa->pgid);
+        }
+        return find_zombie_child_in_pgid(parent->pid, -pid);
+}
+
+static bool wait4_has_live_child(i32 pid, Tcb_Base* parent,
+                                 linux_proc_append_t* parent_pa)
+{
+        if (pid > 0) {
+                Tcb_Base* child = find_task_by_pid(pid);
+                linux_proc_append_t* child_pa;
+
+                if (!child) {
+                        return false;
+                }
+                child_pa = linux_proc_append(child);
+                return child_pa && child_pa->ppid == parent->pid
+                       && child_pa->exit_state != 2;
+        }
+        if (pid == -1) {
+                return proc_parent_has_unreaped_child(parent->pid, 0, false);
+        }
+        if (pid == 0) {
+                if (!parent_pa) {
+                        return false;
+                }
+                return proc_parent_has_unreaped_child(parent->pid,
+                                                      parent_pa->pgid, true);
+        }
+        return proc_parent_has_unreaped_child(parent->pid, -pid, true);
+}
+
+static void wait4_drain_recv_queue(void)
+{
+        Message_t* msg;
+
+        while ((msg = dequeue_recv_msg()) != NULL) {
+                ref_put(&msg->ms_queue_node.refcount, free_message_ref);
+        }
+}
+
+static i64 wait4_reap_zombie_or(Tcb_Base* parent, linux_proc_append_t* parent_pa,
+                                i32 pid, u64 user_wstatus, i64 on_none)
+{
+        Tcb_Base* zombie = wait4_find_zombie(pid, parent, parent_pa);
+        linux_proc_append_t* zombie_pa;
+
+        if (!zombie) {
+                return on_none;
+        }
+        zombie_pa = linux_proc_append(zombie);
+        if (!zombie_pa) {
+                return -LINUX_ESRCH;
+        }
+        return wait4_reap_child(parent, user_wstatus, zombie, zombie_pa);
+}
+
+static i64 wait4_block_on_port(Tcb_Base* parent, linux_proc_append_t* parent_pa,
+                               i32 pid, u64 user_wstatus)
+{
+        Message_Port_t* wait_port;
+        i64 reap_ret;
+
+        wait_port = proc_get_or_create_wait_port(parent->pid);
+        if (!wait_port) {
+                pr_error("[PROC] wait4: Failed to get wait port\n");
+                return -LINUX_EAGAIN;
+        }
+
+        for (;;) {
+                reap_ret = wait4_reap_zombie_or(parent, parent_pa, pid,
+                                                user_wstatus, 0);
+                if (reap_ret != 0) {
+                        ref_put(&wait_port->refcount, free_message_port_ref);
+                        return reap_ret;
+                }
+
+                error_t recv_e = recv_msg(wait_port);
+                if (recv_e != REND_SUCCESS) {
+                        reap_ret = wait4_reap_zombie_or(parent, parent_pa, pid,
+                                                        user_wstatus, 0);
+                        ref_put(&wait_port->refcount, free_message_port_ref);
+                        if (reap_ret != 0) {
+                                return reap_ret;
+                        }
+                        pr_error("[PROC] wait4: recv_msg on wait_port failed e=%d\n",
+                                 (int)recv_e);
+                        return -LINUX_EINTR;
+                }
+
+                wait4_drain_recv_queue();
+        }
+}
+
 /*
- * Wait for a child process to exit using IPC blocking.
- *
- * This implementation uses proc_registry for O(1) PID lookup and IPC for
- * synchronization instead of polling.
- *
- * Supported:
- * - pid > 0: wait for specific child
- * - pid == -1: wait for any child
- * - pid == 0: wait for children in same process group
- * - pid < -1: wait for children in specific process group
- * - WNOHANG: non-blocking mode
- *
- * Not yet supported:
- * - WUNTRACED, WCONTINUED
- * - rusage parameter
+ * Supported: pid > 0 / -1 / 0 / < -1, WNOHANG.
+ * Not yet: WUNTRACED, WCONTINUED, rusage, waitid siginfo_t fill-in.
  */
 i64 sys_wait4(i32 pid, u64 user_wstatus, i32 options, u64 user_rusage)
 {
         Tcb_Base* parent = get_cpu_current_task();
-        linux_proc_append_t* parent_pa = NULL;
+        linux_proc_append_t* parent_pa;
+        i64 reap_ret;
+
+        (void)user_rusage;
 
         if (!parent) {
                 pr_error("[PROC] wait4: No current task\n");
@@ -73,228 +208,46 @@ i64 sys_wait4(i32 pid, u64 user_wstatus, i32 options, u64 user_rusage)
                 return -LINUX_ESRCH;
         }
 
-        (void)user_rusage;
-
-        Tcb_Base* child = NULL;
-        linux_proc_append_t* child_pa = NULL;
-        pid_t child_pid = INVALID_ID;
-
-        /*
-         * Handle different PID options:
-         * - pid > 0:   wait for specific child PID
-         * - pid == -1: wait for any child
-         * - pid == 0:  wait for children in same process group
-         * - pid < -1:  wait for children in process group |pid|
-         */
-
-        if (pid > 0) {
-                /* Wait for specific child PID */
-                child = find_task_by_pid(pid);
-                if (!child) {
-                        return -LINUX_ECHILD;
-                }
-
-                child_pa = linux_proc_append(child);
-                if (!child_pa) {
-                        pr_error("[PROC] wait4: Child has no proc_append\n");
-                        return -LINUX_ESRCH;
-                }
-
-                /* Check if this is actually our child */
-                if (child_pa->ppid != parent->pid) {
-                        return -LINUX_ECHILD;
-                }
-
-                child_pid = child->pid;
-        } else if (pid == -1) {
-                /* Wait for any child */
-                child = find_zombie_child(parent->pid);
-                if (!child) {
-                        return -LINUX_ECHILD;
-                }
-
-                child_pa = linux_proc_append(child);
-                if (!child_pa) {
-                        pr_error("[PROC] wait4: Child has no proc_append\n");
-                        return -LINUX_ESRCH;
-                }
-
-                child_pid = child->pid;
-        } else if (pid == 0) {
-                /* Wait for children in same process group */
-                if (!parent_pa) {
-                        pr_error("[PROC] wait4: Parent has no proc_append\n");
-                        return -LINUX_ESRCH;
-                }
-
-                child = find_zombie_child_in_pgid(parent->pid, parent_pa->pgid);
-                if (!child) {
-                        return -LINUX_ECHILD;
-                }
-
-                child_pa = linux_proc_append(child);
-                if (!child_pa) {
-                        pr_error("[PROC] wait4: Child has no proc_append\n");
-                        return -LINUX_ESRCH;
-                }
-
-                child_pid = child->pid;
-        } else { /* pid < -1 */
-                /* Wait for children in specific process group */
-                pid_t pgid = -pid;
-                child = find_zombie_child_in_pgid(parent->pid, pgid);
-                if (!child) {
-                        return -LINUX_ECHILD;
-                }
-
-                child_pa = linux_proc_append(child);
-                if (!child_pa) {
-                        pr_error("[PROC] wait4: Child has no proc_append\n");
-                        return -LINUX_ESRCH;
-                }
-
-                child_pid = child->pid;
+        reap_ret = wait4_reap_zombie_or(parent, parent_pa, pid, user_wstatus,
+                                        0);
+        if (reap_ret != 0) {
+                return reap_ret;
         }
 
-        /* Check if child already exited (zombie) */
-        if (child_pa->exit_state == 1) {
-                i32 exit_code = child_pa->exit_code;
-
-                /* Mark child as reaped */
-                child_pa->exit_state = 2; /* 2 = reaped */
-
-                /*
-                 * Encode exit status in Linux format.
-                 * For normal exit: status = (exit_code << 8) | 0x00
-                 * This matches WEXITSTATUS(status) = ((status & 0xff00) >> 8)
-                 */
-                i32 encoded_status = 0;
-                if (exit_code >= 0 && exit_code <= 255) {
-                        encoded_status = (exit_code << 8) | 0x00;
-                } else {
-                        encoded_status = (255 << 8) | 0x00;
-                }
-
-                if (proc_put_wstatus_helper(parent, user_wstatus, encoded_status)
-                    != REND_SUCCESS) {
-                        return -LINUX_EFAULT;
-                }
-
-                /*
-                 * Note: We don't need to notify clean_server here.
-                 * The child process already notified clean_server when it exited.
-                 * clean_server will check exit_state and decide whether to delete:
-                 * - exit_state==1 (zombie) with parent: keep for wait4
-                 * - exit_state==1 (zombie) orphan: delete immediately
-                 * - exit_state==2 (reaped): delete immediately
-                 */
-                return (i64)child_pid;
-        }
-
-        /* Handle WNOHANG: non-blocking check */
         if (options & LINUX_WNOHANG) {
                 return 0;
         }
 
-        /* For pid > 0, use IPC blocking wait */
-        if (pid > 0) {
-                /* Create wait port and block for exit message */
-                char port_name[PROC_WAIT_PORT_NAME_MAX];
-                Message_Port_t* wait_port;
-
-                proc_format_wait_port_name(port_name, sizeof(port_name),
-                                           parent->pid);
-                wait_port = proc_get_or_create_wait_port(parent->pid);
-                if (!wait_port) {
-                        pr_error("[PROC] wait4: Failed to get wait port\n");
-                        return -LINUX_EAGAIN;
-                }
-
-                /*
-                 * thread_lookup_port / port_table_lookup success holds one ref
-                 * (see doc/ai/INVARIANTS.md); create path returns create ref.
-                 */
-                error_t recv_e = recv_msg(wait_port);
-                if (recv_e != REND_SUCCESS) {
-                        pr_error("[PROC] wait4: Failed to receive message (e=%d)\n",
-                                 (int)recv_e);
-                        ref_put(&wait_port->refcount, free_message_port_ref);
-                        return -LINUX_EINTR;
-                }
-
-                Message_t* msg = dequeue_recv_msg();
-                if (!msg) {
-                        pr_error("[PROC] wait4: Failed to dequeue message\n");
-                        ref_put(&wait_port->refcount, free_message_port_ref);
-                        return -LINUX_EINTR;
-                }
-
-                /* Extract exit information from message data */
-                const kmsg_t* kmsg = kmsg_from_msg(msg);
-                if (!kmsg || kmsg->hdr.magic != KMSG_MAGIC) {
-                        pr_error("[PROC] wait4: Invalid kmsg magic\n");
-                        ref_put(&msg->ms_queue_node.refcount, free_message_ref);
-                        ref_put(&wait_port->refcount, free_message_port_ref);
-                        return -LINUX_ECHILD;
-                }
-
-                /* Verify module and opcode */
-                if (kmsg->hdr.module != KMSG_MOD_LINUX_COMPAT
-                    || kmsg->hdr.opcode != KMSG_LINUX_EXIT_NOTIFY) {
-                        pr_error(
-                                "[PROC] wait4: Invalid kmsg module/opcode (mod=%u, op=%u)\n",
-                                kmsg->hdr.module,
-                                kmsg->hdr.opcode);
-                        ref_put(&msg->ms_queue_node.refcount, free_message_ref);
-                        ref_put(&wait_port->refcount, free_message_port_ref);
-                        return -LINUX_ECHILD;
-                }
-
-                /* Decode the payload: format "qi" = i64(pid) + i32(exit_code)
-                 */
-                i64 child_pid_i64;
-                i32 exit_code;
-                error_t dec_e = ipc_serial_decode(kmsg->payload,
-                                                  kmsg->hdr.payload_len,
-                                                  "qi",
-                                                  &child_pid_i64,
-                                                  &exit_code);
-                if (dec_e != REND_SUCCESS) {
-                        pr_error("[PROC] wait4: Failed to decode payload (e=%d)\n",
-                                 (int)dec_e);
-                        ref_put(&msg->ms_queue_node.refcount, free_message_ref);
-                        ref_put(&wait_port->refcount, free_message_port_ref);
-                        return -LINUX_ECHILD;
-                }
-
-                ref_put(&msg->ms_queue_node.refcount, free_message_ref);
-
-                /*
-                 * Encode exit status in Linux format.
-                 * For normal exit: status = (exit_code << 8) | 0x00
-                 */
-                i32 encoded_status = 0;
-                if (exit_code >= 0 && exit_code <= 255) {
-                        encoded_status = (exit_code << 8) | 0x00;
-                } else {
-                        /* Exit code out of range, use 0xFF */
-                        encoded_status = (255 << 8) | 0x00;
-                }
-
-                if (proc_put_wstatus_helper(parent, user_wstatus, encoded_status)
-                    != REND_SUCCESS) {
-                        ref_put(&wait_port->refcount, free_message_port_ref);
-                        return -LINUX_EFAULT;
-                }
-
-                ref_put(&wait_port->refcount, free_message_port_ref);
-
-                return (i64)child_pid_i64;
-        } else {
-                /* For pid == -1, 0, or < -1, we should have found a zombie
-                 * above */
-                pr_error("[PROC] wait4: Unexpected: non-zombie child for pid=%d\n",
-                         pid);
+        if (!wait4_has_live_child(pid, parent, parent_pa)) {
                 return -LINUX_ECHILD;
         }
+
+        return wait4_block_on_port(parent, parent_pa, pid, user_wstatus);
+}
+
+#define LINUX_WAITID_P_ALL  0
+#define LINUX_WAITID_P_PID  1
+#define LINUX_WAITID_P_PGID 2
+
+i64 sys_waitid(i32 idtype, u32 id, u64 infop, i32 options)
+{
+        i32 pid;
+
+        (void)infop;
+
+        switch (idtype) {
+        case LINUX_WAITID_P_PID:
+                pid = (i32)id;
+                break;
+        case LINUX_WAITID_P_ALL:
+                pid = -1;
+                break;
+        case LINUX_WAITID_P_PGID:
+                pid = -(i32)id;
+                break;
+        default:
+                return -LINUX_ENOSYS;
+        }
+
+        return sys_wait4(pid, 0, options, 0);
 }

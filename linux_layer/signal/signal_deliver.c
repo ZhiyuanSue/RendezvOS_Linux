@@ -5,6 +5,7 @@
 #include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/signal/signal_types.h>
+#include <linux_compat/signal/signal_context.h>
 #include <rendezvos/error.h>
 #include <rendezvos/mm/vmm.h>
 #include <rendezvos/task/tcb.h>
@@ -82,6 +83,15 @@ static void signal_apply_handler_mask_helper(linux_thread_append_t* thread_appen
         }
 }
 
+static inline void signal_clear_pending(linux_thread_append_t* thread_append,
+                                        linux_proc_append_t* proc_append, int sig)
+{
+        sigdelset(&thread_append->pending_signals, sig);
+        if (proc_append) {
+                sigdelset(&proc_append->pending_signals, sig);
+        }
+}
+
 static void signal_save_handler_context_helper(Thread_Base* th,
                                                linux_thread_append_t* thread_append,
                                                struct trap_frame* tf)
@@ -89,10 +99,8 @@ static void signal_save_handler_context_helper(Thread_Base* th,
         linux_signal_restore_t* rs = &thread_append->signal_restore;
 
         rs->active = 1;
-        rs->sig = 0;
         rs->saved_blocked = thread_append->blocked_signals;
-        arch_syscall_get_user_return(tf, th ? &th->ctx : NULL, &rs->saved_user_pc,
-                                     &rs->saved_user_sp, &rs->saved_syscall_ret);
+        linux_signal_arch_save_context(tf, th ? &th->ctx : NULL, rs);
 }
 
 static vaddr signal_build_frame_helper(vaddr base_sp, int sig, void *handler)
@@ -157,12 +165,12 @@ bool linux_deliver_pending_signals(struct trap_frame *tf)
 
     sigaction_t *disp = &proc_append->signal_dispositions[sig - 1];
 
-    if (disp->sa_handler == SIG_IGN) {
-        sigdelset(&thread_append->pending_signals, sig);
+    if (linux_signal_handler_is_ign(disp->sa_handler)) {
+        signal_clear_pending(thread_append, proc_append, sig);
         return false;
     }
 
-    if (disp->sa_handler == SIG_DFL) {
+    if (linux_signal_handler_is_dfl(disp->sa_handler)) {
         switch (sig) {
         case SIGHUP:
         case SIGINT:
@@ -175,7 +183,7 @@ bool linux_deliver_pending_signals(struct trap_frame *tf)
         case SIGVTALRM:
         case SIGSTKFLT:
         case SIGPWR:
-            sigdelset(&thread_append->pending_signals, sig);
+            signal_clear_pending(thread_append, proc_append, sig);
             sys_exit(128 + sig);
             __builtin_unreachable();
 
@@ -183,7 +191,7 @@ bool linux_deliver_pending_signals(struct trap_frame *tf)
         case SIGCONT:
         case SIGWINCH:
         case SIGURG:
-            sigdelset(&thread_append->pending_signals, sig);
+            signal_clear_pending(thread_append, proc_append, sig);
             return false;
 
         case SIGQUIT:
@@ -195,7 +203,7 @@ bool linux_deliver_pending_signals(struct trap_frame *tf)
         case SIGSEGV:
         case SIGXCPU:
         case SIGXFSZ:
-            sigdelset(&thread_append->pending_signals, sig);
+            signal_clear_pending(thread_append, proc_append, sig);
             sys_exit(128 + sig);
             __builtin_unreachable();
 
@@ -203,13 +211,18 @@ bool linux_deliver_pending_signals(struct trap_frame *tf)
         case SIGTSTP:
         case SIGTTIN:
         case SIGTTOU:
-            sigdelset(&thread_append->pending_signals, sig);
+            signal_clear_pending(thread_append, proc_append, sig);
             return false;
 
         default:
-            sigdelset(&thread_append->pending_signals, sig);
+            signal_clear_pending(thread_append, proc_append, sig);
             return false;
         }
+    }
+
+    if ((uintptr_t)disp->sa_handler < PAGE_SIZE) {
+        signal_clear_pending(thread_append, proc_append, sig);
+        return false;
     }
 
     vaddr user_pc, user_sp, syscall_ret;
@@ -243,8 +256,7 @@ bool linux_deliver_pending_signals(struct trap_frame *tf)
                                  syscall_ret);
     arch_syscall_set_user_int_arg(tf, 0, (u64)sig);
 
-    sigdelset(&thread_append->pending_signals, sig);
-    sigdelset(&proc_append->pending_signals, sig);
+    signal_clear_pending(thread_append, proc_append, sig);
 
     return true;
 }

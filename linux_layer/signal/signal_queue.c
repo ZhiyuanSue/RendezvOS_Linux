@@ -53,6 +53,40 @@ static Thread_Base* signal_select_thread_helper(Tcb_Base* process, int sig)
         return pick;
 }
 
+void linux_signal_flush_pending(Tcb_Base* target, int sig)
+{
+        linux_proc_append_t* proc_append;
+        Thread_Base* th;
+        Thread_Base* tmp;
+
+        if (!target || sig < 1 || sig > NSIG) {
+                return;
+        }
+
+        proc_append = linux_proc_append(target);
+        if (!proc_append) {
+                return;
+        }
+
+        sigdelset(&proc_append->pending_signals, sig);
+
+        lock_cas(&target->thread_list_lock);
+        for (th = container_of((target->thread_head_node.next), Thread_Base,
+                              thread_list_node),
+             tmp = container_of((th->thread_list_node.next), Thread_Base,
+                                thread_list_node);
+             &th->thread_list_node != &target->thread_head_node;
+             th = tmp, tmp = container_of((tmp->thread_list_node.next),
+                                          Thread_Base, thread_list_node)) {
+                linux_thread_append_t* thread_append = linux_thread_append(th);
+
+                if (thread_append) {
+                        sigdelset(&thread_append->pending_signals, sig);
+                }
+        }
+        unlock_cas(&target->thread_list_lock);
+}
+
 static i64 signal_queue_on_thread_helper(Tcb_Base* target,
                                          Thread_Base* target_thread, int sig)
 {
@@ -97,7 +131,8 @@ i64 linux_queue_signal(Tcb_Base* target, int sig, pid_t sender_tid)
         }
 
         disp = &proc_append->signal_dispositions[sig - 1];
-        if (disp->sa_handler == SIG_IGN) {
+        if (linux_signal_handler_is_ign(disp->sa_handler)) {
+                linux_signal_flush_pending(target, sig);
                 return 0;
         }
 
@@ -137,7 +172,8 @@ i64 linux_queue_signal_thread(Thread_Base* target_thread, int sig,
         }
 
         disp = &proc_append->signal_dispositions[sig - 1];
-        if (disp->sa_handler == SIG_IGN) {
+        if (linux_signal_handler_is_ign(disp->sa_handler)) {
+                linux_signal_flush_pending(process, sig);
                 return 0;
         }
 

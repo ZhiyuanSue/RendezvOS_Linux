@@ -37,4 +37,12 @@ i64 linux_queue_signal(Tcb_Base *target, int sig, pid_t sender_tid);
  */
 i64 linux_queue_signal_thread(Thread_Base *target_thread, int sig, pid_t sender_tid);
 
+/**
+ * @brief Drop a signal from process-wide and all thread pending sets.
+ *
+ * Called when disposition changes to SIG_IGN/SIG_DFL or when a queued signal
+ * must not be delivered (Linux: ignored signals do not stay pending).
+ */
+void linux_signal_flush_pending(Tcb_Base *target, int sig);
+
 #endif /* _LINUX_COMPAT_SIGNAL_QUEUE_H_ */

@@ -102,6 +102,15 @@ void syscall(struct trap_frame *syscall_ctx)
                                 (i32)syscall_ctx->ARCH_SYSCALL_ARG_3,
                                 syscall_ctx->ARCH_SYSCALL_ARG_4);
                 break;
+        case __NR_waitid:
+                ret = sys_waitid((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                 (u32)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                 syscall_ctx->ARCH_SYSCALL_ARG_3,
+                                 (i32)syscall_ctx->ARCH_SYSCALL_ARG_4);
+                break;
+        case __NR_sched_yield:
+                ret = sys_sched_yield();
+                break;
         case __NR_brk:
                 ret = (i64)sys_brk((u64)syscall_ctx->ARCH_SYSCALL_ARG_1);
                 break;
@@ -224,11 +233,10 @@ void syscall(struct trap_frame *syscall_ctx)
                                  (u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
                                  (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
                                  (u64)syscall_ctx->ARCH_SYSCALL_ARG_3);
-                /*
-                 * execve成功时不会返回（进程已替换）。
-                 * 如果返回了，说明execve失败，ret包含错误码。
-                 * execve失败时需要正常设置返回值。
-                 */
+                if (ret == 0) {
+                        skip_syscall_ret_assign = true;
+                        skip_signal_deliver = true;
+                }
                 break;
         case __NR_openat:
                 ret = sys_openat((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,

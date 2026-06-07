@@ -1,7 +1,9 @@
+#include <common/string.h>
 #include <common/types.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/proc_compat.h>
+#include <linux_compat/signal/signal_queue.h>
 #include <linux_compat/signal/signal_types.h>
 #include <linux_compat/signal/signal_uapi.h>
 #include <rendezvos/error.h>
@@ -55,6 +57,8 @@ i64 sys_rt_sigaction(i64 signum_i, u64 act_ptr, u64 oldact_ptr, u64 sigsetsize)
         }
 
         if (act_ptr != 0) {
+                memset(&new_action, 0, sizeof(new_action));
+
                 error_t e = linux_copy_sigaction_from_user(vs, act_ptr, &new_action);
                 i64 err = linux_mm_errno_from_copy(e);
                 if (err != 0) {
@@ -68,6 +72,10 @@ i64 sys_rt_sigaction(i64 signum_i, u64 act_ptr, u64 oldact_ptr, u64 sigsetsize)
                 }
 
                 proc_append->signal_dispositions[signum - 1] = new_action;
+
+                if (linux_signal_handler_is_special(new_action.sa_handler)) {
+                        linux_signal_flush_pending(current, signum);
+                }
         }
 
         return 0;

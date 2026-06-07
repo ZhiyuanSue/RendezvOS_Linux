@@ -307,6 +307,36 @@ Tcb_Base* find_zombie_child_in_pgid(pid_t ppid, pid_t pgid)
         return NULL;
 }
 
+bool proc_parent_has_unreaped_child(pid_t ppid, pid_t pgid, bool filter_by_pgid)
+{
+        if (ppid <= 0) {
+                return false;
+        }
+        if (filter_by_pgid && pgid <= 0) {
+                return false;
+        }
+
+        for (pid_t candidate = ppid + 1; candidate < ppid + 1000; candidate++) {
+                Tcb_Base* child = find_task_by_pid(candidate);
+                linux_proc_append_t* pa;
+
+                if (!child) {
+                        continue;
+                }
+
+                pa = linux_proc_append(child);
+                if (!pa || pa->ppid != ppid || pa->exit_state == 2) {
+                        continue;
+                }
+                if (filter_by_pgid && pa->pgid != pgid) {
+                        continue;
+                }
+                return true;
+        }
+
+        return false;
+}
+
 /*
  * Initcall to initialize the process registry.
  * Runs at init level 2 (early init, before user programs).

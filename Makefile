@@ -24,7 +24,7 @@ USER_SKIP_GIT ?=
 
 ROOT_COMPAT_ARCHS := x86_64 aarch64
 ifneq ($(filter $(ARCH),$(ROOT_COMPAT_ARCHS)),)
-ROOT_SOURCES := $(wildcard $(ROOT_DIR)/linux_layer/*/*.c) $(wildcard $(ROOT_DIR)/servers/*.c) $(wildcard $(ROOT_DIR)/servers/*/*.c)
+ROOT_SOURCES := $(wildcard $(ROOT_DIR)/linux_layer/*/*.c) $(wildcard $(ROOT_DIR)/linux_layer/*/*/*.c) $(wildcard $(ROOT_DIR)/servers/*.c) $(wildcard $(ROOT_DIR)/servers/*/*.c)
 else
 ROOT_SOURCES :=
 endif

@@ -76,6 +76,21 @@ typedef unsigned int uid_t;
 
 typedef void (*__sighandler_t)(int);
 
+static inline bool linux_signal_handler_is_ign(__sighandler_t handler)
+{
+	return (uintptr_t)handler == (uintptr_t)SIG_IGN;
+}
+
+static inline bool linux_signal_handler_is_dfl(__sighandler_t handler)
+{
+	return (uintptr_t)handler == (uintptr_t)SIG_DFL;
+}
+
+static inline bool linux_signal_handler_is_special(__sighandler_t handler)
+{
+	return (uintptr_t)handler <= 1;
+}
+
 /*
  * sigset_t: Signal set (bitmap of signals)
  * Linux uses 64-bit signal sets for real-time signals.

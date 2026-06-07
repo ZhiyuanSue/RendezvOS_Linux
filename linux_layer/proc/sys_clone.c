@@ -103,7 +103,6 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
         Thread_Base *parent_thread = NULL;
         Thread_Base *child_thread = NULL;
         VSpace *child_vs = NULL;
-        struct trap_frame *child_trap_frame;
         i64 ret;
         error_t e;
 
@@ -226,18 +225,14 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
                 }
         }
 
-        /* Set user stack pointer for child thread by modifying trap_frame */
-        if (flags & CLONE_VM) {
-                /* User provided a new stack */
-                child_trap_frame =
-                    (struct trap_frame*)child_thread->kstack_bottom - 1;
-                #ifdef _X86_64_
-                child_trap_frame->rsp = stack;
-                #elif defined(_AARCH64_)
-                child_trap_frame->SP = stack;
-                #else
-                #error "Unsupported architecture for clone"
-                #endif
+        /*
+         * __clone child entry pops fn/arg from the supplied stack and needs
+         * the hardware user SP (SP_EL0 / user_rsp). copy_thread already
+         * arch_ctx_refresh()s the parent ctx and merges it into the child;
+         * override only when clone() passed a new stack top.
+         */
+        if (stack != 0) {
+                arch_set_thread_user_sp(&child_thread->ctx, stack);
         }
 
         if (flags & CLONE_SETTLS) {
@@ -290,7 +285,14 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
 
         /* TODO: Implement CLONE_FS, CLONE_FILES, CLONE_SIGHAND in Phase 2B/2C */
 
-        return (i64)child_thread->tid;
+        /*
+         * Linux clone(2): parent gets child TID for CLONE_THREAD threads,
+         * child PID for fork-style (separate thread group / address space).
+         */
+        if (flags & CLONE_THREAD) {
+                return (i64)child_thread->tid;
+        }
+        return (i64)child->pid;
 
 out_free_thread:
         if (child_thread) {
