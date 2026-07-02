@@ -12,17 +12,11 @@
 #include <rendezvos/ipc/port.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/tcb.h>
+#include <linux_compat/ipc/clean_protocol.h>
+#include <linux_compat/ipc/exit_protocol.h>
 #include <linux_compat/test_sync_ipc.h>
 #include <linux_compat/fault.h>
 #include <linux_compat/test_runner.h>
-
-#define CLEAN_SERVER_PORT_NAME     "clean_server_port"
-#define CLEAN_KMSG_FMT_THREAD_REAP LINUX_KMSG_FMT_THREAD_REAP
-
-/* Linux compat IPC module and opcodes */
-#define KMSG_MOD_LINUX_COMPAT  2u
-#define KMSG_LINUX_EXIT_NOTIFY 1u
-
 void sys_exit(i64 exit_code)
 {
         Thread_Base* self = get_cpu_current_thread();
@@ -106,11 +100,12 @@ void sys_exit(i64 exit_code)
                                          * Payload is not the reap source of truth.
                                          */
                                         Msg_Data_t* exit_md =
-                                                kmsg_create(KMSG_MOD_LINUX_COMPAT,
-                                                            KMSG_LINUX_EXIT_NOTIFY,
-                                                            "qi",
-                                                            (i64)task->pid,
-                                                            (i32)exit_code);
+                                                kmsg_create(
+                                                        wait_port->service_id,
+                                                        KMSG_OP_PROC_EXIT_NOTIFY,
+                                                        LINUX_KMSG_FMT_EXIT_NOTIFY,
+                                                        (i64)task->pid,
+                                                        (i32)exit_code);
                                         if (exit_md) {
                                                 Message_t* exit_msg =
                                                         create_message_with_msg(
@@ -182,8 +177,8 @@ void sys_exit(i64 exit_code)
                 }
 
                 md = kmsg_create(port->service_id,
-                                 KMSG_OP_CORE_THREAD_REAP,
-                                 CLEAN_KMSG_FMT_THREAD_REAP,
+                                 KMSG_OP_CLEAN_THREAD_REAP,
+                                 LINUX_KMSG_FMT_THREAD_REAP,
                                  self,
                                  exit_code);
                 if (!md) {
@@ -258,8 +253,8 @@ void linux_fatal_user_fault(i64 exit_code)
         port = thread_lookup_port(CLEAN_SERVER_PORT_NAME);
         if (port) {
                 md = kmsg_create(port->service_id,
-                                 KMSG_OP_CORE_THREAD_REAP,
-                                 CLEAN_KMSG_FMT_THREAD_REAP,
+                                 KMSG_OP_CLEAN_THREAD_REAP,
+                                 LINUX_KMSG_FMT_THREAD_REAP,
                                  self,
                                  exit_code);
                 if (md) {

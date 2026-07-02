@@ -88,7 +88,7 @@ flowchart TB
 
 ### 2.3 已有 IPC 模式（应复用，而非另起炉灶）
 
-- **`wait4`**：父进程 `recv_msg(wait_port)`；子进程 `sys_exit` 经 `kmsg`（`KMSG_MOD_LINUX_COMPAT` / `KMSG_LINUX_EXIT_NOTIFY`）通知 — 见 `linux_layer/proc/sys_wait.c`、`linux_layer/syscall/thread_syscall.c`。
+- **`wait4`**：父进程 `recv_msg(wait_port)`；子进程 `sys_exit` 经 kmsg（`wait_port->service_id` / `KMSG_OP_PROC_EXIT_NOTIFY`，见 `include/linux_compat/ipc/exit_protocol.h`）通知 — 见 `linux_layer/proc/sys_wait.c`、`linux_layer/syscall/thread_syscall.c`。
 - **`clean_server`**：内核线程 `recv_msg` → `dequeue_recv_msg` → `kmsg_from_msg` → `ipc_serial_decode` — 见 `servers/clean_server.c`。
 
 **SIGCHLD**：优先在 **子进程退出路径** 向父进程 pending 置位 `SIGCHLD`，若父阻塞在 `wait4`，现有 exit kmsg 已可唤醒；不必为每个 SIGCHLD 再经独立 signal server。

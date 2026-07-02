@@ -19,7 +19,6 @@ static u16 vfs_server_service_id;
 
 static char vfs_server_thread_name[] = "vfs_server_thread";
 
-extern cpu_id_t BSP_ID;
 extern struct Port_Table* global_port_table;
 
 static i64 vfs_rpc_handler(u16 opcode, const kmsg_t* km, char** reply_port_out)

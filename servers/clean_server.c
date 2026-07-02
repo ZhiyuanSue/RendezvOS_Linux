@@ -10,6 +10,7 @@
 #include <rendezvos/ipc/port.h>
 #include <rendezvos/task/tcb.h>
 #include <rendezvos/task/thread_loader.h>
+#include <linux_compat/ipc/clean_protocol.h>
 #include <linux_compat/ipc/rpc.h>
 #include <linux_compat/test_sync_ipc.h>
 #ifdef LINUX_COMPAT_TEST
@@ -22,8 +23,6 @@
 DEFINE_PER_CPU(Thread_Base *, clean_server_thread_ptr);
 
 static char clean_server_thread_name[] = "clean_server_thread";
-#define CLEAN_SERVER_PORT_NAME     "clean_server_port"
-#define CLEAN_KMSG_FMT_THREAD_REAP LINUX_KMSG_FMT_THREAD_REAP
 
 static u16 clean_server_service_id;
 
@@ -41,7 +40,7 @@ static void clean_handle_message(Message_t *msg)
         }
 
         if (!km || km->hdr.module != clean_server_service_id
-            || km->hdr.opcode != KMSG_OP_CORE_THREAD_REAP) {
+            || km->hdr.opcode != KMSG_OP_CLEAN_THREAD_REAP) {
                 pr_error("[clean_server] Invalid kmsg\n");
                 return;
         }
@@ -50,7 +49,7 @@ static void clean_handle_message(Message_t *msg)
         i64 exit_code;
         if (ipc_serial_decode(km->payload,
                               km->hdr.payload_len,
-                              CLEAN_KMSG_FMT_THREAD_REAP,
+                              LINUX_KMSG_FMT_THREAD_REAP,
                               &vthread,
                               &exit_code)
             != REND_SUCCESS) {
@@ -183,8 +182,6 @@ void clean_server_thread(void)
                 (u64)percpu(cpu_number), CLEAN_SERVER_PORT_NAME);
         ipc_server_recv_loop(CLEAN_SERVER_PORT_NAME, clean_server_on_message);
 }
-
-extern cpu_id_t BSP_ID;
 
 static void clean_server_init(void)
 {

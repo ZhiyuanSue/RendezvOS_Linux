@@ -14,7 +14,6 @@
 
 #ifdef LINUX_COMPAT_TEST
 
-extern cpu_id_t BSP_ID;
 extern volatile i64 jeffies;
 extern u64 _num_app;
 extern volatile bool is_print_sche_info;

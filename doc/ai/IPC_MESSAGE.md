@@ -13,7 +13,7 @@ Header (`kmsg_hdr_t`) — slim, no in-band version field (layout changes bump `K
 
 - `magic`: `KMSG_MAGIC` (`0x47534d4c`, ASCII `LMSG` in little-endian byte order) — distinguishes this wire shape from older experiments.
 - `module`: **service id** bound to the destination `Message_Port_t` (fast validation only)
-- `opcode`: operation within that module (e.g. `KMSG_OP_CORE_THREAD_REAP`)
+- `opcode`: operation within that module (e.g. `KMSG_OP_CLEAN_THREAD_REAP` on clean_server)
 - `payload_len`: bytes of TLV payload after the fixed header prefix (`offsetof(kmsg_t, payload)` through end of buffer)
 
 Sender identity / reply routing is **not** duplicated in the header: use TLV (e.g. `t` = reply port name) when an opcode needs a reply endpoint.
@@ -79,7 +79,7 @@ Today, many paths are **one-way** (e.g. clean server reaps a thread; no reply `M
 
 ## Call-site façade (clean server)
 
-- Current call site is in `linux_layer/syscall/thread_syscall.c` (`sys_exit`): it looks up the clean server port by name, then sends `kmsg_create(port->service_id, KMSG_OP_CORE_THREAD_REAP, "p q", thread, exit_code)` (`service_id` is bound to the port; see below).
+- Current call site is in `linux_layer/syscall/thread_syscall.c` (`sys_exit`): it looks up the clean server port by name, then sends `kmsg_create(port->service_id, KMSG_OP_CLEAN_THREAD_REAP, LINUX_KMSG_FMT_THREAD_REAP, thread, exit_code)` (`include/linux_compat/ipc/clean_protocol.h`; `service_id` is bound to the port; see below).
 - Server: `clean_handle_message` checks `km->hdr.module == clean_server_service_id` (cached from the registered port) before decoding.
 
 ## Init and layering

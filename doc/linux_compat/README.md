@@ -19,7 +19,8 @@
 | [`SYSCALLS.md`](SYSCALLS.md) | **实现顺序**与文件清单 |
 | [`MM_AND_COW.md`](MM_AND_COW.md) | Radix 虚存真源、COW、页故障 |
 | [`IPC_RPC_FRAMEWORK.md`](IPC_RPC_FRAMEWORK.md) | RPC / one-way server 模板 |
-| [`../ai/IPC_MESSAGE.md`](../ai/IPC_MESSAGE.md) | kmsg、TLV、reply port `t` |
+| [`../ai/IPC_MESSAGE.md`](../ai/IPC_MESSAGE.md) | kmsg envelope、TLV、reply port `t` |
+| [`../../include/linux_compat/ipc/clean_protocol.h`](../../include/linux_compat/ipc/clean_protocol.h) | clean_server、exit 等 compat opcode（见同目录 `exit_protocol.h`、`fs/vfs_protocol.h`） |
 | [`SYSCALL_USER_RETURN_AND_EXECVE.md`](SYSCALL_USER_RETURN_AND_EXECVE.md) | Path A 返回、exec 接线 |
 | [`SIGNAL_IMPLEMENTATION_STATUS.md`](SIGNAL_IMPLEMENTATION_STATUS.md) | 信号实现状态（持续更新） |
 | [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md) | execve 实现状态（Phase 3） |
