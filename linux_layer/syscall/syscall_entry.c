@@ -9,7 +9,6 @@
 
 void syscall(struct trap_frame *syscall_ctx)
 {
-
         const u64 syscall_id = (u64)syscall_ctx->ARCH_SYSCALL_ID;
         /* Linux compat: user-visible errors must be Linux errno (negative). */
         i64 ret = -LINUX_ENOSYS;
@@ -24,35 +23,35 @@ void syscall(struct trap_frame *syscall_ctx)
                 sys_exit_group((i64)syscall_ctx->ARCH_SYSCALL_ARG_1);
                 __builtin_unreachable();
         case __NR_clone:
-        #if defined(_X86_64_)
+#if defined(_X86_64_)
         case __NR_fork:
-        #endif
-                {
-                        /* Handle clone/fork - on aarch64 fork is clone(0, SIGCHLD) */
-                        u64 clone_flags = (u64)syscall_ctx->ARCH_SYSCALL_ARG_1;
-                        #if defined(_X86_64_)
-                        /* x86_64: separate syscalls */
-                        if (syscall_id == __NR_fork) {
-                                ret = sys_fork();
-                        } else {
-                                ret = sys_clone(clone_flags,
-                                               (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
-                                               (u64)syscall_ctx->ARCH_SYSCALL_ARG_3,
-                                               (u64)syscall_ctx->ARCH_SYSCALL_ARG_4,
-                                               (u64)syscall_ctx->ARCH_SYSCALL_ARG_5);
-                        }
-                        #elif defined(_AARCH64_)
-                        /* aarch64: fork is clone with flags=0 */
+#endif
+        {
+                /* Handle clone/fork - on aarch64 fork is clone(0, SIGCHLD) */
+                u64 clone_flags = (u64)syscall_ctx->ARCH_SYSCALL_ARG_1;
+#if defined(_X86_64_)
+                /* x86_64: separate syscalls */
+                if (syscall_id == __NR_fork) {
+                        ret = sys_fork();
+                } else {
                         ret = sys_clone(clone_flags,
-                                       (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
-                                       (u64)syscall_ctx->ARCH_SYSCALL_ARG_3,
-                                       (u64)syscall_ctx->ARCH_SYSCALL_ARG_4,
-                                       (u64)syscall_ctx->ARCH_SYSCALL_ARG_5);
-                        #else
-                        #error "Unsupported architecture"
-                        #endif
-                        break;
+                                        (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                        (u64)syscall_ctx->ARCH_SYSCALL_ARG_3,
+                                        (u64)syscall_ctx->ARCH_SYSCALL_ARG_4,
+                                        (u64)syscall_ctx->ARCH_SYSCALL_ARG_5);
                 }
+#elif defined(_AARCH64_)
+                /* aarch64: fork is clone with flags=0 */
+                ret = sys_clone(clone_flags,
+                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_3,
+                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_4,
+                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_5);
+#else
+#error "Unsupported architecture"
+#endif
+                break;
+        }
         case __NR_getpid:
                 ret = sys_getpid();
                 break;
@@ -71,23 +70,23 @@ void syscall(struct trap_frame *syscall_ctx)
                 break;
         case __NR_kill:
                 ret = sys_kill((i64)syscall_ctx->ARCH_SYSCALL_ARG_1,
-                             (i64)syscall_ctx->ARCH_SYSCALL_ARG_2);
+                               (i64)syscall_ctx->ARCH_SYSCALL_ARG_2);
                 break;
         case __NR_rt_sigaction:
                 ret = sys_rt_sigaction((i64)syscall_ctx->ARCH_SYSCALL_ARG_1,
-                                     syscall_ctx->ARCH_SYSCALL_ARG_2,
-                                     syscall_ctx->ARCH_SYSCALL_ARG_3,
-                                     syscall_ctx->ARCH_SYSCALL_ARG_4);
+                                       syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                       syscall_ctx->ARCH_SYSCALL_ARG_3,
+                                       syscall_ctx->ARCH_SYSCALL_ARG_4);
                 break;
         case __NR_rt_sigprocmask:
                 ret = sys_rt_sigprocmask((i64)syscall_ctx->ARCH_SYSCALL_ARG_1,
-                                        syscall_ctx->ARCH_SYSCALL_ARG_2,
-                                        syscall_ctx->ARCH_SYSCALL_ARG_3,
-                                        syscall_ctx->ARCH_SYSCALL_ARG_4);
+                                         syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                         syscall_ctx->ARCH_SYSCALL_ARG_3,
+                                         syscall_ctx->ARCH_SYSCALL_ARG_4);
                 break;
         case __NR_sigaltstack:
                 ret = sys_sigaltstack(syscall_ctx->ARCH_SYSCALL_ARG_1,
-                                     syscall_ctx->ARCH_SYSCALL_ARG_2);
+                                      syscall_ctx->ARCH_SYSCALL_ARG_2);
                 break;
         case __NR_rt_sigreturn:
                 ret = sys_rt_sigreturn(syscall_ctx);
@@ -111,6 +110,43 @@ void syscall(struct trap_frame *syscall_ctx)
         case __NR_sched_yield:
                 ret = sys_sched_yield();
                 break;
+#if defined(_X86_64_)
+        case __NR_nanosleep:
+                ret = sys_nanosleep((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                    (u64)syscall_ctx->ARCH_SYSCALL_ARG_2);
+                break;
+        case __NR_clock_nanosleep:
+                ret = sys_clock_nanosleep((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                          (i32)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                          (u64)syscall_ctx->ARCH_SYSCALL_ARG_3,
+                                          (u64)syscall_ctx->ARCH_SYSCALL_ARG_4);
+                break;
+#elif defined(_AARCH64_)
+        case __NR_nanosleep:
+                ret = sys_nanosleep((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                    (u64)syscall_ctx->ARCH_SYSCALL_ARG_2);
+                break;
+        case __NR_clock_nanosleep:
+                ret = sys_clock_nanosleep((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                          (i32)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                          (u64)syscall_ctx->ARCH_SYSCALL_ARG_3,
+                                          (u64)syscall_ctx->ARCH_SYSCALL_ARG_4);
+                break;
+#endif
+        case __NR_gettimeofday:
+                ret = sys_gettimeofday((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                       (u64)syscall_ctx->ARCH_SYSCALL_ARG_2);
+                break;
+        case __NR_times:
+                ret = sys_times((u64)syscall_ctx->ARCH_SYSCALL_ARG_1);
+                break;
+        case __NR_uname:
+                ret = sys_uname((u64)syscall_ctx->ARCH_SYSCALL_ARG_1);
+                break;
+        case __NR_clock_gettime:
+                ret = sys_clock_gettime((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                        (u64)syscall_ctx->ARCH_SYSCALL_ARG_2);
+                break;
         case __NR_brk:
                 ret = (i64)sys_brk((u64)syscall_ctx->ARCH_SYSCALL_ARG_1);
                 break;
@@ -133,17 +169,17 @@ void syscall(struct trap_frame *syscall_ctx)
 #if defined(_X86_64_)
         case __NR_dup2:
                 ret = sys_dup2((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
-                              (i32)syscall_ctx->ARCH_SYSCALL_ARG_2);
+                               (i32)syscall_ctx->ARCH_SYSCALL_ARG_2);
                 break;
 #endif
         case __NR_dup3:
                 ret = sys_dup3((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
-                              (i32)syscall_ctx->ARCH_SYSCALL_ARG_2,
-                              (i32)syscall_ctx->ARCH_SYSCALL_ARG_3);
+                               (i32)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                               (i32)syscall_ctx->ARCH_SYSCALL_ARG_3);
                 break;
         case __NR_fstat:
                 ret = sys_fstat((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
-                               (u64)syscall_ctx->ARCH_SYSCALL_ARG_2);
+                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_2);
                 break;
 #if defined(_X86_64_)
         case __NR_stat:
@@ -153,9 +189,9 @@ void syscall(struct trap_frame *syscall_ctx)
 #endif
         case __NR_newfstatat:
                 ret = sys_newfstatat((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
-                                    (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
-                                    (u64)syscall_ctx->ARCH_SYSCALL_ARG_3,
-                                    (i32)syscall_ctx->ARCH_SYSCALL_ARG_4);
+                                     (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                     (u64)syscall_ctx->ARCH_SYSCALL_ARG_3,
+                                     (i32)syscall_ctx->ARCH_SYSCALL_ARG_4);
                 break;
         case __NR_lseek:
                 ret = sys_lseek((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
@@ -187,13 +223,13 @@ void syscall(struct trap_frame *syscall_ctx)
 #endif
         case __NR_unlinkat:
                 ret = sys_unlinkat((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
-                                  (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
-                                  (i32)syscall_ctx->ARCH_SYSCALL_ARG_3);
+                                   (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                   (i32)syscall_ctx->ARCH_SYSCALL_ARG_3);
                 break;
         case __NR_getdents64:
                 ret = sys_getdents64((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
-                                    (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
-                                    (u64)syscall_ctx->ARCH_SYSCALL_ARG_3);
+                                     (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                     (u64)syscall_ctx->ARCH_SYSCALL_ARG_3);
                 break;
 #if defined(_X86_64_)
         case __NR_pipe:
@@ -202,7 +238,7 @@ void syscall(struct trap_frame *syscall_ctx)
 #endif
         case __NR_pipe2:
                 ret = sys_pipe2((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
-                              (i32)syscall_ctx->ARCH_SYSCALL_ARG_2);
+                                (i32)syscall_ctx->ARCH_SYSCALL_ARG_2);
                 break;
         case __NR_mmap:
                 ret = (i64)sys_mmap((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
@@ -259,7 +295,8 @@ void syscall(struct trap_frame *syscall_ctx)
                 syscall_ctx->ARCH_SYSCALL_RET = (u64)ret;
         }
 
-        /* Deliver after syscall return value is set (handler uses rdi/x0, not ret reg). */
+        /* Deliver after syscall return value is set (handler uses rdi/x0, not
+         * ret reg). */
         if (!skip_signal_deliver) {
                 (void)linux_deliver_pending_signals(syscall_ctx);
         }

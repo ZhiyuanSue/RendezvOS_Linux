@@ -24,26 +24,31 @@ static inline bool linux_vspace_is_user_table(const VSpace* vs)
                && vs->root_radix;
 }
 
-/** True when no radix/PTE entry covers any page in [@p hint, hint + @p page_num). */
+/** True when no radix/PTE entry covers any page in [@p hint, hint + @p
+ * page_num). */
 bool linux_mm_range_is_free(VSpace* vs, vaddr hint, size_t page_num);
 
-/** Copy @p len bytes from kernel @p src to user VA @p user_va (mapped pages only). */
+/** Copy @p len bytes from kernel @p src to user VA @p user_va (mapped pages
+ * only). */
 error_t linux_mm_store_to_user(VSpace* vs, u64 user_va, const void* src,
                                size_t len);
 
-/** Copy @p len bytes from user VA @p user_va to kernel @p dst (mapped pages only). */
+/** Copy @p len bytes from user VA @p user_va to kernel @p dst (mapped pages
+ * only). */
 error_t linux_mm_load_from_user(VSpace* vs, u64 user_va, void* dst, size_t len);
 
 /** Copy between two user VAs (mapped leaf pages only). */
 error_t linux_mm_copy_user_range(VSpace* vs, u64 dst_user_va, u64 src_user_va,
                                  size_t len);
 
-/** Map @p page_num user pages at @p hint (must be page-aligned; 0 = failure). */
+/** Map @p page_num user pages at @p hint (must be page-aligned; 0 = failure).
+ */
 void* linux_mm_map_user_range(VSpace* vs, vaddr hint, size_t page_num,
                               ENTRY_FLAGS_t flags);
 
 /**
- * @brief Best-effort map at/above @p search_start (page-aligned); probes forward.
+ * @brief Best-effort map at/above @p search_start (page-aligned); probes
+ * forward.
  */
 void* linux_mm_map_user_range_search(VSpace* vs, vaddr search_start,
                                      size_t page_num, ENTRY_FLAGS_t flags,
@@ -60,7 +65,8 @@ error_t linux_mm_query_vaddr(VSpace* vs, vaddr va, vaddr* out_start,
 error_t linux_mm_remap_user_leaf(VSpace* vs, vaddr page_va, ppn_t new_ppn,
                                  ENTRY_FLAGS_t new_flags, ppn_t expect_old_ppn);
 
-/** mprotect-style: update each uniform occupied sub-interval in [@p start, end). */
+/** mprotect-style: update each uniform occupied sub-interval in [@p start,
+ * end). */
 error_t linux_mm_update_range_flags(VSpace* vs, vaddr start, u64 length_bytes,
                                     ENTRY_FLAGS_t new_flags);
 

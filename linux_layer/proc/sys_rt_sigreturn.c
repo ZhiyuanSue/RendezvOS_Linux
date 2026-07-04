@@ -11,11 +11,13 @@
 /*
  * rt_sigreturn — restore user context saved when a signal handler was entered.
  *
- * Phase 2B uses kernel-side linux_signal_restore_t (not a full user rt_sigframe).
- * User handlers must call rt_sigreturn() explicitly (or via a test stub).
+ * Phase 2B uses kernel-side linux_signal_restore_t (not a full user
+ * rt_sigframe). User handlers must call rt_sigreturn() explicitly (or via a
+ * test stub).
  */
 
-static void signal_rt_sigreturn_fatal(linux_thread_append_t* ta, const char* why)
+static void signal_rt_sigreturn_fatal(linux_thread_append_t* ta,
+                                      const char* why)
 {
         pr_warn("[SIGNAL] rt_sigreturn: %s (inflight=%u active=%u)\n",
                 why,

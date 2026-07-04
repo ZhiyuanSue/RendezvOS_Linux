@@ -4,8 +4,10 @@
 
 #include <common/string.h>
 #include <linux_compat/errno.h>
+#include <linux_compat/ipc/block_wake.h>
 #include <linux_compat/ipc/rpc.h>
 #include <linux_compat/proc_registry.h>
+#include <linux_compat/signal/signal_deliver.h>
 #include <modules/log/log.h>
 #include <rendezvos/ipc/ipc.h>
 #include <rendezvos/ipc/ipc_serial.h>
@@ -114,7 +116,24 @@ Message_Port_t* ipc_rpc_port_lookup_or_create(const char* port_name)
         return port;
 }
 
-static error_t ipc_payload_append_reply_port(u8* payload, u32 cap, u32* inout_len,
+static bool ipc_rpc_recv_is_interrupt(Message_Port_t* reply_port,
+                                      Message_t* msg)
+{
+        const kmsg_t* km;
+
+        if (!reply_port || !msg) {
+                return false;
+        }
+
+        km = kmsg_from_msg(msg);
+        if (!km || km->hdr.module != reply_port->service_id) {
+                return false;
+        }
+        return km->hdr.opcode == KMSG_OP_IPC_RECV_INTERRUPT;
+}
+
+static error_t ipc_payload_append_reply_port(u8* payload, u32 cap,
+                                             u32* inout_len,
                                              const char* reply_port)
 {
         u32 off;
@@ -200,8 +219,8 @@ static Msg_Data_t* ipc_kmsg_create_request(u16 module, u16 opcode,
         va_end(ap_copy);
 
         payload_len = len_fmt;
-        if (ipc_payload_append_reply_port(km->payload, len_fmt + t_tlv,
-                                          &payload_len, reply_port)
+        if (ipc_payload_append_reply_port(
+                    km->payload, len_fmt + t_tlv, &payload_len, reply_port)
             != REND_SUCCESS) {
                 alloc->m_free(alloc, km);
                 return NULL;
@@ -210,15 +229,16 @@ static Msg_Data_t* ipc_kmsg_create_request(u16 module, u16 opcode,
 
         {
                 void* data = (void*)km;
-                return create_message_data(MSG_DATA_TAG_KMSG, (u64)km_size, &data,
+                return create_message_data(MSG_DATA_TAG_KMSG,
+                                           (u64)km_size,
+                                           &data,
                                            free_msgdata_ref_default);
         }
 }
 
-i64 ipc_rpc_call_va(Message_Port_t* server_port,
-                   Message_Port_t* reply_port, u16 req_opcode,
-                   const char* req_fmt, u16 resp_opcode,
-                   const char* resp_fmt, va_list ap)
+i64 ipc_rpc_call_va(Message_Port_t* server_port, Message_Port_t* reply_port,
+                    u16 req_opcode, const char* req_fmt, u16 resp_opcode,
+                    const char* resp_fmt, va_list ap)
 {
         Msg_Data_t* msg_data;
         Message_t* msg;
@@ -234,8 +254,8 @@ i64 ipc_rpc_call_va(Message_Port_t* server_port,
         module = server_port->service_id;
         ipc_rpc_drain_recv_queue();
 
-        msg_data = ipc_kmsg_create_request(module, req_opcode, req_fmt,
-                                           reply_port->name, ap);
+        msg_data = ipc_kmsg_create_request(
+                module, req_opcode, req_fmt, reply_port->name, ap);
         if (!msg_data) {
                 return -LINUX_EINVAL;
         }
@@ -256,15 +276,35 @@ i64 ipc_rpc_call_va(Message_Port_t* server_port,
                 return -LINUX_EIO;
         }
 
+        if (linux_signal_has_deliverable_pending()) {
+                return -LINUX_EINTR;
+        }
+
         err = recv_msg(reply_port);
         if (err != REND_SUCCESS) {
                 ipc_rpc_drain_recv_queue();
+                if (linux_signal_has_deliverable_pending()) {
+                        return -LINUX_EINTR;
+                }
                 return -LINUX_EIO;
         }
 
         msg = dequeue_recv_msg();
         if (!msg) {
+                if (linux_signal_has_deliverable_pending()) {
+                        return -LINUX_EINTR;
+                }
                 return -LINUX_EIO;
+        }
+
+        if (ipc_rpc_recv_is_interrupt(reply_port, msg)) {
+                ref_put(&msg->ms_queue_node.refcount, free_message_ref);
+                return -LINUX_EINTR;
+        }
+
+        if (linux_signal_has_deliverable_pending()) {
+                ref_put(&msg->ms_queue_node.refcount, free_message_ref);
+                return -LINUX_EINTR;
         }
 
         {
@@ -276,7 +316,8 @@ i64 ipc_rpc_call_va(Message_Port_t* server_port,
                 }
 
                 err = ipc_serial_decode(resp_kmsg->payload,
-                                        resp_kmsg->hdr.payload_len, rfmt,
+                                        resp_kmsg->hdr.payload_len,
+                                        rfmt,
                                         &result);
                 if (err != REND_SUCCESS) {
                         ref_put(&msg->ms_queue_node.refcount, free_message_ref);
@@ -295,9 +336,13 @@ i64 ipc_rpc_call(Message_Port_t* server_port, Message_Port_t* reply_port,
         i64 ret;
 
         va_start(ap, req_fmt);
-        ret = ipc_rpc_call_va(server_port, reply_port, req_opcode, req_fmt,
+        ret = ipc_rpc_call_va(server_port,
+                              reply_port,
+                              req_opcode,
+                              req_fmt,
                               IPC_RPC_RESP_OPCODE_DEFAULT,
-                              IPC_RPC_RESP_FMT_DEFAULT, ap);
+                              IPC_RPC_RESP_FMT_DEFAULT,
+                              ap);
         va_end(ap);
         return ret;
 }
@@ -319,23 +364,31 @@ i64 ipc_rpc_call_named_va(const char* server_port_name,
                 return -LINUX_ENOSYS;
         }
 
-        ret = ipc_rpc_call_va(server_port, reply_port, req_opcode, req_fmt,
-                              resp_opcode, resp_fmt, ap);
+        ret = ipc_rpc_call_va(server_port,
+                              reply_port,
+                              req_opcode,
+                              req_fmt,
+                              resp_opcode,
+                              resp_fmt,
+                              ap);
         ref_put(&server_port->refcount, free_message_port_ref);
         return ret;
 }
 
-i64 ipc_rpc_call_named(const char* server_port_name,
-                       Message_Port_t* reply_port, u16 req_opcode,
-                       const char* req_fmt, ...)
+i64 ipc_rpc_call_named(const char* server_port_name, Message_Port_t* reply_port,
+                       u16 req_opcode, const char* req_fmt, ...)
 {
         va_list ap;
         i64 ret;
 
         va_start(ap, req_fmt);
-        ret = ipc_rpc_call_named_va(server_port_name, reply_port, req_opcode,
-                                    req_fmt, IPC_RPC_RESP_OPCODE_DEFAULT,
-                                    IPC_RPC_RESP_FMT_DEFAULT, ap);
+        ret = ipc_rpc_call_named_va(server_port_name,
+                                    reply_port,
+                                    req_opcode,
+                                    req_fmt,
+                                    IPC_RPC_RESP_OPCODE_DEFAULT,
+                                    IPC_RPC_RESP_FMT_DEFAULT,
+                                    ap);
         va_end(ap);
         return ret;
 }
@@ -399,10 +452,11 @@ void ipc_rpc_reply_best_effort(const kmsg_t* km, const char* reply_port_name,
         strncpy(reply_copy, reply, sizeof(reply_copy) - 1u);
         reply_copy[sizeof(reply_copy) - 1u] = '\0';
 
-        if (!ipc_rpc_send_reply(module, resp_opcode, resp_fmt, reply_copy,
-                                result)) {
+        if (!ipc_rpc_send_reply(
+                    module, resp_opcode, resp_fmt, reply_copy, result)) {
                 pr_error("[IPC-RPC] reply failed port='%s' result=%ld\n",
-                         reply_copy, result);
+                         reply_copy,
+                         result);
         }
 }
 
@@ -424,7 +478,8 @@ void ipc_rpc_server_loop(const char* listen_port_name, u16 service_id,
         }
 
         pr_info("[IPC-RPC] server loop on '%s' service_id=%u\n",
-                listen_port_name, service_id);
+                listen_port_name,
+                service_id);
 
         while (1) {
                 error_t ret = recv_msg(port);
@@ -452,17 +507,23 @@ void ipc_rpc_server_loop(const char* listen_port_name, u16 service_id,
 
                         km = kmsg_from_msg(msg);
                         if (!km || km->hdr.module != service_id) {
-                                ipc_rpc_reply_best_effort(
-                                        km, NULL, service_id, resp_opcode,
-                                        resp_fmt, -LINUX_EIO);
+                                ipc_rpc_reply_best_effort(km,
+                                                          NULL,
+                                                          service_id,
+                                                          resp_opcode,
+                                                          resp_fmt,
+                                                          -LINUX_EIO);
                                 ref_put(&msg->ms_queue_node.refcount,
                                         free_message_ref);
                                 continue;
                         }
 
                         result = handler(km->hdr.opcode, km, &reply_port);
-                        ipc_rpc_reply_best_effort(km, reply_port, service_id,
-                                                  resp_opcode, resp_fmt,
+                        ipc_rpc_reply_best_effort(km,
+                                                  reply_port,
+                                                  service_id,
+                                                  resp_opcode,
+                                                  resp_fmt,
                                                   result);
                         ref_put(&msg->ms_queue_node.refcount, free_message_ref);
                 }

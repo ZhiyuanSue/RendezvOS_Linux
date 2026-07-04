@@ -4,33 +4,34 @@
 #include <common/types.h>
 
 /*
- * VFS-specific opcodes and TLV format strings (transport: linux_compat/ipc/rpc.h).
- * kmsg_hdr.module = vfs_server_port->service_id (see doc/ai/IPC_MESSAGE.md).
+ * VFS-specific opcodes and TLV format strings (transport:
+ * linux_compat/ipc/rpc.h). kmsg_hdr.module = vfs_server_port->service_id (see
+ * doc/ai/IPC_MESSAGE.md).
  */
 
 #define VFS_SERVER_PORT_NAME "vfs_server_port"
 
-#define VFS_CLIENT_PORT_PREFIX "vfs_client_"
+#define VFS_CLIENT_PORT_PREFIX   "vfs_client_"
 #define VFS_CLIENT_PORT_NAME_MAX 32
 
-#define KMSG_OP_VFS_OPEN     1u
-#define KMSG_OP_VFS_CLOSE    2u
-#define KMSG_OP_VFS_READ     3u
-#define KMSG_OP_VFS_WRITE    4u
-#define KMSG_OP_VFS_FSTAT    5u
-#define KMSG_OP_VFS_STAT     6u
-#define KMSG_OP_VFS_LSEEK    7u
-#define KMSG_OP_VFS_GETCWD      8u
-#define KMSG_OP_VFS_CHDIR       9u
-#define KMSG_OP_VFS_DUP3        10u
-#define KMSG_OP_VFS_PIPE2       11u
-#define KMSG_OP_VFS_MKDIRAT     12u
-#define KMSG_OP_VFS_UNLINKAT    13u
-#define KMSG_OP_VFS_NEWFSTATAT  14u
+#define KMSG_OP_VFS_OPEN       1u
+#define KMSG_OP_VFS_CLOSE      2u
+#define KMSG_OP_VFS_READ       3u
+#define KMSG_OP_VFS_WRITE      4u
+#define KMSG_OP_VFS_FSTAT      5u
+#define KMSG_OP_VFS_STAT       6u
+#define KMSG_OP_VFS_LSEEK      7u
+#define KMSG_OP_VFS_GETCWD     8u
+#define KMSG_OP_VFS_CHDIR      9u
+#define KMSG_OP_VFS_DUP3       10u
+#define KMSG_OP_VFS_PIPE2      11u
+#define KMSG_OP_VFS_MKDIRAT    12u
+#define KMSG_OP_VFS_UNLINKAT   13u
+#define KMSG_OP_VFS_NEWFSTATAT 14u
 
 /* Response: single i64 (Linux errno or non-negative syscall result). */
-#define KMSG_OP_VFS_RESP     0u
-#define VFS_KMSG_FMT_RESP    "q"
+#define KMSG_OP_VFS_RESP  0u
+#define VFS_KMSG_FMT_RESP "q"
 
 /*
  * Request TLV format strings (without reply port).

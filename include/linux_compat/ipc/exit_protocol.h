@@ -9,7 +9,9 @@
  * Payload is a wakeup hook only; reaping uses exit_state (see sys_wait.c).
  */
 
-#define KMSG_OP_PROC_EXIT_NOTIFY 1u
-#define LINUX_KMSG_FMT_EXIT_NOTIFY "qi"
+#define KMSG_OP_PROC_EXIT_NOTIFY      1u
+#define KMSG_OP_PROC_WAIT_INTERRUPT   2u
+#define LINUX_KMSG_FMT_EXIT_NOTIFY    "qi"
+#define LINUX_KMSG_FMT_WAIT_INTERRUPT "q"
 
 #endif /* _LINUX_COMPAT_IPC_EXIT_PROTOCOL_H_ */

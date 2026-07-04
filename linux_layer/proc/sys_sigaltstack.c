@@ -25,7 +25,8 @@ static int signal_copy_stack_t_from_user(VSpace *vs, u64 user_ptr, stack_t *out)
                 return -LINUX_EFAULT;
         }
 
-        e = linux_mm_load_from_user(vs, user_ptr, &out->ss_sp, sizeof(out->ss_sp));
+        e = linux_mm_load_from_user(
+                vs, user_ptr, &out->ss_sp, sizeof(out->ss_sp));
         if (e != REND_SUCCESS) {
                 return -LINUX_EFAULT;
         }
@@ -55,7 +56,8 @@ static int signal_copy_stack_t_to_user(VSpace *vs, u64 user_ptr,
                 return -LINUX_EFAULT;
         }
 
-        e = linux_mm_store_to_user(vs, user_ptr, &kstack->ss_sp, sizeof(kstack->ss_sp));
+        e = linux_mm_store_to_user(
+                vs, user_ptr, &kstack->ss_sp, sizeof(kstack->ss_sp));
         if (e != REND_SUCCESS) {
                 return -LINUX_EFAULT;
         }
@@ -121,7 +123,9 @@ i64 sys_sigaltstack(u64 ss_ptr, u64 old_ss_ptr)
         if (old_ss_ptr != 0) {
                 stack_t old_stack;
 
-                memcpy(&old_stack, &thread_append->alt_stack, sizeof(old_stack));
+                memcpy(&old_stack,
+                       &thread_append->alt_stack,
+                       sizeof(old_stack));
                 if (old_stack.ss_sp == NULL
                     || (old_stack.ss_flags & SS_DISABLE)) {
                         old_stack.ss_sp = NULL;
@@ -149,23 +153,27 @@ i64 sys_sigaltstack(u64 ss_ptr, u64 old_ss_ptr)
 
                 ret = signal_validate_new_altstack(&new_stack);
                 if (ret != 0) {
-                        pr_debug("[SIGNAL] sigaltstack reject flags=0x%x size=%lu sp=%p ret=%d\n",
-                                 new_stack.ss_flags,
-                                 (unsigned long)new_stack.ss_size,
-                                 new_stack.ss_sp,
-                                 ret);
+                        pr_debug(
+                                "[SIGNAL] sigaltstack reject flags=0x%x size=%lu sp=%p ret=%d\n",
+                                new_stack.ss_flags,
+                                (unsigned long)new_stack.ss_size,
+                                new_stack.ss_sp,
+                                ret);
                         return ret;
                 }
 
                 if (new_stack.ss_flags & SS_DISABLE) {
-                        memset(&thread_append->alt_stack, 0,
+                        memset(&thread_append->alt_stack,
+                               0,
                                sizeof(thread_append->alt_stack));
                         thread_append->alt_stack.ss_flags = SS_DISABLE;
                         return 0;
                 }
 
                 new_stack.ss_flags &= ~SS_ONSTACK;
-                memcpy(&thread_append->alt_stack, &new_stack, sizeof(new_stack));
+                memcpy(&thread_append->alt_stack,
+                       &new_stack,
+                       sizeof(new_stack));
         }
 
         return 0;

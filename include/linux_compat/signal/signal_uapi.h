@@ -36,8 +36,8 @@ static inline error_t linux_copy_sigaction_from_user(VSpace* vs, u64 user_act,
         if (!vs || !out || user_act == 0) {
                 return -E_IN_PARAM;
         }
-        return linux_mm_load_from_user(vs, user_act, out,
-                                      (size_t)LINUX_UAPI_SIGACTION_SIZE);
+        return linux_mm_load_from_user(
+                vs, user_act, out, (size_t)LINUX_UAPI_SIGACTION_SIZE);
 }
 
 static inline error_t linux_copy_sigaction_to_user(VSpace* vs, u64 user_act,
@@ -46,8 +46,8 @@ static inline error_t linux_copy_sigaction_to_user(VSpace* vs, u64 user_act,
         if (!vs || !in || user_act == 0) {
                 return -E_IN_PARAM;
         }
-        return linux_mm_store_to_user(vs, user_act, in,
-                                      (size_t)LINUX_UAPI_SIGACTION_SIZE);
+        return linux_mm_store_to_user(
+                vs, user_act, in, (size_t)LINUX_UAPI_SIGACTION_SIZE);
 }
 
 #endif /* _LINUX_COMPAT_SIGNAL_UAPI_H_ */

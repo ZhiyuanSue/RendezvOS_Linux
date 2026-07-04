@@ -38,9 +38,8 @@ u64 sys_brk(u64 new_brk)
         } else if (new_aligned < old_aligned) {
                 /* Shrink: unmap/free pages. */
                 u64 page_num = (old_aligned - new_aligned) / PAGE_SIZE;
-                (void)linux_mm_unmap_user_range(tcb->vs,
-                                                (vaddr)new_aligned,
-                                                (size_t)page_num);
+                (void)linux_mm_unmap_user_range(
+                        tcb->vs, (vaddr)new_aligned, (size_t)page_num);
         }
 
         pa->brk = new_brk;

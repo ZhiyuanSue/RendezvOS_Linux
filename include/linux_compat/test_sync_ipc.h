@@ -10,7 +10,8 @@
  * - clean_server calls linux_user_test_notify_exit with the test cookie
  * - user_test_runner waits for linux_test_done_cookie[cpu] to match
  *
- * Uses KMSG_OP_CLEAN_THREAD_REAP / LINUX_KMSG_FMT_THREAD_REAP from clean_protocol.h.
+ * Uses KMSG_OP_CLEAN_THREAD_REAP / LINUX_KMSG_FMT_THREAD_REAP from
+ * clean_protocol.h.
  */
 
 #endif

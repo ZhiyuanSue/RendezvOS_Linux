@@ -10,7 +10,8 @@
  * Arch-specific save/restore of the user-visible syscall trap frame for
  * rt_sigreturn. Implementations live in linux_layer/signal/arch/.
  */
-void linux_signal_arch_save_context(struct trap_frame* tf, Arch_Task_Context* ctx,
+void linux_signal_arch_save_context(struct trap_frame* tf,
+                                    Arch_Task_Context* ctx,
                                     linux_signal_restore_t* rs);
 
 void linux_signal_arch_restore_context(struct trap_frame* tf,

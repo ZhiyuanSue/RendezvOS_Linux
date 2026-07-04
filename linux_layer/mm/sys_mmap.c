@@ -76,8 +76,7 @@ u64 sys_mmap(u64 addr, u64 length, i64 prot, i64 flags, i64 fd, u64 offset)
 
         const int max_probes = 256;
         for (int i = 0; i < max_probes; i++) {
-                if (hint >= USER_SPACE_TOP
-                    || (vaddr)(hint + len_aligned) < hint
+                if (hint >= USER_SPACE_TOP || (vaddr)(hint + len_aligned) < hint
                     || (vaddr)(hint + len_aligned) > USER_SPACE_TOP) {
                         break;
                 }

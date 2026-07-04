@@ -30,6 +30,8 @@
 
 ### Layer A — `linux_layer/signal/signal_queue.c`
 
+**Sleep / wait / RPC 协调（2026-06）**：`block_on_receive` 时按 `port_ptr` 分发 sleep / wait（`thread_lookup`）/ RPC reply（`IPC_RECV_INTERRUPT`）；均不 `ready`。信号仍在 pending + syscall 出口 Layer B 投递。详见 [`TIME_SUBSYSTEM_PLAN.md`](TIME_SUBSYSTEM_PLAN.md) §11.2。
+
 - Queue to process + thread pending; wake non-running target
 - `linux_queue_signal_thread()` for thread-directed queue
 - **SIGCHLD**: `sys_exit` queues to parent unless parent has `SA_NOCLDWAIT`

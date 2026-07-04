@@ -92,8 +92,8 @@ static error_t linux_handle_cow_fault(vaddr fault_addr, bool is_write,
          * - old_flags (from page table): read-only
          * - But the page should be writable according to radix tree flags
          *
-         * We can't directly check radix tree flags here without a query interface,
-         * so we rely on the fact that:
+         * We can't directly check radix tree flags here without a query
+         * interface, so we rely on the fact that:
          * - If page is mapped and read-only, it might be COW
          * - linux_mm_remap_user_leaf verifies radix tree state
          */
@@ -113,7 +113,8 @@ static error_t linux_handle_cow_fault(vaddr fault_addr, bool is_write,
          * At this point, we have a write fault on a present, read-only page.
          * This could be:
          * 1. A COW page (radix tree says writable, page table says read-only)
-         * 2. A true read-only page (both radix tree and page table say read-only)
+         * 2. A true read-only page (both radix tree and page table say
+         * read-only)
          *
          * We attempt COW split; remap helper distinguishes
          * between these cases and return appropriate error codes.
@@ -130,13 +131,15 @@ static error_t linux_handle_cow_fault(vaddr fault_addr, bool is_write,
         /* Step 4: Copy page content using map_handler_copy_page() */
         error_t e = map_handler_copy_page(handler, new_ppn, old_ppn);
         if (e != REND_SUCCESS) {
-                pr_error("[MM] COW: Failed to copy page content (e=%d)\n", (int)e);
+                pr_error("[MM] COW: Failed to copy page content (e=%d)\n",
+                         (int)e);
                 pmm->pmm_free(pmm, new_ppn, 1);
                 return e;
         }
 
         if (!vs->root_radix) {
-                pr_error("[MM] COW: vs has no radix root va=0x%lx\n", fault_addr);
+                pr_error("[MM] COW: vs has no radix root va=0x%lx\n",
+                         fault_addr);
                 pmm->pmm_free(pmm, new_ppn, 1);
                 return -E_RENDEZVOS;
         }
@@ -162,10 +165,10 @@ static error_t linux_handle_cow_fault(vaddr fault_addr, bool is_write,
         return REND_SUCCESS;
 }
 
-static void linux_compat_deliver_segv_or_fatal(struct trap_frame* tf)
+static void linux_compat_deliver_segv_or_fatal(struct trap_frame *tf)
 {
-        Thread_Base* th = get_cpu_current_thread();
-        Tcb_Base* task = th ? th->belong_tcb : NULL;
+        Thread_Base *th = get_cpu_current_thread();
+        Tcb_Base *task = th ? th->belong_tcb : NULL;
 
         if (task) {
                 (void)linux_queue_signal(task, SIGSEGV, task->pid);
@@ -211,10 +214,9 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
         bool is_kernel = arch_int_from_kernel(tf);
 
         if (fault_addr < PAGE_SIZE) {
-                pr_error(
-                        "[MM] NULL pointer access at 0x%lx (is_kernel=%d)\n",
-                        fault_addr,
-                        is_kernel);
+                pr_error("[MM] NULL pointer access at 0x%lx (is_kernel=%d)\n",
+                         fault_addr,
+                         is_kernel);
                 if (is_kernel) {
                         kernel_panic("NULL pointer dereference in kernel\n");
                 } else {
@@ -255,7 +257,8 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
 
         /*
          * Category 2: Lazy allocation.
-         * Page not mapped, but exists in radix tree with appropriate permissions.
+         * Page not mapped, but exists in radix tree with appropriate
+         * permissions.
          *
          * This is the core of demand paging: allocate physical pages on first
          * access rather than pre-allocating. This saves memory and allows
@@ -263,8 +266,7 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
          */
         if (!page_mapped && in_radix) {
                 if (nflags & PAGE_ENTRY_VALID) {
-                        error_t re =
-                                linux_mm_reinstall_user_pte(vs, aligned);
+                        error_t re = linux_mm_reinstall_user_pte(vs, aligned);
                         if (re == REND_SUCCESS)
                                 return;
                         goto unhandled_fault;
@@ -305,8 +307,8 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
          * Category 3: COW write fault.
          * Page present + read-only, with radix tree saying writable.
          *
-         * We determine this is a write fault based on radix tree flags, not hardware
-         * registers.
+         * We determine this is a write fault based on radix tree flags, not
+         * hardware registers.
          */
         if (page_mapped && radix_is_write && is_present
             && !(pt_flags & PAGE_ENTRY_WRITE)) {
@@ -317,10 +319,9 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
                         if (e == REND_SUCCESS) {
                                 return;
                         }
-                        pr_error(
-                                "[MM] COW handling failed at 0x%lx: e=%d\n",
-                                fault_addr,
-                                (int)e);
+                        pr_error("[MM] COW handling failed at 0x%lx: e=%d\n",
+                                 fault_addr,
+                                 (int)e);
                         goto unhandled_fault;
                 } else {
                         /* Not COW - this is a true read-only violation */
@@ -349,8 +350,7 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
         if (!in_radix) {
                 pr_error("[MM] Access to unmapped address at 0x%lx\n",
                          fault_addr);
-                pr_error(
-                        "[MM] Not in radix - true segfault\n");
+                pr_error("[MM] Not in radix - true segfault\n");
                 goto unhandled_fault;
         }
 
@@ -358,11 +358,10 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
          * Category 6: Other faults (execution violations, etc.)
          */
         pr_error("[MM] Unhandled page fault at 0x%lx\n", fault_addr);
-        pr_error(
-                "[MM] Fault details: write=%d, present=%d, exec=%d\n",
-                is_write,
-                is_present,
-                is_execute);
+        pr_error("[MM] Fault details: write=%d, present=%d, exec=%d\n",
+                 is_write,
+                 is_present,
+                 is_execute);
 
 fatal_fault:
 unhandled_fault:

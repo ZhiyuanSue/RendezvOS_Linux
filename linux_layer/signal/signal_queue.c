@@ -2,8 +2,13 @@
 #include <common/stddef.h>
 #include <common/types.h>
 #include <linux_compat/errno.h>
+#include <linux_compat/ipc/block_wake.h>
 #include <linux_compat/proc_compat.h>
+#include <linux_compat/proc_registry.h>
+#include <linux_compat/proc/wait_ipc.h>
 #include <linux_compat/signal/signal_types.h>
+#include <linux_compat/signal/signal_deliver.h>
+#include <linux_compat/time/linux_time_sleep.h>
 #include <modules/log/log.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/sync/cas_lock.h>
@@ -41,10 +46,16 @@ static Thread_Base* signal_select_thread_helper(Tcb_Base* process, int sig)
 
         lock_cas(&process->thread_list_lock);
         /* Manually expanded list_for_each_entry_safe to avoid typeof issues */
-        for (th = container_of((process->thread_head_node.next), Thread_Base, thread_list_node), \
-             tmp = container_of((th->thread_list_node.next), Thread_Base, thread_list_node); \
-             &th->thread_list_node != &process->thread_head_node; \
-             th = tmp, tmp = container_of((tmp->thread_list_node.next), Thread_Base, thread_list_node)) {
+        for (th = container_of((process->thread_head_node.next),
+                               Thread_Base,
+                               thread_list_node),
+            tmp = container_of(
+                    (th->thread_list_node.next), Thread_Base, thread_list_node);
+             &th->thread_list_node != &process->thread_head_node;
+             th = tmp,
+            tmp = container_of((tmp->thread_list_node.next),
+                               Thread_Base,
+                               thread_list_node)) {
                 pick = th;
                 break;
         }
@@ -71,13 +82,16 @@ void linux_signal_flush_pending(Tcb_Base* target, int sig)
         sigdelset(&proc_append->pending_signals, sig);
 
         lock_cas(&target->thread_list_lock);
-        for (th = container_of((target->thread_head_node.next), Thread_Base,
-                              thread_list_node),
-             tmp = container_of((th->thread_list_node.next), Thread_Base,
-                                thread_list_node);
+        for (th = container_of((target->thread_head_node.next),
+                               Thread_Base,
+                               thread_list_node),
+            tmp = container_of(
+                    (th->thread_list_node.next), Thread_Base, thread_list_node);
              &th->thread_list_node != &target->thread_head_node;
-             th = tmp, tmp = container_of((tmp->thread_list_node.next),
-                                          Thread_Base, thread_list_node)) {
+             th = tmp,
+            tmp = container_of((tmp->thread_list_node.next),
+                               Thread_Base,
+                               thread_list_node)) {
                 linux_thread_append_t* thread_append = linux_thread_append(th);
 
                 if (thread_append) {
@@ -102,7 +116,40 @@ static i64 signal_queue_on_thread_helper(Tcb_Base* target,
         sigaddset(&proc_append->pending_signals, sig);
         sigaddset(&thread_append->pending_signals, sig);
 
-        if (thread_get_status(target_thread) != thread_status_running) {
+        /*
+         * IPC block uses thread_status_block_on_send / block_on_receive (see
+         * core/kernel/ipc/ipc.c recv_msg/send_msg). Those threads must be woken
+         * by a message on their port_ptr, not thread_set_status(ready).
+         *
+         * nanosleep: block_on_receive on sleep_port → TIMER_CANCEL kmsg.
+         * wait4: wait_port_<pid> → WAIT_INTERRUPT (lookup only, no create).
+         * RPC reply ports → IPC_RECV_INTERRUPT (see ipc_block_wake.c).
+         */
+        if (thread_get_status(target_thread)
+            == thread_status_block_on_receive) {
+                Message_Port_t* blocked_port =
+                        (Message_Port_t*)target_thread->port_ptr;
+                char wait_name[PROC_WAIT_PORT_NAME_MAX];
+                Message_Port_t* wait_port = NULL;
+
+                if (blocked_port && thread_append->sleep_port
+                    && blocked_port == thread_append->sleep_port) {
+                        linux_time_sleep_wake_for_signal(target_thread);
+                } else if (blocked_port
+                           && proc_format_wait_port_name(
+                                      wait_name, sizeof(wait_name), target->pid)
+                                      != 0
+                           && (wait_port = thread_lookup_port(wait_name))
+                           && blocked_port == wait_port) {
+                        linux_proc_wait_wake_for_signal(target_thread, target);
+                } else if (blocked_port) {
+                        linux_ipc_recv_wake_for_signal(target_thread,
+                                                       blocked_port);
+                }
+        } else if (thread_get_status(target_thread)
+                   == thread_status_block_on_send) {
+                /* send_msg block: same rule — wake via port, not ready */
+        } else if (thread_get_status(target_thread) != thread_status_running) {
                 thread_set_status(target_thread, thread_status_ready);
         }
 

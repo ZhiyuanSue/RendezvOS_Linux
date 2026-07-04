@@ -22,7 +22,8 @@
  */
 void proc_registry_init(void);
 
-/** Decimal PID string; returns bytes written (excluding NUL), or 0 on truncation. */
+/** Decimal PID string; returns bytes written (excluding NUL), or 0 on
+ * truncation. */
 size_t proc_format_pid(char* buf, size_t bufsize, pid_t pid);
 
 /** Format @c wait_port_<pid> ; returns bytes written, or 0 on truncation. */
@@ -70,7 +71,8 @@ Tcb_Base* find_zombie_child_in_pgid(pid_t ppid, pid_t pgid);
  * True if @p ppid has a non-reaped child (running or zombie).
  * When @p filter_by_pgid, only children in @p pgid match.
  */
-bool proc_parent_has_unreaped_child(pid_t ppid, pid_t pgid, bool filter_by_pgid);
+bool proc_parent_has_unreaped_child(pid_t ppid, pid_t pgid,
+                                    bool filter_by_pgid);
 
 /*
  * Unregister a process from the registry.

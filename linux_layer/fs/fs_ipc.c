@@ -19,8 +19,10 @@ static Message_Port_t* vfs_get_or_create_client_port(void)
                 return NULL;
         }
 
-        if (ipc_rpc_format_port_name(port_name, sizeof(port_name),
-                                     VFS_CLIENT_PORT_PREFIX, current->pid)
+        if (ipc_rpc_format_port_name(port_name,
+                                     sizeof(port_name),
+                                     VFS_CLIENT_PORT_PREFIX,
+                                     current->pid)
             == 0) {
                 return NULL;
         }
@@ -53,8 +55,13 @@ i64 vfs_ipc_request_response(u16 opcode, const char* fmt, ...)
         }
 
         va_start(ap, fmt);
-        ret = ipc_rpc_call_va(vfs_port, client_port, opcode, fmt,
-                              KMSG_OP_VFS_RESP, VFS_KMSG_FMT_RESP, ap);
+        ret = ipc_rpc_call_va(vfs_port,
+                              client_port,
+                              opcode,
+                              fmt,
+                              KMSG_OP_VFS_RESP,
+                              VFS_KMSG_FMT_RESP,
+                              ap);
         va_end(ap);
 
         ref_put(&vfs_port->refcount, free_message_port_ref);

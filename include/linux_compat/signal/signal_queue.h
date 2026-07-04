@@ -35,7 +35,8 @@ i64 linux_queue_signal(Tcb_Base *target, int sig, pid_t sender_tid);
  * @param sender_tid: Sender thread ID
  * @return: 0 on success, negative errno on failure
  */
-i64 linux_queue_signal_thread(Thread_Base *target_thread, int sig, pid_t sender_tid);
+i64 linux_queue_signal_thread(Thread_Base *target_thread, int sig,
+                              pid_t sender_tid);
 
 /**
  * @brief Drop a signal from process-wide and all thread pending sets.

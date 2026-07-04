@@ -5,15 +5,19 @@
 #include <linux_compat/signal/signal_context.h>
 #include <rendezvos/trap/trap.h>
 
-void linux_signal_arch_save_context(struct trap_frame* tf, Arch_Task_Context* ctx,
+void linux_signal_arch_save_context(struct trap_frame* tf,
+                                    Arch_Task_Context* ctx,
                                     linux_signal_restore_t* rs)
 {
         if (!tf || !rs) {
                 return;
         }
 
-        arch_syscall_get_user_return(tf, ctx, &rs->saved_user_pc,
-                                     &rs->saved_user_sp, &rs->saved_syscall_ret);
+        arch_syscall_get_user_return(tf,
+                                     ctx,
+                                     &rs->saved_user_pc,
+                                     &rs->saved_user_sp,
+                                     &rs->saved_syscall_ret);
 
         rs->arch.r15 = tf->r15;
         rs->arch.r14 = tf->r14;
@@ -30,8 +34,10 @@ void linux_signal_arch_save_context(struct trap_frame* tf, Arch_Task_Context* ct
         rs->arch.rdi = tf->rdi;
 }
 
-void linux_signal_arch_restore_context(struct trap_frame* tf, Arch_Task_Context* ctx,
-                                       linux_signal_restore_t* rs, vaddr user_sp)
+void linux_signal_arch_restore_context(struct trap_frame* tf,
+                                       Arch_Task_Context* ctx,
+                                       linux_signal_restore_t* rs,
+                                       vaddr user_sp)
 {
         if (!tf || !rs) {
                 return;
@@ -51,8 +57,8 @@ void linux_signal_arch_restore_context(struct trap_frame* tf, Arch_Task_Context*
         tf->rsi = rs->arch.rsi;
         tf->rdi = rs->arch.rdi;
 
-        arch_syscall_set_user_return(tf, ctx, rs->saved_user_pc, user_sp,
-                                     rs->saved_syscall_ret);
+        arch_syscall_set_user_return(
+                tf, ctx, rs->saved_user_pc, user_sp, rs->saved_syscall_ret);
 }
 
 #endif /* _X86_64_ */

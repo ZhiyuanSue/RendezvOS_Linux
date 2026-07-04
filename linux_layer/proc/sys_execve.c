@@ -29,8 +29,8 @@ extern u64 _num_app;
 #define LINUX_EXEC_MAX_ARGS 128
 
 /*
- * Phase 3a execve: single-threaded, embedded ELF by name, argv on new user stack.
- * Path A return via arch_syscall_set_user_return. No envp/auxv yet.
+ * Phase 3a execve: single-threaded, embedded ELF by name, argv on new user
+ * stack. Path A return via arch_syscall_set_user_return. No envp/auxv yet.
  */
 
 static i64 find_embedded_elf_by_name(const char *filename)
@@ -78,9 +78,9 @@ static bool exec_arg_string_valid(const char *buf, size_t cap)
         return false;
 }
 
-static i64 linux_exec_copy_argv_from_user(
-        VSpace *vs, u64 user_argv, char *arg_storage,
-        const char *kargv[LINUX_EXEC_MAX_ARGS + 1])
+static i64
+linux_exec_copy_argv_from_user(VSpace *vs, u64 user_argv, char *arg_storage,
+                               const char *kargv[LINUX_EXEC_MAX_ARGS + 1])
 {
         i64 argc = 0;
         error_t e;
@@ -189,7 +189,8 @@ static vaddr build_initial_stack(VSpace *vs, vaddr stack_top, i64 argc,
 
         string_va = strings_base;
         for (i = 0; i < argc; i++) {
-                e = exec_store_u64(vs, argv_ptr_area + (u64)i * sizeof(u64),
+                e = exec_store_u64(vs,
+                                   argv_ptr_area + (u64)i * sizeof(u64),
                                    (u64)string_va);
                 if (e != REND_SUCCESS) {
                         return 0;
@@ -197,9 +198,7 @@ static vaddr build_initial_stack(VSpace *vs, vaddr stack_top, i64 argc,
                 string_va += (vaddr)(strlen(kargv[i]) + 1);
         }
 
-        e = exec_store_u64(vs,
-                           argv_ptr_area + (u64)argc * sizeof(u64),
-                           0);
+        e = exec_store_u64(vs, argv_ptr_area + (u64)argc * sizeof(u64), 0);
         if (e != REND_SUCCESS) {
                 return 0;
         }
@@ -236,14 +235,15 @@ static void linux_exec_reset_proc_state(Tcb_Base *task)
  * return errno to a trap frame that still points at the old user PC/SP.
  */
 static void linux_exec_abort_unrecoverable(struct allocator *alloc,
-                                           char *arg_storage,
-                                           const char *what, error_t e)
+                                           char *arg_storage, const char *what,
+                                           error_t e)
 {
         if (alloc && arg_storage) {
                 alloc->m_free(alloc, arg_storage);
         }
         pr_error("[EXEC] %s failed after commit (e=%d), terminating task\n",
-                 what, (int)e);
+                 what,
+                 (int)e);
         linux_fatal_user_fault(128 + SIGKILL);
 }
 
@@ -261,10 +261,9 @@ static void linux_exec_wait_remote_tlb_quiesce(VSpace *vs)
                 bool remote_busy = false;
 
                 lock_cas(&vs->tlb_cpu_mask_lock);
-                for (u32 cpu = 0; cpu < (u32)RENDEZVOS_MAX_CPU_NUMBER;
-                     cpu++) {
-                        if (!BITMAP_OPS(vs_tlb_cpu_bitmap, test)(
-                                    &vs->tlb_cpu_mask, cpu)) {
+                for (u32 cpu = 0; cpu < (u32)RENDEZVOS_MAX_CPU_NUMBER; cpu++) {
+                        if (!BITMAP_OPS(vs_tlb_cpu_bitmap,
+                                        test)(&vs->tlb_cpu_mask, cpu)) {
                                 continue;
                         }
                         if (cpu != (u32)self) {
@@ -369,22 +368,22 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
                         alloc->m_free(alloc, arg_storage);
                         return -LINUX_EAGAIN;
                 }
-                linux_exec_abort_unrecoverable(alloc, arg_storage,
-                                               "vspace_clear_user_mappings",
-                                               e);
+                linux_exec_abort_unrecoverable(
+                        alloc, arg_storage, "vspace_clear_user_mappings", e);
         }
 
         e = load_elf_to_vs(elf_start, elf_end, vs, NULL);
         if (e != REND_SUCCESS) {
-                linux_exec_abort_unrecoverable(alloc, arg_storage,
-                                               "load_elf_to_vs", e);
+                linux_exec_abort_unrecoverable(
+                        alloc, arg_storage, "load_elf_to_vs", e);
         }
 
         entry_addr = ((Elf64_Ehdr *)elf_start)->e_entry;
 
         user_sp = generate_user_stack(vs);
         if (!user_sp) {
-                linux_exec_abort_unrecoverable(alloc, arg_storage,
+                linux_exec_abort_unrecoverable(alloc,
+                                               arg_storage,
                                                "generate_user_stack",
                                                -E_RENDEZVOS);
         }
@@ -394,9 +393,8 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
         alloc->m_free(alloc, arg_storage);
         arg_storage = NULL;
         if (initial_stack_sp == 0) {
-                linux_exec_abort_unrecoverable(alloc, NULL,
-                                               "build_initial_stack",
-                                               -E_RENDEZVOS);
+                linux_exec_abort_unrecoverable(
+                        alloc, NULL, "build_initial_stack", -E_RENDEZVOS);
         }
 
         linux_exec_reset_proc_state(current);

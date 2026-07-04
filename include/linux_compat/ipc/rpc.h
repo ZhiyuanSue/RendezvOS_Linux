@@ -52,9 +52,8 @@ i64 ipc_rpc_call_named_va(const char* server_port_name,
                           const char* req_fmt, u16 resp_opcode,
                           const char* resp_fmt, va_list ap);
 
-i64 ipc_rpc_call_named(const char* server_port_name,
-                       Message_Port_t* reply_port, u16 req_opcode,
-                       const char* req_fmt, ...);
+i64 ipc_rpc_call_named(const char* server_port_name, Message_Port_t* reply_port,
+                       u16 req_opcode, const char* req_fmt, ...);
 
 bool ipc_rpc_send_reply(u16 module, u16 resp_opcode, const char* resp_fmt,
                         const char* reply_port_name, i64 result);

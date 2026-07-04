@@ -16,8 +16,8 @@
 
 i64 sys_getcwd(u64 user_buf, u64 size)
 {
-        Tcb_Base* current = get_cpu_current_task();
-        VSpace* vs;
+        Tcb_Base *current = get_cpu_current_task();
+        VSpace *vs;
         error_t e;
         i64 ipc_ret;
 
@@ -30,8 +30,8 @@ i64 sys_getcwd(u64 user_buf, u64 size)
                 return -LINUX_EFAULT;
         }
 
-        ipc_ret = vfs_ipc_request_response(KMSG_OP_VFS_GETCWD, VFS_KMSG_FMT_GETCWD,
-                                           user_buf, size);
+        ipc_ret = vfs_ipc_request_response(
+                KMSG_OP_VFS_GETCWD, VFS_KMSG_FMT_GETCWD, user_buf, size);
         if (ipc_ret < 0) {
                 return ipc_ret;
         }
@@ -89,7 +89,8 @@ i64 sys_openat(i32 dirfd, u64 user_pathname, i32 flags, u64 mode)
                 return -LINUX_EFAULT;
         }
 
-        e = linux_mm_load_from_user(vs, user_pathname, pathname, sizeof(pathname));
+        e = linux_mm_load_from_user(
+                vs, user_pathname, pathname, sizeof(pathname));
         if (e != REND_SUCCESS) {
                 return -LINUX_EFAULT;
         }
@@ -158,7 +159,8 @@ i64 sys_chdir(u64 user_pathname)
                 return -LINUX_EFAULT;
         }
 
-        e = linux_mm_load_from_user(vs, user_pathname, pathname, sizeof(pathname));
+        e = linux_mm_load_from_user(
+                vs, user_pathname, pathname, sizeof(pathname));
         if (e != REND_SUCCESS) {
                 return -LINUX_EFAULT;
         }
@@ -186,7 +188,8 @@ i64 sys_mkdir(u64 user_pathname, u32 mode)
                 return -LINUX_EFAULT;
         }
 
-        e = linux_mm_load_from_user(vs, user_pathname, pathname, sizeof(pathname));
+        e = linux_mm_load_from_user(
+                vs, user_pathname, pathname, sizeof(pathname));
         if (e != REND_SUCCESS) {
                 return -LINUX_EFAULT;
         }
@@ -212,7 +215,8 @@ i64 sys_unlink(u64 user_pathname)
                 return -LINUX_EFAULT;
         }
 
-        e = linux_mm_load_from_user(vs, user_pathname, pathname, sizeof(pathname));
+        e = linux_mm_load_from_user(
+                vs, user_pathname, pathname, sizeof(pathname));
         if (e != REND_SUCCESS) {
                 return -LINUX_EFAULT;
         }
@@ -243,8 +247,8 @@ i64 sys_pipe2(u64 user_pipefd, i32 flags)
         (void)user_pipefd;
         (void)flags;
 
-        ipc_ret = vfs_ipc_request_response(KMSG_OP_VFS_PIPE2, VFS_KMSG_FMT_PIPE2,
-                                          user_pipefd, flags);
+        ipc_ret = vfs_ipc_request_response(
+                KMSG_OP_VFS_PIPE2, VFS_KMSG_FMT_PIPE2, user_pipefd, flags);
         if (ipc_ret < 0) {
                 return ipc_ret;
         }
@@ -253,8 +257,8 @@ i64 sys_pipe2(u64 user_pipefd, i32 flags)
 
 i64 sys_mkdirat(i32 dirfd, u64 user_pathname, u32 mode)
 {
-        Tcb_Base* current = get_cpu_current_task();
-        VSpace* vs;
+        Tcb_Base *current = get_cpu_current_task();
+        VSpace *vs;
         char pathname[256];
         error_t e;
         i64 ipc_ret;
@@ -268,15 +272,19 @@ i64 sys_mkdirat(i32 dirfd, u64 user_pathname, u32 mode)
                 return -LINUX_EFAULT;
         }
 
-        e = linux_mm_load_from_user(vs, user_pathname, pathname, sizeof(pathname));
+        e = linux_mm_load_from_user(
+                vs, user_pathname, pathname, sizeof(pathname));
         if (e != REND_SUCCESS) {
                 return -LINUX_EFAULT;
         }
 
         pathname[sizeof(pathname) - 1] = '\0';
 
-        ipc_ret = vfs_ipc_request_response(KMSG_OP_VFS_MKDIRAT, VFS_KMSG_FMT_MKDIRAT,
-                                          dirfd, pathname, mode);
+        ipc_ret = vfs_ipc_request_response(KMSG_OP_VFS_MKDIRAT,
+                                           VFS_KMSG_FMT_MKDIRAT,
+                                           dirfd,
+                                           pathname,
+                                           mode);
         if (ipc_ret < 0) {
                 return ipc_ret;
         }
@@ -308,8 +316,8 @@ i64 sys_dup3(i32 oldfd, i32 newfd, i32 flags)
         (void)newfd;
         (void)flags;
 
-        ipc_ret = vfs_ipc_request_response(KMSG_OP_VFS_DUP3, VFS_KMSG_FMT_DUP3,
-                                          oldfd, newfd, flags);
+        ipc_ret = vfs_ipc_request_response(
+                KMSG_OP_VFS_DUP3, VFS_KMSG_FMT_DUP3, oldfd, newfd, flags);
         if (ipc_ret < 0) {
                 return ipc_ret;
         }

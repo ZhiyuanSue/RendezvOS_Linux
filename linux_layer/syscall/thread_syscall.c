@@ -14,6 +14,7 @@
 #include <rendezvos/task/tcb.h>
 #include <linux_compat/ipc/clean_protocol.h>
 #include <linux_compat/ipc/exit_protocol.h>
+#include <linux_compat/time/linux_time_sleep.h>
 #include <linux_compat/test_sync_ipc.h>
 #include <linux_compat/fault.h>
 #include <linux_compat/test_runner.h>
@@ -28,13 +29,18 @@ void sys_exit(i64 exit_code)
         if (!self)
                 goto out;
 
+        linux_time_sleep_port_teardown(self);
+
         if (task && task->vs) {
                 linux_thread_append_t* ta = linux_thread_append(self);
 
-                if (ta && ta->clear_tid && linux_vspace_is_user_table(task->vs)) {
+                if (ta && ta->clear_tid
+                    && linux_vspace_is_user_table(task->vs)) {
                         i32 zero = 0;
 
-                        if (linux_mm_store_to_user(task->vs, ta->clear_tid, &zero,
+                        if (linux_mm_store_to_user(task->vs,
+                                                   ta->clear_tid,
+                                                   &zero,
                                                    sizeof(zero))
                             != REND_SUCCESS) {
                                 pr_warn("[PROC] sys_exit: clear_tid write failed\n");
@@ -81,11 +87,14 @@ void sys_exit(i64 exit_code)
                                 parent_exists = true;
 
                                 if (parent_pa) {
-                                        chld_disp = &parent_pa->signal_dispositions
-                                                             [SIGCHLD - 1];
-                                        if (!(chld_disp->sa_flags & SA_NOCLDWAIT)) {
+                                        chld_disp =
+                                                &parent_pa->signal_dispositions
+                                                         [SIGCHLD - 1];
+                                        if (!(chld_disp->sa_flags
+                                              & SA_NOCLDWAIT)) {
                                                 (void)linux_queue_signal(
-                                                        parent_task, SIGCHLD,
+                                                        parent_task,
+                                                        SIGCHLD,
                                                         task->pid);
                                         }
                                 }
@@ -96,16 +105,16 @@ void sys_exit(i64 exit_code)
                                         /*
                                          * Wakeup hook for parent wait4: parent
                                          * blocks on recv_msg(wait_port) then
-                                         * reaps via exit_state (see sys_wait.c).
-                                         * Payload is not the reap source of truth.
+                                         * reaps via exit_state (see
+                                         * sys_wait.c). Payload is not the reap
+                                         * source of truth.
                                          */
-                                        Msg_Data_t* exit_md =
-                                                kmsg_create(
-                                                        wait_port->service_id,
-                                                        KMSG_OP_PROC_EXIT_NOTIFY,
-                                                        LINUX_KMSG_FMT_EXIT_NOTIFY,
-                                                        (i64)task->pid,
-                                                        (i32)exit_code);
+                                        Msg_Data_t* exit_md = kmsg_create(
+                                                wait_port->service_id,
+                                                KMSG_OP_PROC_EXIT_NOTIFY,
+                                                LINUX_KMSG_FMT_EXIT_NOTIFY,
+                                                (i64)task->pid,
+                                                (i32)exit_code);
                                         if (exit_md) {
                                                 Message_t* exit_msg =
                                                         create_message_with_msg(
@@ -115,8 +124,10 @@ void sys_exit(i64 exit_code)
                                                                 enqueue_msg_for_send(
                                                                         exit_msg);
                                                         if (e == REND_SUCCESS) {
-                                                                e = send_msg(wait_port);
-                                                                if (e != REND_SUCCESS) {
+                                                                e = send_msg(
+                                                                        wait_port);
+                                                                if (e
+                                                                    != REND_SUCCESS) {
                                                                         pr_error(
                                                                                 "[PROC] sys_exit: Failed to send exit message: %d\n",
                                                                                 (int)e);
@@ -131,7 +142,8 @@ void sys_exit(i64 exit_code)
                                                                 "[PROC] sys_exit: Failed to create exit message\n");
                                                 }
                                         }
-                                        ref_put(&wait_port->refcount, free_message_port_ref);
+                                        ref_put(&wait_port->refcount,
+                                                free_message_port_ref);
                                 } else {
                                         pr_warn("[PROC] sys_exit: Parent wait_port for ppid=%d not found\n",
                                                 pa->ppid);
@@ -149,15 +161,17 @@ void sys_exit(i64 exit_code)
         /*
          * Notify clean_server:
          * - Always for orphan (parent doesn't exist).
-         * - Also for linux user-test runner synchronization (cookie-based wait).
+         * - Also for linux user-test runner synchronization (cookie-based
+         * wait).
          *
          * Rationale:
-         * - `wait4` uses direct parent notification and can reap zombies without
-         *   clean_server involvement.
-         * - The linux user test framework (linux_layer/tests/user_test_runner.c)
-         *   waits on `linux_user_test_notify_exit()` which is triggered from
-         *   clean_server cleanup notifications keyed by `test_cookie`.
-         *   If we skip clean_server when parent exists, those tests can hang.
+         * - `wait4` uses direct parent notification and can reap zombies
+         * without clean_server involvement.
+         * - The linux user test framework
+         * (linux_layer/tests/user_test_runner.c) waits on
+         * `linux_user_test_notify_exit()` which is triggered from clean_server
+         * cleanup notifications keyed by `test_cookie`. If we skip clean_server
+         * when parent exists, those tests can hang.
          */
         bool need_clean_server_notify = !parent_exists;
         if (!need_clean_server_notify) {
@@ -191,7 +205,8 @@ void sys_exit(i64 exit_code)
                 ref_put(&md->refcount, md->free_data);
                 if (!msg) {
                         ref_put(&port->refcount, free_message_port_ref);
-                        pr_error("[PROC] sys_exit: create_message_with_msg failed\n");
+                        pr_error(
+                                "[PROC] sys_exit: create_message_with_msg failed\n");
                         goto out;
                 }
 
@@ -199,15 +214,17 @@ void sys_exit(i64 exit_code)
                 if (ie != REND_SUCCESS) {
                         ref_put(&msg->ms_queue_node.refcount, free_message_ref);
                         ref_put(&port->refcount, free_message_port_ref);
-                        pr_error("[PROC] sys_exit: enqueue_msg_for_send failed e=%d\n",
-                                 (int)ie);
+                        pr_error(
+                                "[PROC] sys_exit: enqueue_msg_for_send failed e=%d\n",
+                                (int)ie);
                         goto out;
                 }
 
                 ie = send_msg(port);
                 if (ie != REND_SUCCESS) {
-                        pr_error("[PROC] sys_exit: send_msg to clean_server failed e=%d\n",
-                                 (int)ie);
+                        pr_error(
+                                "[PROC] sys_exit: send_msg to clean_server failed e=%d\n",
+                                (int)ie);
                 }
                 ref_put(&port->refcount, free_message_port_ref);
         }
@@ -327,7 +344,6 @@ void sys_exit_group(i64 exit_code)
 
                 /* Set exit flag for this thread */
                 thread_or_flags(thread, THREAD_FLAG_EXIT_REQUESTED);
-
         }
 
         unlock_cas(&task->thread_list_lock);

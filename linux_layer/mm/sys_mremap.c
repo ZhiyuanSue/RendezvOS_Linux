@@ -48,7 +48,8 @@ static bool linux_mm_range_mapped(VSpace* vs, u64 addr, u64 len_bytes)
         return true;
 }
 
-static error_t linux_mremap_copy_mapped(VSpace* vs, vaddr src, vaddr dst, u64 len)
+static error_t linux_mremap_copy_mapped(VSpace* vs, vaddr src, vaddr dst,
+                                        u64 len)
 {
         return linux_mm_copy_user_range(vs, (u64)dst, (u64)src, (size_t)len);
 }
@@ -132,10 +133,7 @@ i64 sys_mremap(u64 old_address, u64 old_size, u64 new_size, u64 flags,
                 return -LINUX_ENOMEM;
 
         if (linux_mremap_copy_mapped(
-                    tcb->vs,
-                    (vaddr)old_address,
-                    (vaddr)new_mapping,
-                    old_size)
+                    tcb->vs, (vaddr)old_address, (vaddr)new_mapping, old_size)
             != REND_SUCCESS) {
                 (void)linux_mm_unmap_user_range(
                         tcb->vs,
@@ -144,10 +142,9 @@ i64 sys_mremap(u64 old_address, u64 old_size, u64 new_size, u64 flags,
                 return -LINUX_EFAULT;
         }
 
-        (void)linux_mm_unmap_user_range(
-                tcb->vs,
-                (vaddr)old_address,
-                (size_t)(old_size_aligned / PAGE_SIZE));
+        (void)linux_mm_unmap_user_range(tcb->vs,
+                                        (vaddr)old_address,
+                                        (size_t)(old_size_aligned / PAGE_SIZE));
 
         return (i64)new_mapping;
 }

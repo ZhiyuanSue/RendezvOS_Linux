@@ -41,7 +41,8 @@ i64 sys_rt_sigprocmask(i64 how_i, u64 set_ptr, u64 oldset_ptr, u64 sigsetsize)
         }
 
         if (oldset_ptr != 0) {
-                e = linux_mm_store_to_user(vs, oldset_ptr,
+                e = linux_mm_store_to_user(vs,
+                                           oldset_ptr,
                                            &thread_append->blocked_signals,
                                            sizeof(sigset_t));
                 if (e != REND_SUCCESS) {
@@ -64,13 +65,16 @@ i64 sys_rt_sigprocmask(i64 how_i, u64 set_ptr, u64 oldset_ptr, u64 sigsetsize)
 
         switch (how) {
         case SIG_BLOCK:
-                for (int i = 0; i < (int)(64 / (8 * sizeof(unsigned long))); i++) {
+                for (int i = 0; i < (int)(64 / (8 * sizeof(unsigned long)));
+                     i++) {
                         thread_append->blocked_signals.sig[i] |= new_set.sig[i];
                 }
                 break;
         case SIG_UNBLOCK:
-                for (int i = 0; i < (int)(64 / (8 * sizeof(unsigned long))); i++) {
-                        thread_append->blocked_signals.sig[i] &= ~new_set.sig[i];
+                for (int i = 0; i < (int)(64 / (8 * sizeof(unsigned long)));
+                     i++) {
+                        thread_append->blocked_signals.sig[i] &=
+                                ~new_set.sig[i];
                 }
                 break;
         case SIG_SETMASK:

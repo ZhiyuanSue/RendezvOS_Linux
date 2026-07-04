@@ -2,6 +2,7 @@
 #define _LINUX_COMPAT_SIGNAL_DELIVER_H_
 
 #include <common/stdbool.h>
+#include <rendezvos/task/tcb.h>
 #include <rendezvos/trap/trap.h>
 
 /*
@@ -25,6 +26,14 @@
  *
  * Called from syscall_entry.c before returning to user space.
  */
+/**
+ * @return true if current thread has a signal that would be delivered at
+ *         syscall return (used by sleep paths for EINTR).
+ */
+bool linux_signal_has_deliverable_pending(void);
+
+bool linux_signal_thread_has_deliverable_pending(Thread_Base *thread);
+
 /**
  * @return true if trap_frame was redirected to a user signal handler
  *         (syscall return value already written; do not clobber handler regs)

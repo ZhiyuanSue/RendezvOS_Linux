@@ -117,7 +117,8 @@ Message_Port_t* proc_get_or_create_wait_port(pid_t pid)
         if (pid <= 0) {
                 return NULL;
         }
-        if (proc_format_wait_port_name(port_name, sizeof(port_name), pid) == 0) {
+        if (proc_format_wait_port_name(port_name, sizeof(port_name), pid)
+            == 0) {
                 return NULL;
         }
 
@@ -185,10 +186,8 @@ static void proc_registry_evict_pid(pid_t pid, Tcb_Base* only_task)
                                               name_buf);
                         continue;
                 }
-                name_index_unregister(&pid_index,
-                                      existing,
-                                      (u64)tok.row_index,
-                                      name_buf);
+                name_index_unregister(
+                        &pid_index, existing, (u64)tok.row_index, name_buf);
         }
 }
 

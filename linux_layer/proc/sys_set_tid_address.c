@@ -9,7 +9,8 @@
  * set_tid_address syscall implementation for Linux compatibility.
  *
  * This syscall sets the address where the child thread ID will be cleared
- * when the thread exits. This is used by pthread libraries for join notification.
+ * when the thread exits. This is used by pthread libraries for join
+ * notification.
  *
  * When the thread exits, the kernel will:
  * 1. Clear the tidptr to 0

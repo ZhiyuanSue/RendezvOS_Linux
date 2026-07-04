@@ -53,14 +53,16 @@ i64 sys_fork(void)
         }
 
         if (!linux_vspace_is_user_table(parent->vs)) {
-                pr_error("[PROC] fork: Parent has no user vspace (radix/page tables)\n");
+                pr_error(
+                        "[PROC] fork: Parent has no user vspace (radix/page tables)\n");
                 return -LINUX_EINVAL;
         }
 
         /* Create child task structure */
         child = new_task_structure(percpu(kallocator), LINUX_PROC_APPEND_BYTES);
         if (!child) {
-                pr_error("[PROC] fork: Failed to create child task structure\n");
+                pr_error(
+                        "[PROC] fork: Failed to create child task structure\n");
                 ret = -LINUX_ENOMEM;
                 goto out;
         }
@@ -76,7 +78,8 @@ i64 sys_fork(void)
         child->vs = child_vs;
         child->pid = get_new_id(&pid_manager);
 
-        /* Initialize child proc append (do not memcpy wait_queue / exit state). */
+        /* Initialize child proc append (do not memcpy wait_queue / exit state).
+         */
         linux_proc_append_t *parent_pa = linux_proc_append(parent);
         linux_proc_append_t *child_pa = linux_proc_append(child);
         if (child_pa) {
@@ -89,9 +92,8 @@ i64 sys_fork(void)
                         child_pa->start_brk = parent_pa->brk;
                         child_pa->brk = parent_pa->brk;
                         child_pa->mmap_hint = parent_pa->mmap_hint;
-                        child_pa->pgid = parent_pa->pgid ?
-                                                 parent_pa->pgid :
-                                                 parent->pid;
+                        child_pa->pgid = parent_pa->pgid ? parent_pa->pgid :
+                                                           parent->pid;
                         memcpy(child_pa->signal_dispositions,
                                parent_pa->signal_dispositions,
                                sizeof(child_pa->signal_dispositions));
@@ -119,9 +121,9 @@ i64 sys_fork(void)
         }
 
         {
-                linux_thread_append_t* parent_ta =
+                linux_thread_append_t *parent_ta =
                         linux_thread_append(parent_thread);
-                linux_thread_append_t* child_ta =
+                linux_thread_append_t *child_ta =
                         linux_thread_append(child_thread);
 
                 if (child_ta) {
@@ -146,20 +148,22 @@ i64 sys_fork(void)
 
         e = add_thread_to_manager(percpu(core_tm), child_thread);
         if (e != REND_SUCCESS) {
-                pr_error("[PROC] fork: Failed to add child thread to scheduler: %d\n",
-                         (int)e);
+                pr_error(
+                        "[PROC] fork: Failed to add child thread to scheduler: %d\n",
+                        (int)e);
                 ret = -LINUX_EAGAIN;
                 goto out_free_thread;
         }
 
         e = register_process(child);
         if (e != REND_SUCCESS) {
-                pr_warn("[PROC] fork: Failed to register child PID: %d\n", (int)e);
+                pr_warn("[PROC] fork: Failed to register child PID: %d\n",
+                        (int)e);
         }
 
         {
-                struct trap_frame* child_tf =
-                        (struct trap_frame*)child_thread->kstack_bottom - 1;
+                struct trap_frame *child_tf =
+                        (struct trap_frame *)child_thread->kstack_bottom - 1;
 
                 (void)linux_deliver_pending_signals(child_tf);
         }

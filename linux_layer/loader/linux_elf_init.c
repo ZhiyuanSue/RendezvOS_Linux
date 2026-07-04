@@ -59,7 +59,7 @@ void *linux_elf_init_handler(Arch_Task_Context *ctx,
         }
 
         {
-                Message_Port_t* wait_port =
+                Message_Port_t *wait_port =
                         proc_get_or_create_wait_port(tcb->pid);
 
                 if (!wait_port) {

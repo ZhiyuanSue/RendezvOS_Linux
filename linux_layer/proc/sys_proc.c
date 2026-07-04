@@ -60,6 +60,7 @@ i64 sys_waitpid(i32 pid, i64* wstatus, i32 options)
          *
          * waitpid(pid, wstatus, options) == wait4(pid, wstatus, options, NULL)
          */
-        extern i64 sys_wait4(i32 pid, u64 user_wstatus, i32 options, u64 user_rusage);
+        extern i64 sys_wait4(
+                i32 pid, u64 user_wstatus, i32 options, u64 user_rusage);
         return sys_wait4(pid, (u64)(uintptr_t)wstatus, options, 0);
 }

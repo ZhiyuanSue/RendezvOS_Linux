@@ -22,6 +22,7 @@ core 仍只提供 `send_msg` / `recv_msg` / `kmsg_create` / `ipc_serial`；**不
 3. `kmsg.hdr.module` = **server port 的 `service_id`**（非硬编码常量）。
 4. 响应：默认 `opcode=0` + `"q"`（单 `i64`）；VFS 使用 `KMSG_OP_VFS_RESP`。
 5. 失败时 server **必须** `ipc_rpc_reply_best_effort`（避免 client 卡在 `recv_msg`）。
+6. **Signal EINTR**：`ipc_rpc_call*` 在 `recv_msg(reply_port)` 上阻塞；可投递信号时 `signal_queue` 向 reply port 投 `KMSG_OP_IPC_RECV_INTERRUPT`（见 `include/linux_compat/ipc/block_wake.h`），RPC 返回 `-LINUX_EINTR`。无需 VFS server 配合。
 
 ---
 

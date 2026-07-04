@@ -170,7 +170,7 @@ static void clean_handle_message(Message_t *msg)
         }
 }
 
-static void clean_server_on_message(Message_t* msg, u16 service_id)
+static void clean_server_on_message(Message_t *msg, u16 service_id)
 {
         (void)service_id;
         clean_handle_message(msg);
@@ -179,7 +179,8 @@ static void clean_server_on_message(Message_t* msg, u16 service_id)
 void clean_server_thread(void)
 {
         pr_info("[clean_server] CPU %lu: entering ipc_server_recv_loop on '%s'\n",
-                (u64)percpu(cpu_number), CLEAN_SERVER_PORT_NAME);
+                (u64)percpu(cpu_number),
+                CLEAN_SERVER_PORT_NAME);
         ipc_server_recv_loop(CLEAN_SERVER_PORT_NAME, clean_server_on_message);
 }
 

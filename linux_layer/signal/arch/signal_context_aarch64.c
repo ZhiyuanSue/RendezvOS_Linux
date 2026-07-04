@@ -5,7 +5,8 @@
 #include <linux_compat/signal/signal_context.h>
 #include <rendezvos/trap/trap.h>
 
-void linux_signal_arch_save_context(struct trap_frame* tf, Arch_Task_Context* ctx,
+void linux_signal_arch_save_context(struct trap_frame* tf,
+                                    Arch_Task_Context* ctx,
                                     linux_signal_restore_t* rs)
 {
         int i;
@@ -26,8 +27,10 @@ void linux_signal_arch_save_context(struct trap_frame* tf, Arch_Task_Context* ct
         rs->saved_user_sp = (vaddr)sp_el0;
 }
 
-void linux_signal_arch_restore_context(struct trap_frame* tf, Arch_Task_Context* ctx,
-                                       linux_signal_restore_t* rs, vaddr user_sp)
+void linux_signal_arch_restore_context(struct trap_frame* tf,
+                                       Arch_Task_Context* ctx,
+                                       linux_signal_restore_t* rs,
+                                       vaddr user_sp)
 {
         int i;
 

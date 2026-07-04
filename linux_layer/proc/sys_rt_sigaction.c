@@ -29,7 +29,8 @@ i64 sys_rt_sigaction(i64 signum_i, u64 act_ptr, u64 oldact_ptr, u64 sigsetsize)
         int signum = (int)signum_i;
         sigaction_t new_action;
 
-        if (!current || !(proc_append = linux_proc_append(current)) || !current->vs) {
+        if (!current || !(proc_append = linux_proc_append(current))
+            || !current->vs) {
                 return -LINUX_ESRCH;
         }
 
@@ -48,7 +49,8 @@ i64 sys_rt_sigaction(i64 signum_i, u64 act_ptr, u64 oldact_ptr, u64 sigsetsize)
 
         if (oldact_ptr != 0) {
                 error_t e = linux_copy_sigaction_to_user(
-                        vs, oldact_ptr,
+                        vs,
+                        oldact_ptr,
                         &proc_append->signal_dispositions[signum - 1]);
                 i64 err = linux_mm_errno_from_copy(e);
                 if (err != 0) {
@@ -59,7 +61,8 @@ i64 sys_rt_sigaction(i64 signum_i, u64 act_ptr, u64 oldact_ptr, u64 sigsetsize)
         if (act_ptr != 0) {
                 memset(&new_action, 0, sizeof(new_action));
 
-                error_t e = linux_copy_sigaction_from_user(vs, act_ptr, &new_action);
+                error_t e = linux_copy_sigaction_from_user(
+                        vs, act_ptr, &new_action);
                 i64 err = linux_mm_errno_from_copy(e);
                 if (err != 0) {
                         return err;
@@ -67,7 +70,8 @@ i64 sys_rt_sigaction(i64 signum_i, u64 act_ptr, u64 oldact_ptr, u64 sigsetsize)
 
                 if (new_action.sa_flags
                     & ~(SA_NOCLDSTOP | SA_NOCLDWAIT | SA_SIGINFO | SA_ONSTACK
-                        | SA_RESTART | SA_NODEFER | SA_RESETHAND | SA_RESTORER)) {
+                        | SA_RESTART | SA_NODEFER | SA_RESETHAND
+                        | SA_RESTORER)) {
                         return -LINUX_EINVAL;
                 }
 

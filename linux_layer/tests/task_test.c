@@ -7,7 +7,8 @@
 #include <linux_compat/elf_init.h>
 
 extern u64 _num_app;
-/* User payload slot table size (was NEXUS_PER_PAGE * 3; 512 slots per 4KiB radix row). */
+/* User payload slot table size (was NEXUS_PER_PAGE * 3; 512 slots per 4KiB
+ * radix row). */
 #define NR_MAX_TEST (512u * 3u)
 extern void* test_ptrs[NR_MAX_TEST];
 int task_test(void)

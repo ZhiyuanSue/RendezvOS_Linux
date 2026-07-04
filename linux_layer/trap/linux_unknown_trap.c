@@ -23,7 +23,8 @@
 /* Get trap interface and NR_IRQ from core */
 #include <rendezvos/trap/trap.h>
 
-/* Access core layer's percpu trap vector (defined in core/kernel/trap/trap.c) */
+/* Access core layer's percpu trap vector (defined in core/kernel/trap/trap.c)
+ */
 extern struct irq irq_vector[NR_IRQ];
 
 /*
@@ -65,7 +66,8 @@ static void linux_undefined_instruction_handler(struct trap_frame *tf)
         /*
          * Kernel mode undefined instruction: this is a kernel bug
          */
-        pr_error("[UNDEF_INSTR] Kernel mode undefined instruction - this is a BUG\n");
+        pr_error(
+                "[UNDEF_INSTR] Kernel mode undefined instruction - this is a BUG\n");
 }
 
 /*
@@ -93,8 +95,7 @@ void linux_unknown_trap_init(void)
                         register_irq_handler(
                                 i,
                                 linux_undefined_instruction_handler,
-                                IRQ_NO_ATTR
-                        );
+                                IRQ_NO_ATTR);
                         registered_count++;
                 } else {
                         skipped_count++;
@@ -102,6 +103,8 @@ void linux_unknown_trap_init(void)
         }
 
         pr_info("[UNDEF_INSTR] Registered handler for %d trap IDs, skipped %d already registered\n",
-                registered_count, skipped_count);
+                registered_count,
+                skipped_count);
 }
-DEFINE_INIT_LEVEL(linux_unknown_trap_init, 1);  /* Run after core init (level 0) */
+DEFINE_INIT_LEVEL(linux_unknown_trap_init, 1); /* Run after core init (level 0)
+                                                */
