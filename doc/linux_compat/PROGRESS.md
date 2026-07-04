@@ -1,7 +1,7 @@
 # Linux 兼容层 — 进展与追溯索引
 
 > **Purpose**: 单一入口，把 **路线图 → 实现状态 → 验证证据 → 决策** 串起来。  
-> **Last updated**: 2026-05-19
+> **Last updated**: 2026-06-13
 
 ---
 
@@ -34,53 +34,62 @@ doc/ai/DECISIONS.md      非显然设计选择（ADR-lite）
 | **0** | ✅ | syscall 框架 | — |
 | **1** | ✅ | fork/exit/wait/brk/mmap | [`archive/PHASE1_SUMMARY.md`](archive/PHASE1_SUMMARY.md) |
 | **2A–2D** | ✅ | clone + 信号 + 缺页 SIGSEGV | [`SIGNAL_IMPLEMENTATION_STATUS.md`](SIGNAL_IMPLEMENTATION_STATUS.md), [`WAIT4_IMPLEMENTATION_STATUS.md`](WAIT4_IMPLEMENTATION_STATUS.md) |
-| **2E** | 🔧 进行中 | sigaltstack / SA_ONSTACK (#21) | 测例 my_write(rdx)+内核安装时不 probe 映射 |
+| **2E** | ✅ | sigaltstack / SA_ONSTACK (#21) | 2026-06 gate #21 PASS |
 | **3** | 🔧 进行中 | execve（3a 内嵌 ELF 部分可用） | [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md) |
-| **3.5** | 📋 下一步 | **time 子系统**（gettimeofday/nanosleep/times） | [`TIME_SUBSYSTEM_PLAN.md`](TIME_SUBSYSTEM_PLAN.md) |
-| **4** | 📋 待做 | VFS + initramfs | [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md) |
+| **3.5** | ✅ | time 子系统（gettimeofday/nanosleep/times/uname） | [`TIME_SUBSYSTEM_PLAN.md`](TIME_SUBSYSTEM_PLAN.md) |
+| **4** | 📋 **下一步** | VFS + initramfs | [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md) |
 | **5** | 📋 待做 | IPC/socket/rlimit 等 | [`SYSCALLS.md`](SYSCALLS.md) |
 
-**Cross-arch gate (最新)**: 2026-05-19 — x86_64 + aarch64 **52/52 harness PASS** → [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md)
+**Cross-arch gate (最新)**: 2026-06-13 — x86_64 + aarch64 **52/52 harness PASS**（含 DAIF/sleep 修复后）→ [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md) §2026-06-13
+
+**core 前置（FS 前）**: 调度、trap/syscall、IPC、VSpace/COW、SMP boot、timer/sleep — **无大块 core 缺口**；Phase 4 在 `linux_layer` + `servers/fs`，不扩 core（见 [`GOALS_AND_CORE_CONTRACT.md`](GOALS_AND_CORE_CONTRACT.md) §4–§7）。
 
 ---
 
 ## 3. 当前缺口（按优先级）
 
-### P0 — 测例 stdout 失败（非 VFS）
+### P0 — #49 wait stdout（compat，已修）
 
-| 测例 # | 领域 | 缺口 | 负责阶段 |
-|--------|------|------|----------|
-| **21** | sigaltstack | 用户 `stack_t` 跨页 EFAULT；alt 区未校验 | **2E**（修复中） |
-| **16–17, 20** | time | 无 gettimeofday / nanosleep / times | **3.5** |
-| **19** | uname | 未实现 | 3.5 或 4 前 stub |
+| 现象 | 根因 | 状态 |
+|------|------|------|
+| #49 内三子测例 stdout FAIL（harness 仍 PASS） | `SIGCHLD` 默认动作误触发 wait4 EINTR，zombie 未 reap | **已修**；x86_64 + aarch64 post-fix **3/3 PASS** |
 
-### P1 — execve 补完（Phase 3）
+详见 [`WAIT4_IMPLEMENTATION_STATUS.md`](WAIT4_IMPLEMENTATION_STATUS.md)、verification log §2026-06-13。
+
+### P1 — execve 补完（Phase 3，可与 FS 并行）
 
 | 项 | 状态 |
 |----|------|
 | 内嵌 ELF + argv | ✅ #03/#43/#52 |
 | envp / auxv | ❌ |
 | de_thread + 完整 post-exec 清理 | ❌ |
-| FS 加载 ELF | ❌（#18 被 open 挡住） |
+| FS 加载 ELF | ❌（#18 被 open 挡住，依赖 Phase 4） |
 
 详见 [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md)。
 
-### P2 — VFS（Phase 4，time + sigaltstack 之后）
+### P2 — VFS（Phase 4，**当前主战场**）
 
-19 个 stdout FAIL 中 **14 个纯 FS**（open/pipe/dup/mkdir/mount…）；#13/#40 文件 mmap/munmap 亦依赖 open。
+约 **14 个纯 FS** stdout FAIL（open/pipe/dup/mkdir/mount…）；#13/#40 文件 mmap 亦依赖 open。脚手架已有：`vfs_server` RPC loop、`fs_ipc.c`、`sys_fs_impl.c` stubs。
+
+### P3 — time 细节（非 FS 阻塞）
+
+| 项 | 状态 |
+|----|------|
+| gettimeofday / nanosleep / clock_gettime / uname | ✅ #16–#20 |
+| `times` 真实 CPU 时间 | stub |
+| `settimeofday` | ❌（可选 polish） |
+| vDSO | **暂缓**（无 FS / 动态链接，投入产出比低） |
 
 ---
 
 ## 4. 推荐实施顺序（maintainer）
 
 ```text
-1. sigaltstack #21 修复 + 双架构验证
-2. time 子系统（见 TIME_SUBSYSTEM_PLAN.md）
-   2a. compat-only 粗粒度（jeffies）— 可选 bootstrap
-   2b. core P2 提案：单调 ns + 定时唤醒 — 正确 nanosleep
-3. execve 3b–3c（env/auxv、de_thread、状态重置）
-4. VFS Phase 4
-5. execve 3d（FS + PT_INTERP）
+1. ~~#49 wait4 SIGCHLD/EINTR 修复~~ — x86_64 + aarch64 已验证 ✅
+2. VFS Phase 4（initramfs → open/read/close → fd 表 → 消减 FS stdout FAIL）
+3. execve 3b–3c（env/auxv、de_thread）与 FS 并行
+4. execve 3d（FS + PT_INTERP，依赖 Phase 4）
+5. time polish：settimeofday、times CPU 统计（按需）
 ```
 
 ---
@@ -89,10 +98,10 @@ doc/ai/DECISIONS.md      非显然设计选择（ADR-lite）
 
 | 子系统 | 设计 | 状态 | 验证 |
 |--------|------|------|------|
-| Signal | [`SIGNAL_DELIVERY_TRAP_PATHS.md`](SIGNAL_DELIVERY_TRAP_PATHS.md) | [`SIGNAL_IMPLEMENTATION_STATUS.md`](SIGNAL_IMPLEMENTATION_STATUS.md) | log §2026-05-19 |
+| Signal | [`SIGNAL_DELIVERY_TRAP_PATHS.md`](SIGNAL_DELIVERY_TRAP_PATHS.md) | [`SIGNAL_IMPLEMENTATION_STATUS.md`](SIGNAL_IMPLEMENTATION_STATUS.md) | log §2026-06-13 |
 | Wait | [`DATA_MODEL.md`](DATA_MODEL.md) | [`WAIT4_IMPLEMENTATION_STATUS.md`](WAIT4_IMPLEMENTATION_STATUS.md) | log §#49 |
-| Exec | [`SYSCALL_USER_RETURN_AND_EXECVE.md`](SYSCALL_USER_RETURN_AND_EXECVE.md) | [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md) | 待补 gate |
-| Time | [`TIME_SUBSYSTEM_PLAN.md`](TIME_SUBSYSTEM_PLAN.md) | （随实现更新 plan 内 checklist） | #16/#17/#20 |
+| Exec | [`SYSCALL_USER_RETURN_AND_EXECVE.md`](SYSCALL_USER_RETURN_AND_EXECVE.md) | [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md) | #52 execve PASS |
+| Time | [`TIME_SUBSYSTEM_PLAN.md`](TIME_SUBSYSTEM_PLAN.md) | §0 已落地 checklist | #16–#20 |
 | VFS | [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md) | 待 Phase 4 新建 status | #10–#51 FS 集 |
 | MM | [`MM_AND_COW.md`](MM_AND_COW.md) | 分散在 Phase 1 文档 | #35 brk 等 |
 

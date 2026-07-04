@@ -4,6 +4,7 @@
 
 > **📅 2026-04-25**: Phase 1 已完成！详见 [Phase 1 总结文档](archive/PHASE1_SUMMARY.md)  
 > **📅 2026-05-19**: Phase 2 **cross-arch gate** — x86_64 + aarch64 52/52; 见 [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md)  
+> **📅 2026-06-13**: Phase 2E + 3.5 + core DAIF/sleep — 双架构 52/52；time #16–#20 PASS；**下一步 Phase 4 VFS**  
 > **追溯索引**: [`PROGRESS.md`](PROGRESS.md) — 当前缺口与文档链
 
 | 阶段 | 状态 | 目标 | 主要syscall |
@@ -15,8 +16,8 @@
 | **Phase 2C** | ✅ **完成** | **信号投递机制** | rt_sigreturn, sigaltstack, 信号处理器调用 |
 | **Phase 2D** | ✅ **完成** | **缺页信号处理** | SIGSEGV信号投递, 用户空间错误处理 |
 | **Phase 3** | 🔧 进行中 | 程序执行 | execve（3a 内嵌 ELF 部分完成） |
-| **Phase 3.5** | 📋 下一步 | 时间 | gettimeofday, nanosleep, times, clock_gettime |
-| **Phase 4** | 📋 待做 | 文件系统 | open, close, read, pipe, mount, … |
+| **Phase 3.5** | ✅ **完成** | 时间 | gettimeofday, nanosleep, times(stub), clock_gettime, uname |
+| **Phase 4** | 📋 **下一步** | 文件系统 | open, close, read, pipe, mount, … |
 | **Phase 5** | 📋 待做 | 高级功能 | socket, rlimit, 完整 IPC |
 
 ## 目标和策略
@@ -150,7 +151,8 @@ After Phase 2 proc/signal/wait work, record **paired** runs here:
 
 | Date | Gate | Result | Log |
 |------|------|--------|-----|
-| 2026-05-19 | Phase 1/2 wait+signal+fork | ✅ x86_64 + aarch64 52/52; #07/#08/#39/#41/#44/#49 stdout parity | [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md) |
+| 2026-05-19 | Phase 1/2 wait+signal+fork | ✅ x86_64 + aarch64 52/52; #07/#08/#39/#41/#44/#49 stdout parity | [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md) §2026-05-19 |
+| 2026-06-13 | Phase 2E + 3.5 time + core DAIF/sleep | ✅ 52/52 harness both arches; #16–#21/#52 PASS; #49 stdout regression noted | [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md) §2026-06-13 |
 
 **Rule**: Harness PASS is necessary but not sufficient — check #49 `Test Summary` before `[TEST 49/52] PASS`, and #44 `SIG_IGN` subtest.
 
@@ -172,23 +174,24 @@ After Phase 2 proc/signal/wait work, record **paired** runs here:
 
 ---
 
-## 📋 Phase 3.5：时间（VFS 之前）
+## 📋 Phase 3.5：时间（已完成）
 
-**计划**: [`TIME_SUBSYSTEM_PLAN.md`](TIME_SUBSYSTEM_PLAN.md)
+**计划**: [`TIME_SUBSYSTEM_PLAN.md`](TIME_SUBSYSTEM_PLAN.md)  
+**完成**: 2026-06（compat-only，无 core 变更）
 
-| Syscall | 测例 # | 优先级 |
-|---------|--------|--------|
-| `gettimeofday` | 16 | ⭐⭐⭐ |
-| `nanosleep` / `clock_nanosleep` | 17 | ⭐⭐⭐ |
-| `times` | 20 | ⭐⭐ |
-| `clock_gettime` | — | ⭐⭐ |
-| `uname` | 19 | ⭐ stub |
+| Syscall | 测例 # | 状态 |
+|---------|--------|------|
+| `gettimeofday` | 16 | ✅ |
+| `nanosleep` / `clock_nanosleep` | 17 | ✅ |
+| `times` | 20 | ✅ stub（CPU 时间未计） |
+| `clock_gettime` | — | ✅ |
+| `uname` | 19 | ✅ |
 
-**依赖**: Phase 1 调度 ✅；细粒度 sleep 可能需要 core P2（见 time 计划 §4）。
+**未做 / 暂缓**: `settimeofday`（可选）；`times` 真实 utime/stime；vDSO（无 FS/动态链接前不做）。
 
 ---
 
-## 📋 Phase 4：文件系统（time + sigaltstack 之后）
+## 📋 Phase 4：文件系统（当前下一步）
 
 **设计**: [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md)
 

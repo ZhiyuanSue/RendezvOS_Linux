@@ -188,7 +188,7 @@ static i64 wait4_block_on_port(Tcb_Base* parent, linux_proc_append_t* parent_pa,
                         return reap_ret;
                 }
 
-                if (self && linux_signal_thread_has_deliverable_pending(self)) {
+                if (self && linux_signal_wait4_should_return_eintr(self)) {
                         ref_put(&wait_port->refcount, free_message_port_ref);
                         return -LINUX_EINTR;
                 }
@@ -214,11 +214,22 @@ static i64 wait4_block_on_port(Tcb_Base* parent, linux_proc_append_t* parent_pa,
 
                 if (wait4_recv_is_interrupt(wait_port, msg)) {
                         ref_put(&msg->ms_queue_node.refcount, free_message_ref);
-                        ref_put(&wait_port->refcount, free_message_port_ref);
-                        return -LINUX_EINTR;
+                        reap_ret = wait4_reap_zombie_or(
+                                parent, parent_pa, pid, user_wstatus, 0);
+                        if (reap_ret != 0) {
+                                ref_put(&wait_port->refcount,
+                                        free_message_port_ref);
+                                return reap_ret;
+                        }
+                        if (self && linux_signal_wait4_should_return_eintr(self)) {
+                                ref_put(&wait_port->refcount,
+                                        free_message_port_ref);
+                                return -LINUX_EINTR;
+                        }
+                        continue;
                 }
 
-                if (self && linux_signal_thread_has_deliverable_pending(self)) {
+                if (self && linux_signal_wait4_should_return_eintr(self)) {
                         ref_put(&msg->ms_queue_node.refcount, free_message_ref);
                         ref_put(&wait_port->refcount, free_message_port_ref);
                         return -LINUX_EINTR;

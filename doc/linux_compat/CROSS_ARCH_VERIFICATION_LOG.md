@@ -3,7 +3,53 @@
 > **Purpose**: Record **paired** x86_64 / aarch64 runs after proc/signal/wait milestones.
 > Harness PASS alone is insufficient — compare **stdout structure** and kernel-side noise.
 
-**Last updated**: 2026-05-19 (maintainer runs: `aarch64_run.log`, `x86_64_run.log`)
+**Last updated**: 2026-06-13 (maintainer runs: `aarch64_run.log`, `x86_64_run.log`)
+
+---
+
+## 2026-06-13 — Phase 2E + 3.5 time + core DAIF/sleep gate
+
+### Global metrics
+
+| Metric | x86_64 | aarch64 |
+|--------|--------|---------|
+| Harness | **52/52 PASS**, Failed 0/52 | **52/52 PASS**, Failed 0/52 |
+| Shutdown | clean `KERNEL: System halted.` | clean |
+| SMP | 4 CPUs | 4 CPUs |
+| VFS server | `vfs_server_port` registered | same |
+| #16 gettimeofday | `[PASS]` | `[PASS]` |
+| #17 sleep/nanosleep | `sleep success` | `sleep success` |
+| #19 uname / #20 times | PASS | PASS |
+| #21 sigaltstack | PASS | PASS |
+| #52 execve | `execve success!` | `execve success!` |
+| #50/#51 open/openat | stdout `[FAIL]` (ENOSYS, expected) | same |
+
+**core 变更（本 gate 前/中，maintainer review）**: aarch64 DAIF L1/L2（syscall inherit I、`switch_to` restore outgoing DAIF）；x86 timer 细节。FS 前无新增 core 阻塞项。
+
+### #49 stdout regression（harness PASS ≠ stdout PASS）
+
+2026-05-19 gate 要求 #49 三个子测例 stdout 全 PASS；本 run **回退**：
+
+| 子测例 | x86_64 | aarch64 | 典型失败 |
+|--------|--------|---------|----------|
+| `test_fork_wait_basic` | PASS | **FAIL** | `wait4 returned PID=-1`（`-ECHILD` via libc） |
+| `test_wnohang` | **FAIL** | **FAIL** | 第二次阻塞 `wait4(pid)` → `FAIL: wait4 failed` |
+| `test_multiple_children` | **FAIL** | **FAIL** | `unexpected exit_code 0/42 from pid 67/66`（未 reap 的上一子进程 zombie） |
+
+**根因（compat）**: 子进程 `sys_exit` 向父进程 `queue SIGCHLD`；`wait4_block_on_port` 把默认 `SIGCHLD` 当作可投递信号 → `WAIT_INTERRUPT` / `-EINTR`，阻塞 wait 未 reap。遗留 zombie 被 `wait4(-1)` 先收走。
+
+**修复**: `linux_signal_wait4_should_return_eintr()` — `SIGCHLD` + `SIG_DFL`/`SIG_IGN` 不中断 wait4；`WAIT_INTERRUPT` 路径先尝试 reap 再决定是否 EINTR。
+
+**x86_64 + aarch64 修复后验证** (post-fix run logs): #49 stdout **3/3 PASS** — reaped 10/20/30 from PID 68/69/70；harness 52/52 both arches。
+
+### FS stdout backlog（Phase 4 目标）
+
+与 2026-05-19 类似，约 14 个 FS 相关测例 stdout `[FAIL]`（pipe/dup/read/close/…），harness 仍 PASS。`sys_openat` 等返回 `-ENOSYS` 直至 initramfs + vfs_server 实现。
+
+### 下一步验证
+
+- [x] #49 三子测例 stdout 3/3 PASS — **x86_64 + aarch64 post-fix** ✅
+- [ ] Phase 4 首个里程碑：`open`/`read`/`close` 让 #50 真正 `[PASS]`
 
 ---
 
@@ -128,8 +174,9 @@ WNOHANG subtest: both use `WNOHANG returned 0` → blocking wait → `Child exit
 
 ## Next verification targets (not in this gate)
 
-- Phase 3 execve user-stack / musl (ongoing in `sys_execve.c`)
+- **#49 wait4 SIGCHLD/EINTR** — stdout parity（见 §2026-06-13）
 - Phase 4 VFS (#10–#51 stdout FAIL set)
+- Phase 3 execve 3b–3d (env/auxv, FS ELF)
 - Path B signal delivery on fork bootstrap frame ([`SIGNAL_IMPLEMENTATION_STATUS.md`](SIGNAL_IMPLEMENTATION_STATUS.md))
 
 ---

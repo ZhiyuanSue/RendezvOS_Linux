@@ -50,7 +50,7 @@ void linux_proc_wait_wake_for_signal(Thread_Base *thread, Tcb_Base *process)
         if (thread_get_status(thread) != thread_status_block_on_receive) {
                 return;
         }
-        if (!linux_signal_thread_has_deliverable_pending(thread)) {
+        if (!linux_signal_wait4_should_return_eintr(thread)) {
                 return;
         }
 

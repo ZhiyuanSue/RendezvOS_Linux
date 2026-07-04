@@ -147,6 +147,50 @@ bool linux_signal_thread_has_deliverable_pending(Thread_Base *thread)
         return signal_select_pending_helper(thread_append, proc_append) != 0;
 }
 
+bool linux_signal_wait4_should_return_eintr(Thread_Base *thread)
+{
+        Tcb_Base *process;
+        linux_thread_append_t *thread_append;
+        linux_proc_append_t *proc_append;
+        int sig;
+        sigaction_t *disp;
+
+        if (!thread) {
+                return false;
+        }
+
+        process = thread->belong_tcb;
+        if (!process) {
+                return false;
+        }
+
+        thread_append = linux_thread_append(thread);
+        proc_append = linux_proc_append(process);
+        if (!thread_append || !proc_append) {
+                return false;
+        }
+
+        sig = signal_select_pending_helper(thread_append, proc_append);
+        if (sig == 0) {
+                return false;
+        }
+
+        /*
+         * Linux: wait4 is not interrupted by SIGCHLD when the disposition is
+         * default or ignore. Child exit still posts EXIT_NOTIFY on wait_port;
+         * reap uses exit_state, not the signal.
+         */
+        if (sig == SIGCHLD) {
+                disp = &proc_append->signal_dispositions[SIGCHLD - 1];
+                if (linux_signal_handler_is_dfl(disp->sa_handler)
+                    || linux_signal_handler_is_ign(disp->sa_handler)) {
+                        return false;
+                }
+        }
+
+        return true;
+}
+
 bool linux_signal_has_deliverable_pending(void)
 {
         Thread_Base *current_thread = get_cpu_current_thread();

@@ -3,7 +3,7 @@
 ## ✅ 完整实现状态
 
 **实现时间**: 2026-04-25  
-**cross-arch gate**: 2026-05-19 (x86_64 + aarch64 52/52 harness; #07/#38/#41/#49)  
+**cross-arch gate**: 2026-05-19 (stdout #49 parity) · **2026-06-13** (52/52 harness; #49 stdout regression → SIGCHLD/EINTR fix)  
 **架构**: 无需 core/ 修改，纯 linux_layer 扩展  
 **测试状态**: integrated harness PASS both arches — see [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md)
 
@@ -115,6 +115,24 @@ if (pa->exit_state == 2) {
 | 49 | fork/wait4 (basic + WNOHANG + 3 children) | PASS | PASS |
 
 **#49 multiple children** (both arches): reaped exit_code **10 / 20 / 30**; `[TEST 49/52] PASS` after `Test Summary`.
+
+### 2026-06-13 regression + fix
+
+**现象**: #49 harness PASS 但 stdout 0/3 或 1/3（见 verification log §2026-06-13）。
+
+**链式失败**:
+
+1. 子进程 `exit` → `linux_queue_signal(parent, SIGCHLD)` + `EXIT_NOTIFY` on `wait_port`
+2. `wait4_block_on_port` 在 blocking wait 时把 pending `SIGCHLD`（默认 DFL）当作 EINTR
+3. 父进程 `wait4` 返回 `-EINTR`（libc 见 `-1`），**未 reap**（`exit_state` 仍为 1）
+4. `test_multiple_children` 的 `wait4(-1)` 先收到遗留 zombie（exit 42 或 0），非 10/20/30
+
+**修复** (`linux_layer/proc/sys_wait.c`, `signal_deliver.c`, `proc_wait_ipc.c`):
+
+- `linux_signal_wait4_should_return_eintr()` — `SIGCHLD` + `SIG_DFL`/`SIG_IGN` 不中断 wait4（对齐 Linux）
+- `WAIT_INTERRUPT` 处理：先 `wait4_reap_zombie_or`，再决定是否 `-EINTR`
+
+**x86_64 + aarch64 post-fix (2026-06-13)**: #49 stdout 3/3 PASS；reaped exit_code 10/20/30（PID 68/69/70）。
 
 Full paired log checklist: [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md).
 
