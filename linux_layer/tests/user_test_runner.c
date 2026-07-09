@@ -6,30 +6,28 @@
 #include <rendezvos/task/thread_loader.h>
 #include <rendezvos/task/tcb.h>
 
-#include <linux_compat/proc_compat.h>
 #include <linux_compat/elf_init.h>
+#include <linux_compat/errno.h>
+#include <linux_compat/fs/vfs_kern_load.h>
+#include <linux_compat/fs/vfs_root_bootstrap.h>
+#include <linux_compat/initcall.h>
+#include <linux_compat/proc_compat.h>
+#include <linux_compat/test_manifest.h>
 #include <linux_compat/test_runner.h>
 #include <modules/test/test.h>
+#include <modules/elf/elf.h>
+#include <rendezvos/mm/allocator.h>
+#include <rendezvos/mm/page_slice.h>
 #include <rendezvos/system/powerd.h>
 
 #ifdef LINUX_COMPAT_TEST
 
 extern volatile i64 jeffies;
-extern u64 _num_app;
 extern volatile bool is_print_sche_info;
 
 extern int elf_read_test(void);
 
-/*
- * Improved test framework with better multi-core scalability.
- *
- * Instead of hardcoding RENDEZVOS_MAX_CPU_NUMBER, we use a dynamic
- * approach where each CPU manages its own test slot.
- *
- * For single-core testing: Only CPU 0 slot is used.
- * For multi-core testing: Each CPU uses its own slot based on cpu_number.
- */
-#define MAX_CONCURRENT_TESTS 16 /* Reasonable upper bound */
+#define MAX_CONCURRENT_TESTS 16
 
 typedef struct {
         volatile u64 cookie;
@@ -39,25 +37,15 @@ typedef struct {
 
 static test_slot_t linux_test_slots[MAX_CONCURRENT_TESTS];
 
-/*
- * Get test slot for current CPU.
- * For single-core: always returns slot 0.
- * For multi-core: returns hash(cpu_number) % MAX_CONCURRENT_TESTS.
- */
 static test_slot_t *get_test_slot(void)
 {
         cpu_id_t cpu = percpu(cpu_number);
-        /* Simple hash: use modulo to avoid hardcoding MAX_CPUS */
         u32 slot_index = (u32)cpu % MAX_CONCURRENT_TESTS;
         return &linux_test_slots[slot_index];
 }
 
 void linux_user_test_notify_exit(i32 owner_cpu, u64 cookie, i64 exit_code)
 {
-        /*
-         * Find the test slot based on owner_cpu.
-         * This avoids hardcoding RENDEZVOS_MAX_CPU_NUMBER.
-         */
         u32 slot_index = (u32)owner_cpu % MAX_CONCURRENT_TESTS;
 
         if (slot_index >= MAX_CONCURRENT_TESTS) {
@@ -69,123 +57,139 @@ void linux_user_test_notify_exit(i32 owner_cpu, u64 cookie, i64 exit_code)
         linux_test_slots[slot_index].cookie = cookie;
 }
 
-static error_t linux_spawn_and_wait_test(u64 app_index)
+static error_t linux_spawn_and_wait_test_path(const char *path, u32 test_index)
 {
-        u64 *app_start_ptr =
-                (u64 *)((vaddr)(&_num_app) + (app_index * 2 + 1) * sizeof(u64));
-        u64 *app_end_ptr =
-                (u64 *)((vaddr)(&_num_app) + (app_index * 2 + 2) * sizeof(u64));
-        u64 app_start = *(app_start_ptr);
-        u64 app_end = *(app_end_ptr);
-
+        struct allocator *alloc = percpu(kallocator);
+        struct page_slice *elf_slice = NULL;
         Thread_Base *thr = NULL;
-        error_t e = gen_task_from_elf(&thr,
-                                      LINUX_PROC_APPEND_BYTES,
-                                      LINUX_THREAD_APPEND_BYTES,
-                                      app_start,
-                                      app_end,
-                                      linux_elf_init_handler_ptr);
-        if (e || !thr) {
-                pr_error("[ LINUX USER ] Failed to spawn test %lu: e=%d\n",
-                         app_index,
+        error_t e;
+        i64 ret;
+
+        if (!path || !alloc) {
+                return -E_IN_PARAM;
+        }
+
+        ret = vfs_kern_read_file_slice(path, alloc, &elf_slice);
+        if (ret < 0 || !elf_slice) {
+                pr_error("[ LINUX USER ] Failed to read test slice '%s': %lld\n",
+                         path,
+                         (long long)ret);
+                return (error_t)ret;
+        }
+
+        e = gen_task_from_elf(&thr,
+                              LINUX_PROC_APPEND_BYTES,
+                              LINUX_THREAD_APPEND_BYTES,
+                              elf_slice,
+                              linux_elf_init_handler_ptr);
+
+        if (e != REND_SUCCESS || !thr) {
+                page_slice_destroy(&elf_slice);
+                pr_error("[ LINUX USER ] Failed to spawn '%s': e=%d\n",
+                         path,
                          (int)e);
                 return e ? e : -E_RENDEZVOS;
         }
 
         linux_thread_append_t *ta = linux_thread_append(thr);
         if (!ta) {
-                pr_error(
-                        "[ LINUX USER ] Failed to get thread append for test %lu\n",
-                        app_index);
+                pr_error("[ LINUX USER ] No thread append for '%s'\n", path);
                 return -E_RENDEZVOS;
         }
 
-        /* Get test slot for this CPU */
         test_slot_t *slot = get_test_slot();
-
         cpu_id_t cpu = percpu(cpu_number);
-        u64 cookie = ((u64)cpu << 56) ^ ((u64)jeffies << 8) ^ (app_index + 1);
-        if (cookie == 0)
+        u64 cookie = ((u64)cpu << 56) ^ ((u64)jeffies << 8)
+                     ^ ((u64)test_index + 1);
+        if (cookie == 0) {
                 cookie = 1;
+        }
 
         ta->test_cookie = cookie;
-        slot->cookie = 0; /* Clear cookie to indicate waiting */
+        slot->cookie = 0;
         slot->in_use = true;
 
-        /* Wait for test completion */
         while (slot->cookie != cookie) {
                 schedule(percpu(core_tm));
         }
 
         slot->in_use = false;
 
-        /*
-         * Treat cookie match as completion.
-         *
-         * Many user tests intentionally exercise error paths or validate exit
-         * status semantics (non-zero exits). Higher-level PASS/FAIL belongs to
-         * the user test binary itself (stdout logs) or an explicit expectation
-         * table, not the runner.
-         */
         return REND_SUCCESS;
 }
 
 static void linux_run_user_tests(void)
 {
-        pr_notice("========================================\n");
-        pr_notice(" LINUX USER TEST SUITE START\n");
-        pr_notice(" Total tests: %lu\n", _num_app);
-        pr_notice("========================================\n");
-
-        /* Disable scheduler debug output to reduce log pollution */
-        is_print_sche_info = false;
-
+        u32 total = linux_user_test_count();
+        u32 i;
         int passed = 0;
         int failed = 0;
 
-        for (u64 i = 0; i < _num_app; i++) {
+        pr_notice("========================================\n");
+        pr_notice(" LINUX USER TEST SUITE START (initramfs)\n");
+        pr_notice(" Total tests: %u\n", total);
+        pr_notice("========================================\n");
+
+        is_print_sche_info = false;
+
+        for (i = 0; i < total; i++) {
+                const char *path = linux_user_test_path(i);
+
                 pr_info("----------------------------------------\n");
-                pr_info("[TEST %02lu/%02lu] Starting\n", i + 1, _num_app);
+                pr_info("[TEST %02u/%02u] Starting: %s\n", i + 1, total, path);
                 pr_info("----------------------------------------\n");
 
-                error_t e = linux_spawn_and_wait_test(i);
+                error_t e = linux_spawn_and_wait_test_path(path, i);
 
                 if (e != REND_SUCCESS) {
-                        pr_error("[TEST %02lu/%02lu] FAIL: error=%d\n",
+                        pr_error("[TEST %02u/%02u] FAIL: error=%d\n",
                                  i + 1,
-                                 _num_app,
+                                 total,
                                  (int)e);
                         failed++;
                 } else {
-                        pr_info("[TEST %02lu/%02lu] PASS\n", i + 1, _num_app);
+                        pr_info("[TEST %02u/%02u] PASS\n", i + 1, total);
                         passed++;
                 }
         }
 
         pr_notice("========================================\n");
         pr_notice(" LINUX USER TEST SUITE DONE\n");
-        pr_notice(" Passed: %d/%lu\n", passed, _num_app);
-        pr_notice(" Failed: %d/%lu\n", failed, _num_app);
+        pr_notice(" Passed: %d/%u\n", passed, total);
+        pr_notice(" Failed: %d/%u\n", failed, total);
         pr_notice("========================================\n");
 
-        /* Disable scheduler debug output */
         is_print_sche_info = false;
 }
 
 static void *linux_user_test_thread(void *arg)
 {
         bool is_bsp = (bool)(uintptr_t)arg;
+        error_t err;
 
+        (void)arg;
         if (!is_bsp) {
-                while (1) {
-                        schedule(percpu(core_tm));
-                        arch_cpu_relax();
-                }
-                /* AP: nothing to do */
                 return NULL;
         }
 
-        /* BSP: Run Linux compatibility tests */
+        pr_info("[ Linux compat ] BSP: user test thread running (CPU %llu)\n",
+                (u64)percpu(cpu_number));
+
+        err = linux_vfs_root_ensure_init();
+        if (err != REND_SUCCESS) {
+                pr_error(
+                        "[ Linux compat ] linux_vfs_root_ensure_init failed: %d\n",
+                        (int)err);
+                return NULL;
+        }
+
+        err = (error_t)linux_user_test_load_manifest();
+        if (err != REND_SUCCESS) {
+                pr_error("[ Linux compat ] manifest load failed: %d\n",
+                         (int)err);
+                return NULL;
+        }
+
         pr_info("[ Linux compat ] BSP: Starting ELF read test\n");
         if (elf_read_test() != REND_SUCCESS) {
                 pr_error("[ Linux compat ] ELF read test failed\n");
@@ -203,26 +207,27 @@ static void *linux_user_test_thread(void *arg)
         return NULL;
 }
 
+/*
+ * BSP-only test harness. Global resources (VFS root, proc registry) are
+ * BSP-once; see initcall.h. APs do not spawn idle-spin test threads.
+ */
 static void linux_user_test_init(void)
 {
-        cpu_id_t cpu = percpu(cpu_number);
-        bool is_bsp = (cpu == BSP_ID);
+        error_t err;
 
-        if (is_bsp) {
-                pr_info("[ Linux compat ] BSP: Creating user test thread\n");
-                (void)gen_thread_from_func(NULL,
-                                           linux_user_test_thread,
-                                           "linux_user_test",
-                                           percpu(core_tm),
-                                           (void *)1);
-        } else {
-                pr_info("[ Linux compat ] AP CPU %lu: Creating user test thread\n",
-                        cpu);
-                (void)gen_thread_from_func(NULL,
-                                           linux_user_test_thread,
-                                           "linux_user_test_ap",
-                                           percpu(core_tm),
-                                           (void *)0);
+        if (!linux_init_on_bsp()) {
+                return;
+        }
+
+        pr_info("[ Linux compat ] BSP: creating user test thread (pre-SMP)\n");
+        err = gen_thread_from_func(NULL,
+                                   linux_user_test_thread,
+                                   "linux_user_test",
+                                   percpu(core_tm),
+                                   (void *)1);
+        if (err != REND_SUCCESS) {
+                pr_error("[ Linux compat ] BSP: user test thread create failed: %d\n",
+                         (int)err);
         }
 }
 

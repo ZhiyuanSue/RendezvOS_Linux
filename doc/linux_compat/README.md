@@ -15,6 +15,8 @@
 | [`PROGRESS.md`](PROGRESS.md) | **进展索引**：阶段状态、缺口、文档追溯链 |
 | [`GOALS_AND_CORE_CONTRACT.md`](GOALS_AND_CORE_CONTRACT.md) | **总目标、compat 政策、对 core 契约、维护者审阅包** |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | 边界、数据流、IPC vs 直接调 core |
+| [`CODE_STRUCTURE.md`](CODE_STRUCTURE.md) | **目录与模块职责（现行）** |
+| [`FILE_LOADING.md`](FILE_LOADING.md) | **page_slice 统一文件加载（CPIO / IPC / embedded）** |
 | [`DATA_MODEL.md`](DATA_MODEL.md) | 进程/线程、`pid`/`tid`、登记簿 |
 | [`SYSCALLS.md`](SYSCALLS.md) | **实现顺序**与文件清单 |
 | [`MM_AND_COW.md`](MM_AND_COW.md) | Radix 虚存真源、COW、页故障 |
@@ -29,6 +31,11 @@
 | [`SIGNAL_DELIVERY_TRAP_PATHS.md`](SIGNAL_DELIVERY_TRAP_PATHS.md) | trap 路径投递 |
 | [`IPC_BASED_SIGNAL_DESIGN.md`](IPC_BASED_SIGNAL_DESIGN.md) | IPC 辅助 vs pending（勿用信号服务器替代 trap） |
 | [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md) | vfs_server 协议 |
+| [`VFS_ARCHITECTURE.md`](VFS_ARCHITECTURE.md) | **VFS 三层、Linux 对齐、演进与验证门** |
+| [`VFS_IMPLEMENTATION_STATUS.md`](VFS_IMPLEMENTATION_STATUS.md) | **Phase 4 live：已写什么 / RPC 表 / 缺口** |
+| [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) | cpio initramfs 方案 |
+| [`ROOTFS.md`](ROOTFS.md) | **rootfs/ 目录、Git 策略、fixtures vs generated** |
+| [`RAMFS_AND_VFS_STORAGE.md`](RAMFS_AND_VFS_STORAGE.md) | ramfs/存储后端笔记 |
 | [`USER_TESTS.md`](USER_TESTS.md) | 用户态测例 |
 | [`STDIO_SHIM.md`](STDIO_SHIM.md) | 无 VFS 阶段 console shim |
 | [`LINUX_COMPAT_CODING_STYLE.md`](LINUX_COMPAT_CODING_STYLE.md) | 代码风格 |
@@ -42,7 +49,6 @@
 | [`BUGFIX_MAP_INTERMEDIATE_PTE_FLAGS.md`](BUGFIX_MAP_INTERMEDIATE_PTE_FLAGS.md) | 中间页表项 flags |
 | [`BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md`](BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md) | fork 陈旧 user SP/TLS |
 | [`COPY_VSPACE_DESIGN.md`](COPY_VSPACE_DESIGN.md) | 地址空间复制 |
-| [`CODE_STRUCTURE.md`](CODE_STRUCTURE.md) | 目录结构 |
 | [`WAIT4_IMPLEMENTATION_STATUS.md`](WAIT4_IMPLEMENTATION_STATUS.md) | wait4 状态 |
 | [`CORE_MODIFICATION_STRATEGY.md`](CORE_MODIFICATION_STRATEGY.md) | 提议 core 变更策略 |
 | [`CORE_MODIFICATION_BRK_FIX.md`](CORE_MODIFICATION_BRK_FIX.md) | brk 相关 core 变更 |

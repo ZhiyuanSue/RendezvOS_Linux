@@ -1,7 +1,7 @@
 # Linux 兼容层 — 进展与追溯索引
 
 > **Purpose**: 单一入口，把 **路线图 → 实现状态 → 验证证据 → 决策** 串起来。  
-> **Last updated**: 2026-06-13
+> **Last updated**: 2026-07-09
 
 ---
 
@@ -69,7 +69,9 @@ doc/ai/DECISIONS.md      非显然设计选择（ADR-lite）
 
 ### P2 — VFS（Phase 4，**当前主战场**）
 
-约 **14 个纯 FS** stdout FAIL（open/pipe/dup/mkdir/mount…）；#13/#40 文件 mmap 亦依赖 open。脚手架已有：`vfs_server` RPC loop、`fs_ipc.c`、`sys_fs_impl.c` stubs。
+约 **14 个纯 FS** stdout FAIL（open/pipe/dup/mount…）；#13/#40 文件 mmap 亦依赖 open。
+
+**Live 进度**：[`VFS_IMPLEMENTATION_STATUS.md`](VFS_IMPLEMENTATION_STATUS.md)（Step 0–5 代码已落地；V4–V7 待 maintainer 验证）。
 
 ### P3 — time 细节（非 FS 阻塞）
 
@@ -102,7 +104,7 @@ doc/ai/DECISIONS.md      非显然设计选择（ADR-lite）
 | Wait | [`DATA_MODEL.md`](DATA_MODEL.md) | [`WAIT4_IMPLEMENTATION_STATUS.md`](WAIT4_IMPLEMENTATION_STATUS.md) | log §#49 |
 | Exec | [`SYSCALL_USER_RETURN_AND_EXECVE.md`](SYSCALL_USER_RETURN_AND_EXECVE.md) | [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md) | #52 execve PASS |
 | Time | [`TIME_SUBSYSTEM_PLAN.md`](TIME_SUBSYSTEM_PLAN.md) | §0 已落地 checklist | #16–#20 |
-| VFS | [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md) | 待 Phase 4 新建 status | #10–#51 FS 集 |
+| VFS | [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md) | [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) | 待 Phase 4 新建 status | #10–#51 FS 集 |
 | MM | [`MM_AND_COW.md`](MM_AND_COW.md) | 分散在 Phase 1 文档 | #35 brk 等 |
 
 ---

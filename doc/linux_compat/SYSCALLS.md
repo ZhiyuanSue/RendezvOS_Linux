@@ -193,7 +193,7 @@ After Phase 2 proc/signal/wait work, record **paired** runs here:
 
 ## 📋 Phase 4：文件系统（当前下一步）
 
-**设计**: [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md)
+**设计**: [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md) · **initramfs 方案**: [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md)
 
 | Syscall 组 | 示例 | 测例 stdout FAIL |
 |------------|------|------------------|

@@ -1,0 +1,2 @@
+Hello from initramfs text.txt
+Used by oscomp open/read/fstat tests (./text.txt).

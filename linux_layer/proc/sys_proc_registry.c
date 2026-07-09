@@ -1,5 +1,6 @@
 #include <linux_compat/proc_registry.h>
 #include <linux_compat/errno.h>
+#include <linux_compat/initcall.h>
 #include <rendezvos/registry/name_index.h>
 #include <rendezvos/ipc/port.h>
 #include <rendezvos/task/tcb.h>
@@ -340,8 +341,13 @@ bool proc_parent_has_unreaped_child(pid_t ppid, pid_t pgid, bool filter_by_pgid)
  * Initcall to initialize the process registry.
  * Runs at init level 2 (early init, before user programs).
  */
+static bool proc_registry_inited;
+
 static void proc_registry_initcall(void)
 {
+        if (!linux_init_bsp_once(&proc_registry_inited))
+                return;
         proc_registry_init();
+        linux_init_bsp_mark_done(&proc_registry_inited);
 }
 DEFINE_INIT(proc_registry_initcall);

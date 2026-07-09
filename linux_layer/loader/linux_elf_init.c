@@ -1,22 +1,23 @@
+#include <linux_compat/elf_init.h>
+
 #include <common/align.h>
 #include <common/types.h>
+#include <linux_compat/proc/linux_exec_proc.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/proc_registry.h>
 #include <linux_compat/signal/signal_init.h>
-#include <linux_compat/elf_init.h>
+#include <linux_compat/initcall.h>
 #include <modules/log/log.h>
 #include <rendezvos/task/tcb.h>
 #include <rendezvos/task/initcall.h>
 #include <rendezvos/ipc/ipc.h>
 #include <rendezvos/ipc/port.h>
+#include <rendezvos/mm/page_slice.h>
 
-/* External reference to global port table */
 extern struct Port_Table *global_port_table;
 
-/* Global ELF init handler pointer - accessed via extern to avoid GOT issues */
 elf_init_handler_t linux_elf_init_handler_ptr = linux_elf_init_handler;
 
-/* Initialize Linux compat per-task state for ELF user programs (e.g. brk). */
 void *linux_elf_init_handler(Arch_Task_Context *ctx,
                              const elf_load_info_t *info)
 {
@@ -34,48 +35,44 @@ void *linux_elf_init_handler(Arch_Task_Context *ctx,
                 return NULL;
         }
 
-        u64 brk0 = (u64)info->max_load_end;
-        if (brk0 == 0 || brk0 >= KERNEL_VIRT_OFFSET) {
-                pr_warn("[LINUX_ELF_INIT] Invalid brk: max_load_end=%lx, using default 0x40000000\n",
-                        (u64)info->max_load_end);
-                brk0 = 0x40000000;
-        }
-
+        linux_proc_set_heap_from_elf_load(tcb, info->max_load_end);
         linux_signal_init_proc_append(pa);
-        pa->brk = brk0;
-        pa->start_brk = brk0;
-        pa->mmap_hint = ROUND_UP(brk0, PAGE_SIZE) + PAGE_SIZE;
 
-        /*
-         * Register this process in proc_registry so wait4 can find it.
-         * This is needed for parent-child relationship tracking.
-         */
         error_t reg_e = register_process(tcb);
         if (reg_e != REND_SUCCESS) {
                 pr_warn("[LINUX_ELF_INIT] Failed to register PID=%d: %d\n",
                         tcb->pid,
                         (int)reg_e);
-                /* Non-fatal: process still works, but wait4 won't find it */
         }
 
-        {
-                Message_Port_t *wait_port =
-                        proc_get_or_create_wait_port(tcb->pid);
+        Message_Port_t *wait_port = proc_get_or_create_wait_port(tcb->pid);
+        if (!wait_port) {
+                pr_warn("[LINUX_ELF_INIT] Failed to create wait_port for PID=%d\n",
+                        tcb->pid);
+        } else {
+                ref_put(&wait_port->refcount, free_message_port_ref);
+        }
 
-                if (!wait_port) {
-                        pr_warn("[LINUX_ELF_INIT] Failed to create wait_port for PID=%d\n",
-                                tcb->pid);
-                } else {
-                        ref_put(&wait_port->refcount, free_message_port_ref);
-                }
+        /*
+         * Compat policy: file image is copied into user PT_LOAD; drop the
+         * staging slice after load. Future page-cache / LRU may retain it.
+         */
+        if (info->slice) {
+                struct page_slice *s = info->slice;
+
+                page_slice_destroy(&s);
         }
 
         return NULL;
 }
 
-/* Init function using RendezvOS initcall mechanism */
+static bool linux_elf_init_logged;
+
 static void linux_elf_init_initcall(void)
 {
+        if (!linux_init_bsp_once(&linux_elf_init_logged))
+                return;
         pr_info("[LINUX_ELF_INIT] Module initialized\n");
+        linux_init_bsp_mark_done(&linux_elf_init_logged);
 }
 DEFINE_INIT(linux_elf_init_initcall);

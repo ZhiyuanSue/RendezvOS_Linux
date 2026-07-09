@@ -31,7 +31,11 @@ endif
 ROOT_OBJECTS := $(patsubst $(ROOT_DIR)/%.c,$(ROOT_OBJ_DIR)/%.o,$(ROOT_SOURCES))
 ROOT_USER_OBJECT := $(ROOT_BUILD_DIR)/link_app.o
 ROOT_USER_ARCH_FILE := $(ROOT_BUILD_DIR)/link_app.arch
-ROOT_EXTRA_OBJECTS := $(abspath $(ROOT_OBJECTS)) $(abspath $(ROOT_USER_OBJECT))
+ROOT_ROOTFS_CPIO := $(ROOT_BUILD_DIR)/rootfs.cpio
+ROOT_ROOTFS_CPIO_S := $(ROOT_BUILD_DIR)/rootfs_cpio.S
+ROOT_ROOTFS_CPIO_O := $(ROOT_BUILD_DIR)/rootfs_cpio.o
+ROOTFS_FILES := $(shell find $(ROOT_DIR)/rootfs -type f 2>/dev/null)
+ROOT_EXTRA_OBJECTS := $(abspath $(ROOT_OBJECTS)) $(abspath $(ROOT_USER_OBJECT)) $(abspath $(ROOT_ROOTFS_CPIO_O))
 
 ROOT_COMMON_CFLAGS := -Werror -Wall -Wextra -Werror=return-type -Werror=format -Wmissing-field-initializers -Wunused-result -Os -nostdlib -nostdinc -fno-builtin -fno-stack-protector -std=c11 -DNR_CPUS=$(SMP)
 ROOT_COMMON_CFLAGS += -I $(ROOT_DIR)/include -I $(CORE_DIR)/include
@@ -50,7 +54,7 @@ AR := $(CROSS_COMPLIER)ar
 OBJCOPY := $(CROSS_COMPLIER)objcopy
 OBJDUMP := $(CROSS_COMPLIER)objdump
 
-.PHONY: all root_dirs config build build_lib run clean mrproper dump show_config fmt user have_user_payload
+.PHONY: all root_dirs config build build_lib run clean mrproper dump show_config fmt user have_user_payload rootfs
 
 all: build
 
@@ -70,6 +74,33 @@ user: root_dirs
 	@cp user_payload/link_app.o $(ROOT_USER_OBJECT)
 	@echo "$(ARCH)" > $(ROOT_USER_ARCH_FILE)
 	@echo "User payload generated at $(ROOT_USER_OBJECT)"
+
+.PHONY: rootfs_pack
+
+rootfs: rootfs_pack $(ROOT_ROOTFS_CPIO_O)
+
+# Always re-pack when building embed objects (cheap); avoids stale zero-byte cpio.
+rootfs_pack: $(ROOTFS_FILES) $(ROOT_DIR)/script/rootfs/build_cpio.sh | root_dirs
+	@$(ROOT_DIR)/script/rootfs/build_cpio.sh
+
+$(ROOT_ROOTFS_CPIO): rootfs_pack
+	@test -s $@ || (echo "ERROR: $@ missing or empty after rootfs_pack" && exit 1)
+
+$(ROOT_ROOTFS_CPIO_S): $(ROOT_ROOTFS_CPIO) $(ROOTFS_FILES) $(ROOT_DIR)/script/rootfs/build_cpio.sh
+	@echo "GEN	$(ROOT_ROOTFS_CPIO_S)"
+	@{ \
+		echo '.section .rodata'; \
+		echo '.global rootfs_cpio_start'; \
+		echo '.global rootfs_cpio_end'; \
+		echo '.align 8'; \
+		echo 'rootfs_cpio_start:'; \
+		echo ".incbin \"$(abspath $(ROOT_ROOTFS_CPIO))\""; \
+		echo 'rootfs_cpio_end:'; \
+	} > $@
+
+$(ROOT_ROOTFS_CPIO_O): $(ROOT_ROOTFS_CPIO_S)
+	@echo "AS	$(ROOT_ROOTFS_CPIO_O)"
+	@$(CC) $(CFLAGS) $(ROOT_COMMON_CFLAGS) $(ROOT_EXTRA_CFLAGS) -c $< -o $@
 
 have_user_payload:
 	@if [ ! -f "$(ROOT_USER_OBJECT)" ]; then \
@@ -96,7 +127,7 @@ build: root_dirs
 		$(MAKE) build_lib $(CORE_BUILD_ARGS); \
 	fi
 
-build_lib: have_user_payload $(ROOT_OBJECTS)
+build_lib: have_user_payload rootfs_pack $(ROOT_OBJECTS) $(ROOT_ROOTFS_CPIO_O)
 	@$(MAKE) -C $(CORE_DIR) all $(CORE_BUILD_ARGS)
 
 run: build

@@ -1,7 +1,7 @@
 # execve 实现状态
 
 > **Phase**: 3（程序执行）  
-> **Last updated**: 2026-05-19  
+> **Last updated**: 2026-07-09  
 > **Design**: [`SYSCALL_USER_RETURN_AND_EXECVE.md`](SYSCALL_USER_RETURN_AND_EXECVE.md)  
 > **Roadmap**: [`SYSCALLS.md`](SYSCALLS.md) · **Index**: [`PROGRESS.md`](PROGRESS.md)
 
@@ -19,8 +19,8 @@
 | auxv | ❌ | ❌ | No `AT_*` vector |
 | de_thread before exec | ❌ | ❌ | Multi-thread exec unsafe |
 | Full post-exec reset | ⚠️ | ⚠️ | Only brk/mmap_hint/pending; not dispositions/altstack |
-| FS path (open + load) | ❌ | ❌ | #18 `test_execve_basic` blocked by open |
-| shebang / PT_INTERP | ❌ | ❌ | — |
+| FS path (open + load) | ⚠️ | ⚠️ | CPIO / IPC VFS via `page_slice` (`linux_exec_load_elf_slice`); embedded fallback kept |
+| shebang / PT_INTERP | ❌ | ❌ | Out of scope (no dynamic linking) |
 
 ---
 
@@ -39,12 +39,12 @@
 ## Implemented (`linux_layer/proc/sys_execve.c`)
 
 1. Copy filename + argv from user (`linux_mm_load_from_user`)
-2. Resolve embedded ELF by basename (`find_embedded_elf_by_name`)
+2. Resolve image: **CPIO middle layer** → **IPC VFS slice** → embedded ELF (`linux_exec_load_elf_slice`)
 3. ELF header check **before** `vspace_clear`
 4. TLB quiesce (`linux_exec_wait_remote_tlb_quiesce`)
-5. `vspace_clear_user_mappings` + `load_elf_to_vs`
+5. `vspace_clear_user_mappings` + `load_elf_to_vs` (brk from `max_load_end`)
 6. `generate_user_stack` + `build_initial_stack`
-7. `linux_exec_reset_proc_state` (partial)
+7. `linux_exec_reset_proc_state` (brk/mmap_hint + pending signals)
 8. `arch_syscall_set_user_return` (Path A); skip signal deliver on success
 
 ---
@@ -57,8 +57,8 @@
 | **3b** | `de_thread` / exit_group semantics | policy in `GOALS_AND_CORE_CONTRACT.md` §3.1 |
 | **3c** | auxv (`AT_PHDR`, `AT_ENTRY`, `AT_PAGESZ`, `AT_RANDOM`, …) | needs aux vector builder |
 | **3c** | Full `linux_exec_reset_proc_state` | signal dispositions, altstack, blocked mask, thread pending |
-| **3d** | Read ELF from VFS | **Phase 4 VFS** |
-| **3d** | shebang, `PT_INTERP` | VFS + loader |
+| **3d** | Read ELF from VFS | ✅ static ELF64 via `linux_exec_load_elf_slice` + `vfs_exec_load.c` |
+| **3d** | shebang, `PT_INTERP` | deferred (no dynamic linking) |
 
 ---
 

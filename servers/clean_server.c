@@ -12,6 +12,7 @@
 #include <rendezvos/task/thread_loader.h>
 #include <linux_compat/ipc/clean_protocol.h>
 #include <linux_compat/ipc/rpc.h>
+#include <linux_compat/initcall.h>
 #include <linux_compat/test_sync_ipc.h>
 #ifdef LINUX_COMPAT_TEST
 #include <linux_compat/proc_compat.h>
@@ -19,12 +20,15 @@
 #include <linux_compat/test_runner.h>
 #endif
 
+extern struct Port_Table *global_port_table;
+
 /* Per-CPU clean server thread pointers */
 DEFINE_PER_CPU(Thread_Base *, clean_server_thread_ptr);
 
 static char clean_server_thread_name[] = "clean_server_thread";
 
 static u16 clean_server_service_id;
+static bool clean_server_port_registered;
 
 static void clean_handle_message(Message_t *msg)
 {
@@ -191,8 +195,8 @@ static void clean_server_init(void)
         pr_info("[clean_server] CPU %lu: Initializing clean_server\n",
                 (u64)cpu);
 
-        /* On BSP: create and register global clean server port */
-        if (cpu == BSP_ID) {
+        /* Global port: BSP once (AP initcalls run after BSP bootstrap). */
+        if (linux_init_bsp_once(&clean_server_port_registered)) {
                 pr_info("[clean_server] BSP: Creating global clean server port\n");
                 if (!global_port_table) {
                         pr_error(
@@ -220,6 +224,7 @@ static void clean_server_init(void)
                 }
                 pr_info("[clean_server] BSP: Port registered successfully as '%s'\n",
                         CLEAN_SERVER_PORT_NAME);
+                linux_init_bsp_mark_done(&clean_server_port_registered);
         }
 
         if (clean_server_service_id == 0) {
@@ -239,7 +244,7 @@ static void clean_server_init(void)
                 }
         }
 
-        /* On all CPUs (including BSP): create clean server thread */
+        /* Per-CPU recv thread (each core drains its own IPC queue). */
         pr_info("[clean_server] CPU %lu: Creating clean_server_thread\n",
                 (u64)cpu);
         error_t e = gen_thread_from_func(&percpu(clean_server_thread_ptr),

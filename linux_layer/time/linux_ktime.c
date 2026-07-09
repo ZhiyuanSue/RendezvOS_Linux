@@ -1,12 +1,17 @@
 #include <linux_compat/time/linux_ktime.h>
 #include <linux_compat/time/linux_time_arch.h>
+#include <linux_compat/initcall.h>
 #include <rendezvos/task/initcall.h>
 
 static u64 linux_boot_realtime_us;
+static bool linux_time_arch_inited;
 
 void linux_time_init_from_arch(void)
 {
+        if (!linux_init_bsp_once(&linux_time_arch_inited))
+                return;
         linux_boot_realtime_us = linux_time_arch_boot_realtime_us();
+        linux_init_bsp_mark_done(&linux_time_arch_inited);
 }
 
 u64 linux_time_monotonic_us(void)

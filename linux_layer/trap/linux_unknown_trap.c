@@ -15,6 +15,7 @@
 #include <rendezvos/task/initcall.h>
 #include <rendezvos/trap/trap.h>
 #include <linux_compat/errno.h>
+#include <linux_compat/initcall.h>
 #include <linux_compat/signal/signal_types.h>
 #include <linux_compat/proc_compat.h>
 #include <syscall.h>
@@ -73,9 +74,8 @@ static void linux_undefined_instruction_handler(struct trap_frame *tf)
 /*
  * Initialize undefined instruction trap handler
  *
- * Check which trap IDs already have handlers, then register our handler
- * only for those without handlers. This provides comprehensive coverage while
- * avoiding overwrite of critical handlers like syscall.
+ * Per-CPU: each AP must register on its own irq_vector after arch_start_core.
+ * Check which trap IDs already have handlers, then register only for empty slots.
  */
 void linux_unknown_trap_init(void)
 {
@@ -102,9 +102,11 @@ void linux_unknown_trap_init(void)
                 }
         }
 
-        pr_info("[UNDEF_INSTR] Registered handler for %d trap IDs, skipped %d already registered\n",
-                registered_count,
-                skipped_count);
+        if (linux_init_on_bsp()) {
+                pr_info("[UNDEF_INSTR] Registered handler for %d trap IDs, skipped %d already registered\n",
+                        registered_count,
+                        skipped_count);
+        }
 }
 DEFINE_INIT_LEVEL(linux_unknown_trap_init, 1); /* Run after core init (level 0)
                                                 */

@@ -36,7 +36,8 @@ bool linux_signal_thread_has_deliverable_pending(Thread_Base *thread);
 
 /**
  * @return true if a pending signal should interrupt wait4/nanosleep with EINTR.
- *         SIGCHLD with SIG_DFL/SIG_IGN does not interrupt wait4 (Linux semantics).
+ *         SIGCHLD with SIG_DFL/SIG_IGN does not interrupt wait4 (Linux
+ * semantics).
  */
 bool linux_signal_wait4_should_return_eintr(Thread_Base *thread);
 

@@ -2,7 +2,10 @@
 #include <common/types.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/fault.h>
+#include <linux_compat/fs/linux_exec_image.h>
 #include <linux_compat/linux_mm_radix.h>
+#include <linux_compat/mm/linux_page_slice_file.h>
+#include <linux_compat/proc/linux_exec_proc.h>
 #include <linux_compat/signal/signal_init.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/signal/signal_types.h>
@@ -11,6 +14,7 @@
 #include <rendezvos/error.h>
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/mm/map_handler.h>
+#include <rendezvos/mm/page_slice.h>
 #include <rendezvos/mm/vmm.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/tcb.h>
@@ -22,49 +26,15 @@
 #include <arch/aarch64/tcb_arch.h>
 #endif
 
-extern u64 _num_app;
-
 #define EXEC_MAX_PATH       256
 #define EXEC_MAX_ARG_LEN    256
 #define LINUX_EXEC_MAX_ARGS 128
 
 /*
- * Phase 3a execve: single-threaded, embedded ELF by name, argv on new user
- * stack. Path A return via arch_syscall_set_user_return. No envp/auxv yet.
+ * Phase 3 execve: embedded ELF by basename, or static ELF64 from VFS path.
+ * argv on new user stack. Path A return via arch_syscall_set_user_return.
+ * No envp/auxv yet. No PT_INTERP / dynamic linking.
  */
-
-static i64 find_embedded_elf_by_name(const char *filename)
-{
-        if (!filename) {
-                return -1;
-        }
-
-        u64 num_apps = _num_app;
-
-        struct {
-                const char *name;
-                int index;
-        } program_map[] = {
-                {"test_echo", 41},
-                {"test_execve", 17},
-                {"test_execve_simple", 50},
-                {"test_signal_delivery", 7},
-                {"test_phase2b_signal_basic", 8},
-        };
-
-        int num_programs = sizeof(program_map) / sizeof(program_map[0]);
-
-        for (int i = 0; i < num_programs; i++) {
-                if (strcmp_s(program_map[i].name, filename, EXEC_MAX_PATH)
-                    == 0) {
-                        if (program_map[i].index < (i64)num_apps) {
-                                return program_map[i].index;
-                        }
-                }
-        }
-
-        return -1;
-}
 
 static bool exec_arg_string_valid(const char *buf, size_t cap)
 {
@@ -215,31 +185,21 @@ static vaddr build_initial_stack(VSpace *vs, vaddr stack_top, i64 argc,
         return sp;
 }
 
-static void linux_exec_reset_proc_state(Tcb_Base *task)
-{
-        linux_proc_append_t *pa = linux_proc_append(task);
-
-        if (!pa) {
-                return;
-        }
-
-        pa->brk = 0;
-        pa->start_brk = 0;
-        pa->mmap_hint = 0;
-        sigemptyset(&pa->pending_signals);
-}
-
 /*
  * After vspace_clear_user_mappings succeeds, the old image is gone and exec
  * cannot roll back. Failures must terminate via the common fatal path, not
  * return errno to a trap frame that still points at the old user PC/SP.
  */
 static void linux_exec_abort_unrecoverable(struct allocator *alloc,
-                                           char *arg_storage, const char *what,
-                                           error_t e)
+                                           char *arg_storage,
+                                           struct page_slice *elf_slice,
+                                           const char *what, error_t e)
 {
         if (alloc && arg_storage) {
                 alloc->m_free(alloc, arg_storage);
+        }
+        if (elf_slice) {
+                page_slice_destroy(&elf_slice);
         }
         pr_error("[EXEC] %s failed after commit (e=%d), terminating task\n",
                  what,
@@ -293,11 +253,12 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
         struct allocator *alloc = percpu(kallocator);
         char filename[EXEC_MAX_PATH];
         char *arg_storage = NULL;
+        struct page_slice *elf_slice = NULL;
         const char *kargv[LINUX_EXEC_MAX_ARGS + 1];
         error_t e;
-        i64 app_index;
         i64 argc;
-        vaddr elf_start, elf_end;
+        i64 ret;
+        vaddr max_load_end = 0;
         vaddr entry_addr;
         vaddr user_sp;
         vaddr initial_stack_sp;
@@ -322,26 +283,20 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
         }
         filename[EXEC_MAX_PATH - 1] = '\0';
 
-        app_index = find_embedded_elf_by_name(filename);
-        if (app_index < 0) {
-                return -LINUX_ENOENT;
+        ret = linux_exec_load_elf_slice(vs, filename, alloc, &elf_slice);
+        if (ret != 0) {
+                return ret;
         }
 
-        elf_start = *(u64 *)((vaddr)(&_num_app)
-                             + (app_index * 2 + 1) * (i64)sizeof(u64));
-        elf_end = *(u64 *)((vaddr)(&_num_app)
-                           + (app_index * 2 + 2) * (i64)sizeof(u64));
-
-        if (!check_elf_header(elf_start)) {
-                return -LINUX_ENOEXEC;
-        }
-        if (get_elf_class(elf_start) != ELFCLASS64) {
+        if (!linux_exec_elf_slice_valid(elf_slice)) {
+                page_slice_destroy(&elf_slice);
                 return -LINUX_ENOEXEC;
         }
 
         arg_storage = alloc->m_alloc(
                 alloc, (size_t)LINUX_EXEC_MAX_ARGS * EXEC_MAX_ARG_LEN);
         if (!arg_storage) {
+                page_slice_destroy(&elf_slice);
                 return -LINUX_ENOMEM;
         }
 
@@ -349,41 +304,54 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
                 vs, user_argv, arg_storage, kargv);
         if (argc < 0) {
                 alloc->m_free(alloc, arg_storage);
+                page_slice_destroy(&elf_slice);
                 return argc;
         }
 
-        /*
-         * Phase 3b (partial): blind-wait for remote CPUs to drop vs from
-         * tlb_cpu_mask. No de_thread yet; other threads may spin here too.
-         */
         linux_exec_wait_remote_tlb_quiesce(vs);
 
         e = vspace_clear_user_mappings(vs, handler, true);
         if (e != REND_SUCCESS) {
-                /*
-                 * Quiesce check only: vs untouched, safe to return to caller.
-                 * Any other clear error may leave a partially torn vs.
-                 */
                 if (e == -E_REND_RC_UNEQUAL) {
                         alloc->m_free(alloc, arg_storage);
+                        page_slice_destroy(&elf_slice);
                         return -LINUX_EAGAIN;
                 }
-                linux_exec_abort_unrecoverable(
-                        alloc, arg_storage, "vspace_clear_user_mappings", e);
+                linux_exec_abort_unrecoverable(alloc,
+                                               arg_storage,
+                                               elf_slice,
+                                               "vspace_clear_user_mappings",
+                                               e);
         }
 
-        e = load_elf_to_vs(elf_start, elf_end, vs, NULL);
+        e = load_elf_to_vs(elf_slice, vs, &max_load_end);
         if (e != REND_SUCCESS) {
-                linux_exec_abort_unrecoverable(
-                        alloc, arg_storage, "load_elf_to_vs", e);
+                linux_exec_abort_unrecoverable(alloc,
+                                               arg_storage,
+                                               elf_slice,
+                                               "load_elf_to_vs",
+                                               e);
         }
 
-        entry_addr = ((Elf64_Ehdr *)elf_start)->e_entry;
+        vaddr elf_base = linux_page_slice_file_base(elf_slice);
+
+        if (!elf_base) {
+                linux_exec_abort_unrecoverable(alloc,
+                                               arg_storage,
+                                               elf_slice,
+                                               "elf entry lookup",
+                                               -E_RENDEZVOS);
+        }
+        entry_addr = ELF64_HEADER(elf_base)->e_entry;
+
+        page_slice_destroy(&elf_slice);
+        elf_slice = NULL;
 
         user_sp = generate_user_stack(vs);
         if (!user_sp) {
                 linux_exec_abort_unrecoverable(alloc,
                                                arg_storage,
+                                               NULL,
                                                "generate_user_stack",
                                                -E_RENDEZVOS);
         }
@@ -394,10 +362,10 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
         arg_storage = NULL;
         if (initial_stack_sp == 0) {
                 linux_exec_abort_unrecoverable(
-                        alloc, NULL, "build_initial_stack", -E_RENDEZVOS);
+                        alloc, NULL, NULL, "build_initial_stack", -E_RENDEZVOS);
         }
 
-        linux_exec_reset_proc_state(current);
+        linux_exec_reset_proc_state(current, max_load_end);
         linux_signal_reset_thread_handler_state(
                 linux_thread_append(current_thread));
 
@@ -407,10 +375,6 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
                                      initial_stack_sp,
                                      0);
 #if defined(_AARCH64_)
-        /*
-         * Linux aarch64 process start: x0=argc, x1=argv (user VA).
-         * Overwrites REGS[0] after syscall_ret=0 was stored.
-         */
         arch_syscall_set_user_int_arg(syscall_ctx, 0, (u64)argc);
         arch_syscall_set_user_int_arg(syscall_ctx, 1, (u64)argv_user);
 #endif

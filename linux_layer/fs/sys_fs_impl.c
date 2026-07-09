@@ -97,35 +97,43 @@ i64 sys_openat(i32 dirfd, u64 user_pathname, i32 flags, u64 mode)
 
         pathname[sizeof(pathname) - 1] = '\0';
 
-        (void)pathname;
-        return -LINUX_ENOSYS;
+        return vfs_ipc_request_response(KMSG_OP_VFS_OPEN,
+                                        VFS_KMSG_FMT_OPEN,
+                                        dirfd,
+                                        pathname,
+                                        flags,
+                                        (u32)mode);
 }
 
 i64 sys_close(i32 fd)
 {
-        (void)fd;
-        return -LINUX_ENOSYS;
+        return vfs_ipc_request_response(
+                KMSG_OP_VFS_CLOSE, VFS_KMSG_FMT_CLOSE, (u32)fd);
 }
 
 i64 sys_read(i32 fd, u64 user_buf, u64 count)
 {
-        (void)fd;
-        (void)user_buf;
-        (void)count;
-        return -LINUX_ENOSYS;
+        return vfs_ipc_request_response(
+                KMSG_OP_VFS_READ, VFS_KMSG_FMT_READ, (u32)fd, user_buf, count);
 }
 
 i64 sys_write(i32 fd, u64 user_buf, u64 count)
 {
-        extern i64 sys_write_impl(i32 fd, u64 user_buf, u64 count);
-        return sys_write_impl(fd, user_buf, count);
+        if (fd == 1 || fd == 2) {
+                return sys_write_impl(fd, user_buf, count);
+        }
+
+        return vfs_ipc_request_response(KMSG_OP_VFS_WRITE,
+                                        VFS_KMSG_FMT_WRITE,
+                                        (u32)fd,
+                                        user_buf,
+                                        count);
 }
 
 i64 sys_fstat(i32 fd, u64 user_statbuf)
 {
-        (void)fd;
-        (void)user_statbuf;
-        return -LINUX_ENOSYS;
+        return vfs_ipc_request_response(
+                KMSG_OP_VFS_FSTAT, VFS_KMSG_FMT_FSTAT, (u32)fd, user_statbuf);
 }
 
 i64 sys_stat(u64 user_pathname, u64 user_statbuf)
@@ -137,10 +145,11 @@ i64 sys_stat(u64 user_pathname, u64 user_statbuf)
 
 i64 sys_lseek(i32 fd, i64 offset, i32 whence)
 {
-        (void)fd;
-        (void)offset;
-        (void)whence;
-        return -LINUX_ENOSYS;
+        return vfs_ipc_request_response(KMSG_OP_VFS_LSEEK,
+                                        VFS_KMSG_FMT_LSEEK,
+                                        (u32)fd,
+                                        (u64)offset,
+                                        (u32)whence);
 }
 
 i64 sys_chdir(u64 user_pathname)
@@ -293,19 +302,65 @@ i64 sys_mkdirat(i32 dirfd, u64 user_pathname, u32 mode)
 
 i64 sys_unlinkat(i32 dirfd, u64 user_pathname, i32 flags)
 {
-        (void)dirfd;
-        (void)user_pathname;
-        (void)flags;
-        return -LINUX_ENOSYS;
+        Tcb_Base *current = get_cpu_current_task();
+        VSpace *vs;
+        char pathname[256];
+        error_t e;
+
+        if (!current || !current->vs) {
+                return -LINUX_ESRCH;
+        }
+
+        vs = current->vs;
+        if (!linux_vspace_is_user_table(vs)) {
+                return -LINUX_EFAULT;
+        }
+
+        e = linux_mm_load_from_user(
+                vs, user_pathname, pathname, sizeof(pathname));
+        if (e != REND_SUCCESS) {
+                return -LINUX_EFAULT;
+        }
+
+        pathname[sizeof(pathname) - 1] = '\0';
+
+        return vfs_ipc_request_response(KMSG_OP_VFS_UNLINKAT,
+                                        VFS_KMSG_FMT_UNLINKAT,
+                                        dirfd,
+                                        pathname,
+                                        (u32)flags);
 }
 
 i64 sys_newfstatat(i32 dirfd, u64 user_pathname, u64 user_statbuf, i32 flags)
 {
-        (void)dirfd;
-        (void)user_pathname;
-        (void)user_statbuf;
-        (void)flags;
-        return -LINUX_ENOSYS;
+        Tcb_Base *current = get_cpu_current_task();
+        VSpace *vs;
+        char pathname[256];
+        error_t e;
+
+        if (!current || !current->vs) {
+                return -LINUX_ESRCH;
+        }
+
+        vs = current->vs;
+        if (!linux_vspace_is_user_table(vs)) {
+                return -LINUX_EFAULT;
+        }
+
+        e = linux_mm_load_from_user(
+                vs, user_pathname, pathname, sizeof(pathname));
+        if (e != REND_SUCCESS) {
+                return -LINUX_EFAULT;
+        }
+
+        pathname[sizeof(pathname) - 1] = '\0';
+
+        return vfs_ipc_request_response(KMSG_OP_VFS_NEWFSTATAT,
+                                        VFS_KMSG_FMT_NEWFSTATAT,
+                                        dirfd,
+                                        pathname,
+                                        user_statbuf,
+                                        (u32)flags);
 }
 
 i64 sys_dup3(i32 oldfd, i32 newfd, i32 flags)

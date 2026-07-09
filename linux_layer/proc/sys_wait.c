@@ -221,7 +221,8 @@ static i64 wait4_block_on_port(Tcb_Base* parent, linux_proc_append_t* parent_pa,
                                         free_message_port_ref);
                                 return reap_ret;
                         }
-                        if (self && linux_signal_wait4_should_return_eintr(self)) {
+                        if (self
+                            && linux_signal_wait4_should_return_eintr(self)) {
                                 ref_put(&wait_port->refcount,
                                         free_message_port_ref);
                                 return -LINUX_EINTR;

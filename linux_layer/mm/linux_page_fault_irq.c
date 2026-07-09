@@ -374,6 +374,10 @@ unhandled_fault:
         kernel_panic("Unhandled kernel page fault\n");
 }
 
+/*
+ * Per-CPU: register compat page-fault handler on this CPU's trap vector.
+ * AP initcalls must run this; global state is not touched.
+ */
 static void linux_page_fault_irq_init(void)
 {
         /*

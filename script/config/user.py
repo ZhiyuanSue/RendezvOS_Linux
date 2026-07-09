@@ -184,7 +184,74 @@ if __name__ == "__main__":
         user_user_build_bin_dir = os.path.join(user_user_dir, "bin")
 
         if using_file_system:
-            pass
+            if not user_user_dir:
+                print(
+                    "ERROR: filesystem mode requires inner user build (Makefile)"
+                )
+                sys.exit(2)
+
+            cross_prefix = get_cross_prefix(arch)
+            if not cross_prefix:
+                print(
+                    f"ERROR: unsupported arch for cross compiling user payload: {arch}"
+                )
+                sys.exit(1)
+
+            user_cc = cross_prefix + "gcc"
+            make_env = (
+                f'SCRIPT_MAKE_DIR="{script_make_dir}" '
+                f'BUILD="{build_dir}" '
+                f'MODULES_DIR="{modules_dir}" '
+                f'CC="{user_cc}" '
+                f'AS="{cross_prefix}as" '
+                f'RENDEZVOS_FILESYSTEM_MODE=1'
+            )
+
+            os.chdir(user_user_dir)
+            make_clean_cmd = f"{make_env} make clean"
+            status = os.system(make_clean_cmd)
+            if status != 0:
+                print("ERROR:make clean fail")
+                sys.exit(2)
+
+            make_all_cmd = f"{make_env} make all ARCH={arch}"
+            status = os.system(make_all_cmd)
+            if status != 0:
+                print("ERROR:make all fail (user inner)")
+                sys.exit(2)
+
+            os.chdir(user_dir)
+            make_all_cmd = f"{make_env} make all ARCH={arch}"
+            status = os.system(make_all_cmd)
+            if status != 0:
+                print("ERROR:make all fail (user_payload link_app stub)")
+                sys.exit(2)
+
+            pack_script = os.path.join(
+                root_dir, "script", "config", "pack_user_rootfs.py"
+            )
+            status = os.system(
+                f'python3 "{pack_script}" {arch} "{root_dir}" "{user_dir}"'
+            )
+            if status != 0:
+                print("ERROR: pack_user_rootfs.py failed")
+                sys.exit(2)
+
+            link_app_obj = os.path.join(user_dir, "link_app.o")
+            if not os.path.isfile(link_app_obj):
+                print("ERROR: filesystem mode expected stub link_app.o")
+                sys.exit(2)
+
+            os.makedirs(build_dir, exist_ok=True)
+            target_link_app_obj = os.path.join(build_dir, "link_app.o")
+            shutil.copy2(link_app_obj, target_link_app_obj)
+            with open(os.path.join(build_dir, "link_app.arch"), "w") as f:
+                f.write(arch + "\n")
+            os.chdir(pwd)
+            print(
+                f"User payload (cpio mode): {len(os.listdir(os.path.join(root_dir, 'rootfs', 'tests')))} "
+                f"file(s) under rootfs/tests/"
+            )
         else:
             if not user_user_dir:
                 top_list = None

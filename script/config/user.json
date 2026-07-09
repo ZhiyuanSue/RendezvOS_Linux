@@ -1,4 +1,4 @@
 {
-	"filesystem":false,
-	"git":"git@github.com:ZhiyuanSue/user_basic.git"
+	"filesystem": true,
+	"git": "git@github.com:ZhiyuanSue/user_basic.git"
 }

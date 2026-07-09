@@ -2,6 +2,19 @@
 
 本文件描述 **Linux 兼容层（用户态 ELF 测例）** 的运行模型、同步边界与输出乱序的期望。
 
+**相关**: [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) §8 · [`ROOTFS.md`](ROOTFS.md) · [`FILE_LOADING.md`](FILE_LOADING.md)
+
+## initramfs 与 manifest
+
+integrated harness（`filesystem:true`）下：
+
+1. `make user` 将静态 ELF 写入 `rootfs/tests/`，并生成 `rootfs/tests/manifest`（每行一个绝对路径）。
+2. `make rootfs` 将 `rootfs/` 打成 cpio 并链进内核。
+3. BSP 线程 `linux_user_test_load_manifest()` 经 **`vfs_kern_read_file_slice("/tests/manifest")`** 解析 manifest（page_slice，无整文件 kmalloc）。
+4. 每个测例路径同样经 **`vfs_kern_read_file_slice`** 加载后 `gen_task_from_elf`。
+
+测例**数据文件**（`./text.txt`、`./mnt/`）是 `rootfs/` 里的 fixtures，由用户态 `open/read` 经 VFS 访问，不走上述 slice 路径。
+
 ## 为什么需要 single / smp 分层
 
 - **single**：优先验证“功能点是否工作”（如 `getpid`/`brk`），减少并发噪声，降低 bring-up 调试成本。
