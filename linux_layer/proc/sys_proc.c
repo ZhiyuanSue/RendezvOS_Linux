@@ -39,6 +39,11 @@ i64 sys_getppid(void)
         if (!pa)
                 return -(i64)LINUX_ESRCH;
 
+        if (pa->ppid <= 0) {
+                /* Linux reports init (pid 1) as parent for kernel-born tasks. */
+                return 1;
+        }
+
         return (i64)pa->ppid;
 }
 

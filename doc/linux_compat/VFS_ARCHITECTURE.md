@@ -51,7 +51,8 @@
 | **Syscall 号** | x86_64: openat=257, read=0, write=1, close=3, fstat=5, newfstatat=262, mkdirat=… | `syscall_entry.c` 已有；保持与 [syscall_64.tbl](https://github.com/torvalds/linux/blob/master/arch/x86/entry/syscalls/syscall_64.tbl) 一致 |
 | **errno 值** | 正数 errno 取负返回（如 ENOENT=2 → -2） | [`include/linux_compat/errno.h`](../../include/linux_compat/errno.h) |
 | **openat(2) 标志** | `O_CREAT` 无则不存在→`-ENOENT`；`O_EXCL\|O_CREAT` 已存在→`-EEXIST`；`O_TRUNC` 截断普通文件；目录+写→`-EISDIR` 等 | 前端 `vfs_open.c` 必须按 [openat(2)](https://man7.org/linux/man-pages/man2/openat.2.html) 组合 |
-| **路径** | 绝对路径 `/foo`；相对路径相对 cwd；`AT_FDCWD` | Phase 4 先 **cwd=`/`**；dirfd 仅支持 `AT_FDCWD` |
+| **initramfs 内容** | newc `070701` | `script/rootfs/build_cpio.sh` |
+| **相对路径** | 相对 cwd；`AT_FDCWD` | Phase 4b：**per-process cwd** + dirfd（见 [`DIRECTORY_PHASE.md`](DIRECTORY_PHASE.md)） |
 | **stat / fstat 输出** | 测例用 `struct kstat`：`st_mode`, `st_size`, `st_nlink`… | `vfs_kstat_t` ← `vfs_inode_t`（见 `vfs_kstat.c`）；**非** ucore 小 `Stat` |
 | **mode 位** | `S_IFREG`/`S_IFDIR` + 权限八进制 | cpio 自带 `0100644` 等；ramfs create 时 `\| S_IFREG` |
 | **read/write 语义** | 返回字节数；EOF 返回 0；普通文件可 partial read | 中端 `vfs_root_read/write` |
@@ -133,9 +134,10 @@ Step 2  ✅ 中端: readdir + vfs_kstat（syscall 未接 getdents）
 Step 3  ✅ 前端 server: vfs_open + vfs_fd + RPC
 Step 4  ✅ 前端 compat: sys_fs_impl IPC（fd 表在 server 侧）
 Step 5  ✅ write + unlinkat RPC
-Step 6  ⬜ execve 从 vfs 读 ELF；busybox demo
-Step 7  ⬜ getdents64 RPC + syscall
-Step 8  ⬜ 磁盘后端 + page cache
+Step 6  ✅ execve 从 initramfs/VFS 读 ELF（2026-07-09 验证）；busybox demo ⬜
+Step 7  ⬜ 目录：chdir + cwd + openat(dirfd) + getdents64 — [`DIRECTORY_PHASE.md`](DIRECTORY_PHASE.md)
+Step 8  ⬜ dup/dup2/pipe + fd 生命周期
+Step 9  ⬜ 磁盘后端 + page cache
 ```
 
 目标目录（终点，可渐进）：
@@ -162,12 +164,14 @@ linux_layer/fs/
 | **V1** | cpio 解析 | `make run`，看串口 | 一行 `[VFS] root ready: cpio 4 entries, ramfs 0 entries`；无 magic error | ✅ 已过；**无 entry dump** |
 | **V2** | 中端 lookup/read | server 内自检或临时 `pr_info`（**不**长期 dump）；或单元式 host 脚本解析同一 cpio 对比 path/size | `/text.txt` size=81；读前 16 字节一致 | 可用 Python 离线对照 incbin 不必 QEMU |
 | **V3** | overlay | 启动后 ramfs 自检：`mkdir /tmp` + write + read（**开发期**可选；接 syscall 后删） | ramfs count≥1；读回字节正确 | 无 syscall 时只能 server 内测 |
-| **V4** | OPEN/READ RPC | `make run` + oscomp open/read stdout | `[PASS]` | ⬜ maintainer 待验 |
-| **V5** | fstat | oscomp fstat | mode/size 匹配 | ⬜ |
-| **V6** | mkdir/O_CREATE | mkdir / openat 测例 stdout | PASS | ⬜ |
-| **V7** | write | write 测例（fd≥3） | PASS | ⬜ 代码已接 |
-| **V8** | 双架构 | `ARCH=aarch64` 同序 | 同 V4–V7 | 记录 [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md) |
-| **V9** | execve `/bin/ls` | 串口见 ls 输出 | demo | 依赖 V4 + cpio busybox |
+| **V4** | OPEN/READ RPC | `make run` + oscomp open/read stdout | `[PASS]` | ✅ 2026-07-09 双架构 |
+| **V5** | fstat | oscomp fstat | mode/size 匹配 | ✅ 2026-07-09 |
+| **V6** | mkdir/O_CREATE | mkdir / openat 测例 stdout | PASS | mkdir ✅；openat ⬜ |
+| **V7** | write | write 测例（fd≥3） | PASS | ✅ 2026-07-09 |
+| **V8** | 双架构 | `ARCH=aarch64` 同序 | 同 V4–V7 | ✅ 2026-07-09 log §2026-07-09 |
+| **V9** | execve initramfs | #8 stdout | `execve success` | ✅ 2026-07-09 |
+| **V10** | 目录 | chdir/getdents/openat stdout | PASS | ⬜ Step 7 |
+| **V11** | execve `/bin/ls` | 串口见 ls 输出 | demo | 依赖 busybox + V10 |
 
 **无法逐步验的情况（承认即可）**
 

@@ -57,8 +57,8 @@ static i64 manifest_trim_line_end(struct page_slice *slice, u64 line_start,
         u8 c;
 
         while (line_len > 0) {
-                i64 ret = manifest_slice_byte(slice, line_start + line_len - 1,
-                                              &c);
+                i64 ret = manifest_slice_byte(
+                        slice, line_start + line_len - 1, &c);
                 if (ret != 0) {
                         return ret;
                 }
@@ -84,14 +84,15 @@ i64 linux_user_test_load_manifest(void)
                 return -LINUX_ENOMEM;
         }
 
-        ret = vfs_kern_read_file_slice(LINUX_USER_TEST_MANIFEST_PATH, alloc,
-                                       &slice);
+        ret = vfs_kern_read_file_slice(
+                LINUX_USER_TEST_MANIFEST_PATH, alloc, &slice);
         if (ret != 0) {
                 return ret;
         }
 
         size = page_slice_get_size(slice);
-        while (i < size && linux_user_test_manifest_count < LINUX_USER_TEST_MAX) {
+        while (i < size
+               && linux_user_test_manifest_count < LINUX_USER_TEST_MAX) {
                 u64 line_start = i;
                 u64 line_len = 0;
                 char line_buf[LINUX_USER_TEST_PATH_MAX];
@@ -131,8 +132,8 @@ i64 linux_user_test_load_manifest(void)
                         continue;
                 }
 
-                if (page_slice_copy_to_buffer(slice, line_start, line_buf,
-                                              (size_t)line_len)
+                if (page_slice_copy_to_buffer(
+                            slice, line_start, line_buf, (size_t)line_len)
                     != REND_SUCCESS) {
                         ret = -LINUX_EIO;
                         goto out_destroy;

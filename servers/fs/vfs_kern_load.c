@@ -41,9 +41,6 @@ i64 vfs_kern_read_file_slice(const char *path, struct allocator *alloc,
         }
 
         e = linux_page_slice_copy_from_kva(
-                out_slice,
-                alloc,
-                (vaddr)ino.u.cpio_data,
-                (size_t)ino.size);
+                out_slice, alloc, (vaddr)ino.u.cpio_data, (size_t)ino.size);
         return (e == REND_SUCCESS) ? 0 : -LINUX_ENOMEM;
 }

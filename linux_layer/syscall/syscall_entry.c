@@ -281,6 +281,31 @@ void syscall(struct trap_frame *syscall_ctx)
                                  (u64)syscall_ctx->ARCH_SYSCALL_ARG_4);
                 break;
 #if defined(_X86_64_)
+        case __NR_mount:
+                ret = sys_mount((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_3,
+                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_4,
+                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_5);
+                break;
+        case __NR_umount2:
+                ret = sys_umount2((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                  (i32)syscall_ctx->ARCH_SYSCALL_ARG_2);
+                break;
+#elif defined(_AARCH64_)
+        case __NR_mount:
+                ret = sys_mount((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_3,
+                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_4,
+                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_5);
+                break;
+        case __NR_umount2:
+                ret = sys_umount2((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                  (i32)syscall_ctx->ARCH_SYSCALL_ARG_2);
+                break;
+#endif
+#if defined(_X86_64_)
         case __NR_arch_prctl:
                 ret = sys_arch_prctl((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
                                      (u64)syscall_ctx->ARCH_SYSCALL_ARG_2);

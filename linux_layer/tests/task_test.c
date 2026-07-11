@@ -6,6 +6,7 @@
 #include <rendezvos/task/thread_loader.h>
 #include <rendezvos/smp/percpu.h>
 #include <linux_compat/elf_init.h>
+#include <linux_compat/append_fini.h>
 #include <linux_compat/mm/linux_page_slice_file.h>
 #include <linux_compat/proc_compat.h>
 
@@ -26,8 +27,8 @@ int task_test(void)
                         (u64*)((vaddr)(&_num_app) + (i * 2 + 2) * sizeof(u64));
                 u64 app_start = *(app_start_ptr);
                 u64 app_end = *(app_end_ptr);
-                struct page_slice *slice = NULL;
-                struct allocator *alloc = percpu(kallocator);
+                struct page_slice* slice = NULL;
+                struct allocator* alloc = percpu(kallocator);
                 error_t e;
 
                 if (!alloc || app_end <= app_start) {
@@ -46,6 +47,10 @@ int task_test(void)
                 e = gen_task_from_elf(NULL,
                                       LINUX_PROC_APPEND_BYTES,
                                       LINUX_THREAD_APPEND_BYTES,
+                                      linux_task_append_fini_ptr,
+                                      linux_task_append_fork_ptr,
+                                      linux_thread_append_fini_ptr,
+                                      linux_thread_append_fork_ptr,
                                       slice,
                                       linux_elf_init_handler_ptr);
                 if (e != REND_SUCCESS) {

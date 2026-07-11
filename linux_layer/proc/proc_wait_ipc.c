@@ -3,14 +3,66 @@
  */
 
 #include <linux_compat/ipc/exit_protocol.h>
+#include <linux_compat/proc/clean_ipc.h>
 #include <linux_compat/proc/wait_ipc.h>
 #include <linux_compat/proc_registry.h>
 #include <linux_compat/signal/signal_deliver.h>
+#include <modules/log/log.h>
 #include <rendezvos/ipc/ipc.h>
+#include <rendezvos/sync/cas_lock.h>
 #include <rendezvos/ipc/kmsg.h>
 #include <rendezvos/ipc/message.h>
 #include <rendezvos/ipc/port.h>
 #include <rendezvos/task/tcb.h>
+
+static error_t linux_proc_wait_deliver_message(Message_t *msg,
+                                               Message_Port_t *port)
+{
+        error_t err;
+
+        err = enqueue_msg_for_send(msg);
+        if (err != REND_SUCCESS) {
+                ref_put(&msg->ms_queue_node.refcount, free_message_ref);
+                ref_put(&port->refcount, free_message_port_ref);
+                pr_error("[PROC/wait_ipc] enqueue_msg_for_send failed e=%d\n",
+                         (int)err);
+                return err;
+        }
+
+        err = send_msg(port);
+        if (err != REND_SUCCESS) {
+                pr_error("[PROC/wait_ipc] send_msg failed e=%d\n", (int)err);
+        }
+        ref_put(&port->refcount, free_message_port_ref);
+        return err;
+}
+
+void linux_proc_wait_accept_pending_notify(pid_t parent_pid)
+{
+        Message_Port_t *wait_port;
+        Message_t *msg;
+
+        wait_port = proc_get_or_create_wait_port(parent_pid);
+        if (!wait_port) {
+                return;
+        }
+
+        /*
+         * If clean_server is blocked in send_msg(EXIT_NOTIFY) but the parent
+         * reaped via registry scan (no recv_msg), complete the rendezvous here
+         * without blocking.
+         */
+        if (ipc_try_recv_msg(wait_port) != REND_SUCCESS) {
+                ref_put(&wait_port->refcount, free_message_port_ref);
+                return;
+        }
+
+        msg = dequeue_recv_msg();
+        if (msg) {
+                ref_put(&msg->ms_queue_node.refcount, free_message_ref);
+        }
+        ref_put(&wait_port->refcount, free_message_port_ref);
+}
 
 static bool linux_proc_wait_post_interrupt(Message_Port_t *port)
 {
@@ -63,4 +115,114 @@ void linux_proc_wait_wake_for_signal(Thread_Base *thread, Tcb_Base *process)
         }
 
         (void)linux_proc_wait_post_interrupt(wait_port);
+}
+
+bool linux_proc_post_exit_notify(pid_t parent_pid, pid_t child_pid,
+                                 i32 exit_code)
+{
+        Message_Port_t *wait_port;
+        Msg_Data_t *md;
+        Message_t *msg;
+        error_t err;
+
+        if (parent_pid <= 0 || child_pid <= 0) {
+                return false;
+        }
+
+        wait_port = proc_get_or_create_wait_port(parent_pid);
+        if (!wait_port) {
+                return false;
+        }
+
+        md = kmsg_create(wait_port->service_id,
+                         KMSG_OP_PROC_EXIT_NOTIFY,
+                         LINUX_KMSG_FMT_EXIT_NOTIFY,
+                         (i64)child_pid,
+                         exit_code);
+        if (!md) {
+                ref_put(&wait_port->refcount, free_message_port_ref);
+                return false;
+        }
+
+        msg = create_message_with_msg(md);
+        ref_put(&md->refcount, free_msgdata_ref_default);
+        if (!msg) {
+                ref_put(&wait_port->refcount, free_message_port_ref);
+                return false;
+        }
+
+        err = linux_proc_wait_deliver_message(msg, wait_port);
+        return err == REND_SUCCESS;
+}
+
+bool linux_proc_post_kernel_exit_notify(pid_t child_pid, i32 exit_code)
+{
+        Message_Port_t *kernel_port;
+        Msg_Data_t *md;
+        Message_t *msg;
+        error_t err;
+
+        if (child_pid <= 0) {
+                return false;
+        }
+
+        kernel_port = thread_lookup_port(KERNEL_PORT_NAME);
+        if (!kernel_port) {
+                pr_error("[PROC/wait_ipc] kernel port '%s' not found\n",
+                         KERNEL_PORT_NAME);
+                return false;
+        }
+
+        md = kmsg_create(kernel_port->service_id,
+                         KMSG_OP_PROC_EXIT_NOTIFY,
+                         LINUX_KMSG_FMT_EXIT_NOTIFY,
+                         (i64)child_pid,
+                         exit_code);
+        if (!md) {
+                ref_put(&kernel_port->refcount, free_message_port_ref);
+                return false;
+        }
+
+        msg = create_message_with_msg(md);
+        ref_put(&md->refcount, free_msgdata_ref_default);
+        if (!msg) {
+                ref_put(&kernel_port->refcount, free_message_port_ref);
+                return false;
+        }
+
+        err = linux_proc_wait_deliver_message(msg, kernel_port);
+        return err == REND_SUCCESS;
+}
+
+bool linux_proc_reap_zombie_by_pid(pid_t child_pid)
+{
+        Tcb_Base *child;
+        linux_proc_append_t *pa;
+        bool task_empty;
+
+        if (child_pid <= 0) {
+                return false;
+        }
+
+        child = find_task_by_pid(child_pid);
+        if (!child) {
+                return false;
+        }
+
+        pa = linux_proc_append(child);
+        if (!pa || pa->exit_state != 1) {
+                return false;
+        }
+
+        lock_cas(&child->thread_list_lock);
+        task_empty = (child->thread_number == 0);
+        if (!task_empty) {
+                unlock_cas(&child->thread_list_lock);
+                return false;
+        }
+        pa->exit_state = 2;
+        unlock_cas(&child->thread_list_lock);
+
+        (void)linux_clean_send_task_reap(child_pid);
+        return true;
 }

@@ -1,112 +1,124 @@
 /*
- * Undefined Instruction Trap Handler for Linux Compat Layer
+ * Illegal-instruction trap handler for Linux compat.
  *
- * This handler catches undefined instruction exceptions (EC=0x00 on aarch64)
- * to provide Linux-compatible error handling instead of kernel panic.
- *
- * Strategy:
- * - User mode exceptions: gracefully exit the current process
- * - Kernel mode exceptions: treat as kernel bug, panic
+ * User mode: exit the process (Linux SIGILL-like behaviour).
+ * Kernel mode: dump via arch_unknown_trap_handler, request powerd shutdown,
+ * then halt — never return to the faulting instruction.
  */
 
 #include <common/types.h>
 #include <modules/log/log.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/system/powerd.h>
 #include <rendezvos/task/initcall.h>
+#include <rendezvos/task/tcb.h>
 #include <rendezvos/trap/trap.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/initcall.h>
-#include <linux_compat/signal/signal_types.h>
-#include <linux_compat/proc_compat.h>
 #include <syscall.h>
 #include <rendezvos/smp/percpu.h>
 
-/* Get trap interface and NR_IRQ from core */
-#include <rendezvos/trap/trap.h>
+#if defined(_AARCH64_)
+#include <arch/aarch64/sync/barrier.h>
+#elif defined(_X86_64_)
+#include <arch/x86_64/sync/barrier.h>
+#endif
 
-/* Access core layer's percpu trap vector (defined in core/kernel/trap/trap.c)
- */
-extern struct irq irq_vector[NR_IRQ];
+static void linux_trap_kernel_fatal(struct trap_frame *tf, const char *summary)
+{
+        pr_error("%s\n", summary);
+        arch_unknown_trap_handler(tf);
+        (void)rendezvos_request_poweroff();
+        for (;;) {
+                arch_cpu_relax();
+        }
+}
 
-/*
- * Undefined instruction trap handler
- *
- * Handles EC=0x00 (unknown reason/undefined instruction) on aarch64
- * which maps to trap_id=0.
- */
-static void linux_undefined_instruction_handler(struct trap_frame *tf)
+static void linux_illegal_instr_trap_handler(struct trap_frame *tf)
 {
         Tcb_Base *current;
         bool is_user = false;
+        u64 trap_id = 0;
 
 #if defined(_AARCH64_)
         struct aarch64_trap_info info;
+
         arch_populate_trap_info(tf, &info);
         is_user = info.is_user;
+        trap_id = TRAP_ID(tf->trap_info);
 #elif defined(_X86_64_)
         struct x86_64_trap_info info;
+
         arch_populate_trap_info(tf, &info);
         is_user = info.is_user;
+        trap_id = TRAP_ID(tf->trap_info);
 #else
 #error "Unsupported architecture"
 #endif
 
         current = get_cpu_current_task();
 
-        /*
-         * User mode undefined instruction: gracefully exit the current process
-         * instead of panicking the entire kernel.
-         */
         if (is_user && current) {
-                pr_warn("[UNDEF_INSTR] User mode undefined instruction - exiting process %d\n",
-                        current->pid);
+                pr_warn("[TRAP] illegal instruction in user mode pid=%d trap_id=%lu - exiting\n",
+                        current->pid,
+                        (unsigned long)trap_id);
                 sys_exit_group(-LINUX_ENOSYS);
                 __builtin_unreachable();
         }
 
-        /*
-         * Kernel mode undefined instruction: this is a kernel bug
-         */
-        pr_error(
-                "[UNDEF_INSTR] Kernel mode undefined instruction - this is a BUG\n");
+        linux_trap_kernel_fatal(
+                tf,
+                "[TRAP] illegal instruction in kernel mode - requesting poweroff");
 }
 
-/*
- * Initialize undefined instruction trap handler
- *
- * Per-CPU: each AP must register on its own irq_vector after arch_start_core.
- * Check which trap IDs already have handlers, then register only for empty slots.
- */
+static void linux_unknown_class_trap_handler(struct trap_frame *tf)
+{
+        Tcb_Base *current;
+        bool is_user = false;
+        u64 trap_id = 0;
+
+#if defined(_AARCH64_)
+        struct aarch64_trap_info info;
+
+        arch_populate_trap_info(tf, &info);
+        is_user = info.is_user;
+        trap_id = TRAP_ID(tf->trap_info);
+#elif defined(_X86_64_)
+        struct x86_64_trap_info info;
+
+        arch_populate_trap_info(tf, &info);
+        is_user = info.is_user;
+        trap_id = TRAP_ID(tf->trap_info);
+#else
+#error "Unsupported architecture"
+#endif
+
+        current = get_cpu_current_task();
+
+        if (is_user && current) {
+                pr_warn("[TRAP] unhandled trap in user mode pid=%d trap_id=%lu - exiting\n",
+                        current->pid,
+                        (unsigned long)trap_id);
+                sys_exit_group(-LINUX_ENOSYS);
+                __builtin_unreachable();
+        }
+
+        linux_trap_kernel_fatal(
+                tf,
+                "[TRAP] unhandled trap in kernel mode - requesting poweroff");
+}
+
 void linux_unknown_trap_init(void)
 {
-        int registered_count = 0;
-        int skipped_count = 0;
-
-        /*
-         * Iterate through all trap IDs and register our handler only for those
-         * that don't already have a handler.
-         *
-         * This provides comprehensive coverage while avoiding overwrite of
-         * critical handlers like syscall.
-         */
-        for (int i = 0; i < NR_IRQ; i++) {
-                /* Check if this trap ID already has a handler */
-                if (percpu(irq_vector[i].irq_handler) == NULL) {
-                        register_irq_handler(
-                                i,
-                                linux_undefined_instruction_handler,
-                                IRQ_NO_ATTR);
-                        registered_count++;
-                } else {
-                        skipped_count++;
-                }
-        }
+        register_fixed_trap(TRAP_CLASS_ILLEGAL_INSTR,
+                            linux_illegal_instr_trap_handler,
+                            IRQ_NO_ATTR);
+        register_fixed_trap(TRAP_CLASS_UNKNOWN,
+                            linux_unknown_class_trap_handler,
+                            IRQ_NO_ATTR);
 
         if (linux_init_on_bsp()) {
-                pr_info("[UNDEF_INSTR] Registered handler for %d trap IDs, skipped %d already registered\n",
-                        registered_count,
-                        skipped_count);
+                pr_info("[TRAP] Registered illegal-instruction and unknown-class handlers\n");
         }
 }
-DEFINE_INIT_LEVEL(linux_unknown_trap_init, 1); /* Run after core init (level 0)
-                                                */
+
+DEFINE_INIT_LEVEL(linux_unknown_trap_init, 1);

@@ -4,9 +4,10 @@
 #include <common/types.h>
 
 /*
- * Parent wait4 wakeup: child sys_exit -> parent proc wait_port.
- * kmsg_hdr.module = parent wait_port->service_id.
- * Payload is a wakeup hook only; reaping uses exit_state (see sys_wait.c).
+ * Zombie wakeup after THREAD_REAP (thread_number==0):
+ * - Live parent: send_msg on wait_port_<ppid> (wait4 recv).
+ * - Reparented / dead parent: send_msg on kernel_port (init thread recv).
+ * kmsg_hdr.module = target port service_id; payload is a wakeup hint only.
  */
 
 #define KMSG_OP_PROC_EXIT_NOTIFY      1u

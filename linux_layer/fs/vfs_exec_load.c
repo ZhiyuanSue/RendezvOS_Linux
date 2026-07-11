@@ -26,11 +26,9 @@
 
 #define LINUX_AT_FDCWD (-100)
 #define LINUX_O_RDONLY 0
-#define LINUX_SEEK_SET 0
-#define LINUX_SEEK_END 2
 
-#define LINUX_EXEC_MAX_FILE   (8u * 1024u * 1024u)
-#define LINUX_EXEC_READ_CHUNK 4096u
+#define LINUX_EXEC_MAX_FILE      (8u * 1024u * 1024u)
+#define LINUX_EXEC_READ_CHUNK    4096u
 #define LINUX_EXEC_SCRATCH_PAGES 1u
 
 static vaddr linux_exec_scratch_hint(VSpace *vs)
@@ -72,31 +70,33 @@ static i64 linux_vfs_page_slice_err(error_t e)
         }
 }
 
-static i64 linux_vfs_open_readonly(const char *path, i64 *out_fd)
-{
-        i64 fd;
+#define LINUX_SEEK_SET 0
+#define LINUX_SEEK_END 2
 
-        fd = vfs_ipc_request_response(KMSG_OP_VFS_OPEN,
-                                      VFS_KMSG_FMT_OPEN,
-                                      (i32)LINUX_AT_FDCWD,
-                                      path,
-                                      (i32)LINUX_O_RDONLY,
-                                      (u32)0);
-        if (fd < 0) {
-                return fd;
+static i64 linux_vfs_open_readonly(const char *path, u32 *out_handle)
+{
+        i64 handle;
+
+        handle = vfs_ipc_request_response(KMSG_OP_VFS_OPEN,
+                                          VFS_KMSG_FMT_OPEN,
+                                          path,
+                                          (i32)LINUX_O_RDONLY,
+                                          (u32)0);
+        if (handle < 0) {
+                return handle;
         }
 
-        *out_fd = fd;
+        *out_handle = (u32)handle;
         return 0;
 }
 
-static i64 linux_vfs_query_file_size(i64 fd, i64 *out_size)
+static i64 linux_vfs_query_file_size(u32 handle, i64 *out_size)
 {
         i64 file_size;
 
         file_size = vfs_ipc_request_response(KMSG_OP_VFS_LSEEK,
                                              VFS_KMSG_FMT_LSEEK,
-                                             (i32)fd,
+                                             handle,
                                              (u64)0,
                                              (i32)LINUX_SEEK_END);
         if (file_size < 0) {
@@ -108,7 +108,7 @@ static i64 linux_vfs_query_file_size(i64 fd, i64 *out_size)
 
         if (vfs_ipc_request_response(KMSG_OP_VFS_LSEEK,
                                      VFS_KMSG_FMT_LSEEK,
-                                     (i32)fd,
+                                     handle,
                                      (u64)0,
                                      (i32)LINUX_SEEK_SET)
             < 0) {
@@ -119,11 +119,11 @@ static i64 linux_vfs_query_file_size(i64 fd, i64 *out_size)
         return 0;
 }
 
-static void linux_vfs_close_quiet(i64 fd)
+static void linux_vfs_close_quiet(u32 handle)
 {
-        if (fd >= 0) {
+        if (handle != 0) {
                 (void)vfs_ipc_request_response(
-                        KMSG_OP_VFS_CLOSE, VFS_KMSG_FMT_CLOSE, (i32)fd);
+                        KMSG_OP_VFS_CLOSE, VFS_KMSG_FMT_CLOSE, handle);
         }
 }
 
@@ -131,7 +131,7 @@ i64 linux_vfs_read_file_slice(VSpace *vs, const char *path,
                               struct allocator *alloc,
                               struct page_slice **out_slice)
 {
-        i64 fd = -1;
+        u32 handle = 0;
         i64 file_size = 0;
         i64 nread;
         struct page_slice *slice = NULL;
@@ -152,12 +152,12 @@ i64 linux_vfs_read_file_slice(VSpace *vs, const char *path,
                 return -LINUX_EFAULT;
         }
 
-        ret = linux_vfs_open_readonly(path, &fd);
+        ret = linux_vfs_open_readonly(path, &handle);
         if (ret != 0) {
                 return ret;
         }
 
-        ret = linux_vfs_query_file_size(fd, &file_size);
+        ret = linux_vfs_query_file_size(handle, &file_size);
         if (ret != 0) {
                 goto out_close;
         }
@@ -187,7 +187,7 @@ i64 linux_vfs_read_file_slice(VSpace *vs, const char *path,
 
                 nread = vfs_ipc_request_response(KMSG_OP_VFS_READ,
                                                  VFS_KMSG_FMT_READ,
-                                                 (i32)fd,
+                                                 handle,
                                                  scratch,
                                                  chunk);
                 if (nread < 0) {
@@ -208,10 +208,8 @@ i64 linux_vfs_read_file_slice(VSpace *vs, const char *path,
                         page_fill = 0;
                 }
 
-                e = linux_mm_load_from_user(vs,
-                                            scratch,
-                                            (void *)(page + page_fill),
-                                            (size_t)nread);
+                e = linux_mm_load_from_user(
+                        vs, scratch, (void *)(page + page_fill), (size_t)nread);
                 if (e != REND_SUCCESS) {
                         ret = -LINUX_EFAULT;
                         goto out_drop_partial_page;
@@ -245,12 +243,12 @@ i64 linux_vfs_read_file_slice(VSpace *vs, const char *path,
         scratch = 0;
 
         if (vfs_ipc_request_response(
-                    KMSG_OP_VFS_CLOSE, VFS_KMSG_FMT_CLOSE, (i32)fd)
+                    KMSG_OP_VFS_CLOSE, VFS_KMSG_FMT_CLOSE, handle)
             < 0) {
                 page_slice_destroy(&slice);
                 return -LINUX_EIO;
         }
-        fd = -1;
+        handle = 0;
 
         *out_slice = slice;
         return 0;
@@ -261,14 +259,15 @@ out_drop_partial_page:
         }
 out_unmap:
         if (scratch) {
-                (void)linux_mm_unmap_user_range(vs, scratch, LINUX_EXEC_SCRATCH_PAGES);
+                (void)linux_mm_unmap_user_range(
+                        vs, scratch, LINUX_EXEC_SCRATCH_PAGES);
         }
 out_destroy_slice:
         if (slice) {
                 page_slice_destroy(&slice);
         }
 out_close:
-        linux_vfs_close_quiet(fd);
+        linux_vfs_close_quiet(handle);
         return ret;
 }
 

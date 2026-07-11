@@ -1,6 +1,8 @@
 #include <linux_compat/errno.h>
 #include <linux_compat/ipc/exit_protocol.h>
 #include <linux_compat/linux_mm_radix.h>
+#include <linux_compat/proc/clean_ipc.h>
+#include <linux_compat/proc/wait_ipc.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/proc_registry.h>
 #include <linux_compat/signal/signal_deliver.h>
@@ -10,10 +12,9 @@
 #include <rendezvos/ipc/message.h>
 #include <rendezvos/ipc/port.h>
 #include <rendezvos/smp/percpu.h>
+#include <rendezvos/sync/cas_lock.h>
 #include <rendezvos/task/tcb.h>
 #include <syscall.h>
-
-extern struct Port_Table* global_port_table;
 
 #define LINUX_WNOHANG    0x00000001
 #define LINUX_WUNTRACED  0x00000002
@@ -22,12 +23,12 @@ extern struct Port_Table* global_port_table;
 /*
  * wait4 / waitid (linux_layer)
  *
- * Source of truth for reap: linux_proc_append_t.exit_state / exit_code
- * (set in sys_exit before the parent is woken).
+ * Source of truth: linux_proc_append_t.exit_state / exit_code (sys_exit).
  *
- * IPC (per-process wait_port) blocks until child sys_exit posts EXIT_NOTIFY or
- * a deliverable signal posts WAIT_INTERRUPT (EINTR). Reap always via
- * exit_state.
+ * Approach 2: clean_server send_msg(EXIT_NOTIFY) after THREAD_REAP when
+ * thread_number==0. Parent wait4 recv_msg then reaps (exit_state 1→2).
+ * If the parent reaps via registry scan first, accept_pending_notify completes
+ * any blocked clean_server send without leaving a stale wakeup.
  */
 
 static error_t proc_put_wstatus_helper(Tcb_Base* task, u64 user_wstatus,
@@ -58,13 +59,25 @@ static i64 wait4_reap_child(Tcb_Base* parent, u64 user_wstatus, Tcb_Base* child,
                             linux_proc_append_t* child_pa)
 {
         i32 encoded_status = wait4_encode_status(child_pa->exit_code);
+        bool task_empty;
 
+        lock_cas(&child->thread_list_lock);
+        task_empty = (child->thread_number == 0);
+        if (!task_empty) {
+                unlock_cas(&child->thread_list_lock);
+                return 0;
+        }
         child_pa->exit_state = 2;
+        unlock_cas(&child->thread_list_lock);
 
         if (proc_put_wstatus_helper(parent, user_wstatus, encoded_status)
             != REND_SUCCESS) {
+                child_pa->exit_state = 1;
                 return -LINUX_EFAULT;
         }
+
+        (void)linux_clean_send_task_reap(child->pid);
+        linux_proc_wait_accept_pending_notify(parent->pid);
         return (i64)child->pid;
 }
 
@@ -83,6 +96,12 @@ static Tcb_Base* wait4_find_zombie(i32 pid, Tcb_Base* parent,
                     || child_pa->exit_state != 1) {
                         return NULL;
                 }
+                lock_cas(&child->thread_list_lock);
+                if (child->thread_number != 0) {
+                        unlock_cas(&child->thread_list_lock);
+                        return NULL;
+                }
+                unlock_cas(&child->thread_list_lock);
                 return child;
         }
         if (pid == -1) {

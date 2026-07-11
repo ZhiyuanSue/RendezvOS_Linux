@@ -8,6 +8,7 @@
 #include <linux_compat/proc/wait_ipc.h>
 #include <linux_compat/signal/signal_types.h>
 #include <linux_compat/signal/signal_deliver.h>
+#include <linux_compat/signal/signal_state.h>
 #include <linux_compat/time/linux_time_sleep.h>
 #include <modules/log/log.h>
 #include <rendezvos/smp/percpu.h>
@@ -67,6 +68,7 @@ static Thread_Base* signal_select_thread_helper(Tcb_Base* process, int sig)
 void linux_signal_flush_pending(Tcb_Base* target, int sig)
 {
         linux_proc_append_t* proc_append;
+        linux_signal_proc_state_t* ps;
         Thread_Base* th;
         Thread_Base* tmp;
 
@@ -75,11 +77,12 @@ void linux_signal_flush_pending(Tcb_Base* target, int sig)
         }
 
         proc_append = linux_proc_append(target);
-        if (!proc_append) {
+        ps = proc_append ? proc_append->signal : NULL;
+        if (!ps) {
                 return;
         }
 
-        sigdelset(&proc_append->pending_signals, sig);
+        sigdelset(&ps->pending_signals, sig);
 
         lock_cas(&target->thread_list_lock);
         for (th = container_of((target->thread_head_node.next),
@@ -92,10 +95,10 @@ void linux_signal_flush_pending(Tcb_Base* target, int sig)
             tmp = container_of((tmp->thread_list_node.next),
                                Thread_Base,
                                thread_list_node)) {
-                linux_thread_append_t* thread_append = linux_thread_append(th);
+                linux_signal_thread_state_t* ts = linux_signal_thread_state(th);
 
-                if (thread_append) {
-                        sigdelset(&thread_append->pending_signals, sig);
+                if (ts) {
+                        sigdelset(&ts->pending_signals, sig);
                 }
         }
         unlock_cas(&target->thread_list_lock);
@@ -104,17 +107,19 @@ void linux_signal_flush_pending(Tcb_Base* target, int sig)
 static i64 signal_queue_on_thread_helper(Tcb_Base* target,
                                          Thread_Base* target_thread, int sig)
 {
-        linux_proc_append_t* proc_append;
+        linux_signal_proc_state_t* ps;
+        linux_signal_thread_state_t* ts;
         linux_thread_append_t* thread_append;
 
-        proc_append = linux_proc_append(target);
+        ps = linux_signal_proc_state(target);
+        ts = linux_signal_thread_state(target_thread);
         thread_append = linux_thread_append(target_thread);
-        if (!proc_append || !thread_append) {
+        if (!ps || !ts || !thread_append) {
                 return -LINUX_ESRCH;
         }
 
-        sigaddset(&proc_append->pending_signals, sig);
-        sigaddset(&thread_append->pending_signals, sig);
+        sigaddset(&ps->pending_signals, sig);
+        sigaddset(&ts->pending_signals, sig);
 
         /*
          * IPC block uses thread_status_block_on_send / block_on_receive (see
@@ -160,7 +165,7 @@ i64 linux_queue_signal(Tcb_Base* target, int sig, pid_t sender_tid)
 {
         sigaction_t* disp;
         Thread_Base* target_thread;
-        linux_proc_append_t* proc_append;
+        linux_signal_proc_state_t* ps;
 
         (void)sender_tid;
 
@@ -172,12 +177,12 @@ i64 linux_queue_signal(Tcb_Base* target, int sig, pid_t sender_tid)
                 return -LINUX_EINVAL;
         }
 
-        proc_append = linux_proc_append(target);
-        if (!proc_append) {
+        ps = linux_signal_proc_state(target);
+        if (!ps) {
                 return -LINUX_ESRCH;
         }
 
-        disp = &proc_append->signal_dispositions[sig - 1];
+        disp = &ps->dispositions[sig - 1];
         if (linux_signal_handler_is_ign(disp->sa_handler)) {
                 linux_signal_flush_pending(target, sig);
                 return 0;
@@ -196,7 +201,7 @@ i64 linux_queue_signal_thread(Thread_Base* target_thread, int sig,
 {
         Tcb_Base* process;
         sigaction_t* disp;
-        linux_proc_append_t* proc_append;
+        linux_signal_proc_state_t* ps;
 
         (void)sender_tid;
 
@@ -213,12 +218,12 @@ i64 linux_queue_signal_thread(Thread_Base* target_thread, int sig,
                 return -LINUX_EINVAL;
         }
 
-        proc_append = linux_proc_append(process);
-        if (!proc_append) {
+        ps = linux_signal_proc_state(process);
+        if (!ps) {
                 return -LINUX_ESRCH;
         }
 
-        disp = &proc_append->signal_dispositions[sig - 1];
+        disp = &ps->dispositions[sig - 1];
         if (linux_signal_handler_is_ign(disp->sa_handler)) {
                 linux_signal_flush_pending(process, sig);
                 return 0;

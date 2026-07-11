@@ -19,7 +19,7 @@
 | auxv | ❌ | ❌ | No `AT_*` vector |
 | de_thread before exec | ❌ | ❌ | Multi-thread exec unsafe |
 | Full post-exec reset | ⚠️ | ⚠️ | Only brk/mmap_hint/pending; not dispositions/altstack |
-| FS path (open + load) | ⚠️ | ⚠️ | CPIO / IPC VFS via `page_slice` (`linux_exec_load_elf_slice`); embedded fallback kept |
+| FS path (open + load) | ✅ | ✅ | CPIO slice + initramfs execve `#8` stdout PASS（2026-07-09） |
 | shebang / PT_INTERP | ❌ | ❌ | Out of scope (no dynamic linking) |
 
 ---
@@ -32,7 +32,8 @@
 | 43 | test_echo via exec | `I am test_echo.` |
 | 52 | test_execve_simple | `I am execve_target!` |
 
-**Not yet verified**: FS-based exec (#18), musl/glibc dynamic binaries, multi-thread exec.
+**FS exec verified**: `#8` / `#32` / `#33` harness + `#8` stdout（initramfs path）。  
+**Not yet verified**: FS-only exec without embedded fallback removal; musl/glibc; multi-thread exec.
 
 ---
 
@@ -75,5 +76,5 @@
 
 1. envp + minimal auxv for static musl tests  
 2. de_thread + complete signal/MM reset  
-3. After VFS: path resolution + FS read + extend program_map removal  
+3. After VFS directory phase: shrink embedded `program_map` in `linux_exec_image.c`  
 4. Verification gate entry in [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md)

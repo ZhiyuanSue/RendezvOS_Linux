@@ -3,7 +3,56 @@
 > **Purpose**: Record **paired** x86_64 / aarch64 runs after proc/signal/wait milestones.
 > Harness PASS alone is insufficient — compare **stdout structure** and kernel-side noise.
 
-**Last updated**: 2026-06-13 (maintainer runs: `aarch64_run.log`, `x86_64_run.log`)
+**Last updated**: 2026-07-09 (maintainer runs: `aarch64_run.log`, `x86_64_run.log`)
+
+---
+
+## 2026-07-09 — Phase 4 FS bootstrap + page_slice 统一加载
+
+### Global metrics
+
+| Metric | x86_64 | aarch64 |
+|--------|--------|---------|
+| Harness | **52/52 PASS**, Failed 0/52 | **52/52 PASS**, Failed 0/52 |
+| Shutdown | clean `KERNEL: System halted.` | clean |
+| SMP | 4 CPUs | 4 CPUs |
+| VFS | `cpio 59 entries, ramfs 0 entries` | same |
+| initramfs harness | `LINUX USER TEST SUITE START (initramfs)` Total 52 | same |
+| ELF load | `start gen task from elf slice …` per test | same |
+
+**compat 变更（本 gate）**: initramfs cpio 链进镜像；`vfs_kern_read_file_slice` 统一 middle-layer 读；manifest/ELF page_slice；execve `linux_exec_load_elf_slice`；删除 contiguous `vfs_kern_read_file`。详见 [`FILE_LOADING.md`](FILE_LOADING.md)。
+
+### FS stdout 矩阵（harness PASS ≠ 全绿）
+
+| 测例 | 主题 | x86_64 stdout | aarch64 stdout |
+|------|------|---------------|----------------|
+| #21 | open | PASS | PASS |
+| #28 | read | PASS | PASS |
+| #5 | close | PASS | PASS |
+| #11 | fstat | PASS | PASS |
+| #12 | getcwd | PASS (stub `/`) | PASS |
+| #17 | mkdir | PASS | PASS |
+| #48 | unlink | PASS | PASS |
+| #8 | execve → test_echo | PASS | PASS |
+| #32/#33 | test_execve* | PASS (harness) | PASS |
+| #51 | write | PASS | PASS |
+| #3 | chdir | **FAIL** ENOSYS | **FAIL** |
+| #13 | getdents | **FAIL** | **FAIL** |
+| #22 | openat | **FAIL** | **FAIL** |
+| #6/#7 | dup/dup2 | **FAIL** ENOSYS | **FAIL** |
+| #27 | pipe | **FAIL** ENOSYS | **FAIL** |
+| #19/#46 | mount/umount | **FAIL** ENOSYS | **FAIL** (deferred) |
+
+**结论**: Phase 4 **bootstrap 达成**（cpio open/read/fstat、ramfs mkdir/unlink、initramfs execve、page_slice harness）。  
+**下一目标**: 目录语义 — [`DIRECTORY_PHASE.md`](DIRECTORY_PHASE.md)（chdir、cwd、openat dirfd、getdents64；**不需**新建 Linux inode 层）。
+
+### 下一步验证
+
+- [x] initramfs 52/52 harness — x86_64 + aarch64 ✅
+- [x] #21/#28 open+read stdout PASS ✅
+- [x] #8 execve VFS path stdout PASS ✅
+- [ ] #3/#13/#22 chdir/getdents/openat stdout PASS（Step 7）
+- [ ] append 双架构 post-directory run
 
 ---
 

@@ -183,3 +183,54 @@ bool vfs_path_parent(const char *path, char *out, u64 out_cap)
         out[i] = '\0';
         return true;
 }
+
+bool vfs_path_join(const char *base, const char *rel, char *out, u64 out_cap)
+{
+        char base_norm[VFS_PATH_MAX];
+        char norm[VFS_PATH_MAX];
+        const char *r = rel;
+        u64 i;
+        u64 j;
+
+        if (!base || !rel || !out || out_cap == 0) {
+                return false;
+        }
+
+        if (rel[0] == '/') {
+                vfs_path_normalize(rel, out, out_cap);
+                return true;
+        }
+
+        vfs_path_normalize(base, base_norm, sizeof(base_norm));
+
+        if (r[0] == '.' && r[1] == '/') {
+                r += 2;
+        } else if (r[0] == '.' && r[1] == '\0') {
+                strncpy(out, base_norm, out_cap - 1);
+                out[out_cap - 1] = '\0';
+                return true;
+        }
+
+        i = 0;
+        for (j = 0; base_norm[j] != '\0' && i + 1 < out_cap; j++) {
+                out[i++] = base_norm[j];
+        }
+
+        if (i == 0) {
+                return false;
+        }
+
+        if (out[i - 1] != '/' && i + 1 < out_cap) {
+                out[i++] = '/';
+        }
+
+        for (j = 0; r[j] != '\0' && i + 1 < out_cap; j++) {
+                out[i++] = r[j];
+        }
+
+        out[i] = '\0';
+        vfs_path_normalize(out, norm, sizeof(norm));
+        strncpy(out, norm, out_cap - 1);
+        out[out_cap - 1] = '\0';
+        return true;
+}

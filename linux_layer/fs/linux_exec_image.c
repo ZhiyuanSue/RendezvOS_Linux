@@ -73,10 +73,7 @@ static i64 linux_exec_load_embedded_slice(const char *filename,
         }
 
         e = linux_page_slice_copy_from_kva(
-                out_slice,
-                alloc,
-                elf_start,
-                (size_t)(elf_end - elf_start));
+                out_slice, alloc, elf_start, (size_t)(elf_end - elf_start));
         if (e != REND_SUCCESS) {
                 return -LINUX_ENOMEM;
         }
@@ -104,7 +101,8 @@ i64 linux_exec_load_elf_slice(VSpace *vs, const char *filename,
                 return ret;
         }
 
-        ret = linux_vfs_read_file_for_exec_slice(vs, filename, alloc, out_slice);
+        ret = linux_vfs_read_file_for_exec_slice(
+                vs, filename, alloc, out_slice);
         if (ret == 0) {
                 return 0;
         }

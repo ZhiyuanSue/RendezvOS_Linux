@@ -30,4 +30,10 @@ bool vfs_path_parent(const char *path, char *out, u64 out_cap);
 
 bool vfs_path_is_root(const char *path);
 
+/*
+ * Join @base and relative @rel into @out, then normalize.
+ * If @rel is absolute, only @rel is normalized into @out.
+ */
+bool vfs_path_join(const char *base, const char *rel, char *out, u64 out_cap);
+
 #endif /* _VFS_PATH_H_ */

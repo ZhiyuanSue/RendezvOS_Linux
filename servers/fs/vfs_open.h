@@ -17,16 +17,15 @@
 #define VFS_O_APPEND    0x400
 #define VFS_O_DIRECTORY 0x10000
 
-#define VFS_AT_FDCWD (-100)
-
-i64 vfs_openat(pid_t pid, i32 dirfd, const char *path, i32 flags, u32 mode);
-i64 vfs_read_fd(pid_t pid, i32 fd, u64 user_buf, u64 count);
-i64 vfs_write_fd(pid_t pid, i32 fd, u64 user_buf, u64 count);
-i64 vfs_lseek_fd(pid_t pid, i32 fd, i64 offset, i32 whence);
-i64 vfs_fstat_fd(pid_t pid, i32 fd, u64 user_statbuf);
-i64 vfs_statat(pid_t pid, i32 dirfd, const char *path, u64 user_statbuf,
-               i32 flags);
-i64 vfs_mkdirat(pid_t pid, i32 dirfd, const char *path, u32 mode);
-i64 vfs_unlinkat(pid_t pid, i32 dirfd, const char *path, i32 flags);
+i64 vfs_open_path(const char *path, i32 flags, u32 mode);
+i64 vfs_read_handle(pid_t pid, u32 handle, u64 user_buf, u64 count);
+i64 vfs_write_handle(pid_t pid, u32 handle, u64 user_buf, u64 count);
+i64 vfs_lseek_handle(u32 handle, i64 offset, i32 whence);
+i64 vfs_fstat_handle(pid_t pid, u32 handle, u64 user_statbuf);
+i64 vfs_stat_path(pid_t pid, const char *path, u64 user_statbuf, i32 flags);
+i64 vfs_mkdir_path(const char *path, u32 mode);
+i64 vfs_unlink_path(const char *path, i32 flags);
+i64 vfs_validate_dir(const char *path);
+i64 vfs_getdents64_handle(pid_t pid, u32 handle, u64 user_dirp, u64 count);
 
 #endif /* _VFS_OPEN_H_ */

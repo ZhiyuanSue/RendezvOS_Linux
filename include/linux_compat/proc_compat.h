@@ -5,8 +5,8 @@
 #include <rendezvos/ipc/port.h>
 #include <rendezvos/task/tcb.h>
 #include <rendezvos/time.h>
-#include <linux_compat/signal/signal_types.h>
-#include <linux_compat/signal/signal_restore_arch.h>
+#include <linux_compat/fs/linux_fd_table.h>
+#include <linux_compat/signal/signal_state.h>
 
 /*
  * Linux compat append model:
@@ -25,55 +25,41 @@ typedef struct linux_proc_append {
                           last mmap) */
 
         /* Process relationships */
-        pid_t ppid; /* Parent process PID */
+        /*
+         * Parent PID. LINUX_INIT_REAP_PPID (0) means kernel init reaps via
+         * kernel_port after parent exit (reparent in task append_fini).
+         */
+        pid_t ppid;
         pid_t pgid; /* Process group ID (for wait4 pid==0, pid<-1) */
         i32 exit_code; /* Exit code for wait() */
         i32 exit_state; /* Exit state: 0=running, 1=zombie, 2=reaped */
         struct list_entry wait_queue; /* Parent processes waiting */
 
-        /* Phase 2B: Signal disposition (per-process, per-signal) */
-        sigaction_t signal_dispositions[NSIG]; /* Signal handlers */
-        sigset_t pending_signals; /* Process-wide pending signals */
+        /*
+         * Phase 2B / Phase 4: heap-backed Linux state (append = pointer only).
+         */
+        linux_signal_proc_state_t *signal;
+        linux_fs_state_t *fs;
 } linux_proc_append_t;
 
-/*
- * Kernel-stored pre-handler context for rt_sigreturn (Phase 2B).
- * Not a full Linux rt_sigframe on the user stack — sufficient for compat tests
- * and explicit rt_sigreturn(); glibc may need user-stack sigframe later.
- */
-typedef struct linux_signal_restore {
-        u8 active;
-        int sig;
-        sigset_t saved_blocked;
-        u64 saved_syscall_ret;
-        u64 saved_user_pc;
-        u64 saved_user_sp;
-        linux_signal_restore_arch_t arch;
-} linux_signal_restore_t;
+/** ppid after reparent-to-init (kernel init thread / kernel_port reap). */
+#define LINUX_INIT_REAP_PPID 0
 
 typedef struct linux_thread_append {
-        /* Thread management */
-        u64 clear_tid; /* user pointer for set_tid_address/CLONE_CHILD_CLEARTID
-                        */
-        u64 test_cookie; /* TEST ONLY: test runner correlation cookie (0 = not
-                            test thread) */
-
-        /* Phase 2B: Signal state (per-thread) */
-        sigset_t blocked_signals; /* Signal mask (blocked signals) */
-        sigset_t pending_signals; /* Thread-specific pending signals */
-        stack_t alt_stack; /* Alternate signal stack (embedded structure) */
-        vaddr saved_main_sp; /* Saved main stack pointer when using alt stack */
-        linux_signal_restore_t signal_restore;
         /*
-         * Single-slot handler depth: 0 = none, 1 = in handler awaiting
-         * rt_sigreturn. Must match signal_restore.active (0/1 only).
+         * Heap-backed / IPC fields first — fixed offsets used across
+         * linux_layer (signal @ append+0, sleep_port @ +8, …). Do not insert
+         * fields before signal without rebuilding all consumers.
          */
-        u8 signal_inflight;
+        linux_signal_thread_state_t *signal;
 
-        Message_Port_t* sleep_port;
+        Message_Port_t *sleep_port;
         u64 sleep_timer_token;
-        /* Stable storage: timer IRQ may retry delivery on this event. */
         rendezvos_timer_event sleep_timer_event;
+
+        /* Thread management (after stable-prefix fields above). */
+        u64 clear_tid; /* user pointer for set_tid_address/CLONE_CHILD_CLEARTID */
+        u64 test_cookie; /* TEST ONLY: runner correlation cookie (0 = not test) */
 } linux_thread_append_t;
 
 #define LINUX_PROC_APPEND_BYTES   ((size_t)sizeof(linux_proc_append_t))

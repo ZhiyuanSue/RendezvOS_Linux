@@ -13,7 +13,13 @@ Format: Context / Decision / Consequences.
 
 ---
 
-## 2026-03 | Port table backend uses slots + open-addressing hash
+## 2026-07-09 | Per-process fd table in compat (scheme B)
+
+- Context: Bootstrap put fd numbers on vfs_server; broke Linux dup2/stdout redirect and mixed process semantics into FS server.
+- Decision: **`linux_proc_append_t.fs`** holds fd 0–31; vfs_server holds **`vfs_handle_t`** open-file state only. IPC carries abs paths (open) or handle ids (I/O). Console write stays local unless fd redirected to VFS.
+- Consequences: Removed `vfs_fd.c`; OPEN fmt `siu`; getcwd local. See `doc/linux_compat/FD_TABLE.md`.
+
+---
 
 - Context: read-mostly IPC port lookup; RB-based path was removed.
 - Decision: use dynamic slot array + OA hash + per-slot generation token.

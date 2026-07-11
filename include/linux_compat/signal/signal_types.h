@@ -2,6 +2,7 @@
 #define _LINUX_COMPAT_SIGNAL_TYPES_H_
 
 #include <common/types.h>
+#include <rendezvos/task/id.h>
 
 /* Forward declare clock_t if not available */
 #ifndef clock_t

@@ -35,7 +35,9 @@ error_t linux_page_slice_copy_from_kva(struct page_slice** slice_out,
 
                 memcpy((void*)page, (void*)(src + off), copy_len);
                 if (copy_len < PAGE_SIZE)
-                        memset((void*)(page + copy_len), 0, PAGE_SIZE - copy_len);
+                        memset((void*)(page + copy_len),
+                               0,
+                               PAGE_SIZE - copy_len);
 
                 err = page_slice_insert_page(slice, pgoff, page, 0);
                 if (err != REND_SUCCESS) {

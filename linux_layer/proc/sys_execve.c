@@ -326,11 +326,8 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
 
         e = load_elf_to_vs(elf_slice, vs, &max_load_end);
         if (e != REND_SUCCESS) {
-                linux_exec_abort_unrecoverable(alloc,
-                                               arg_storage,
-                                               elf_slice,
-                                               "load_elf_to_vs",
-                                               e);
+                linux_exec_abort_unrecoverable(
+                        alloc, arg_storage, elf_slice, "load_elf_to_vs", e);
         }
 
         vaddr elf_base = linux_page_slice_file_base(elf_slice);

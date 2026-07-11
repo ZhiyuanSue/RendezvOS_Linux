@@ -1,6 +1,7 @@
 #include <common/stdbool.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/proc_compat.h>
+#include <linux_compat/signal/signal_state.h>
 #include <linux_compat/signal/signal_restore.h>
 #include <linux_compat/signal/signal_types.h>
 #include <modules/log/log.h>
@@ -16,13 +17,13 @@
  * test stub).
  */
 
-static void signal_rt_sigreturn_fatal(linux_thread_append_t* ta,
+static void signal_rt_sigreturn_fatal(linux_signal_thread_state_t* ts,
                                       const char* why)
 {
         pr_warn("[SIGNAL] rt_sigreturn: %s (inflight=%u active=%u)\n",
                 why,
-                ta ? (unsigned)ta->signal_inflight : 0U,
-                ta && ta->signal_restore.active ? 1U : 0U);
+                ts ? (unsigned)ts->signal_inflight : 0U,
+                ts && ts->signal_restore.active ? 1U : 0U);
         sys_exit(128 + SIGSEGV);
         __builtin_unreachable();
 }
@@ -30,18 +31,18 @@ static void signal_rt_sigreturn_fatal(linux_thread_append_t* ta,
 i64 sys_rt_sigreturn(struct trap_frame* tf)
 {
         Thread_Base* th = get_cpu_current_thread();
-        linux_thread_append_t* ta = linux_thread_append(th);
+        linux_signal_thread_state_t* ts = linux_signal_thread_state(th);
 
         if (!tf) {
                 return -LINUX_EINVAL;
         }
 
-        if (!ta || ta->signal_inflight != 1 || !ta->signal_restore.active) {
-                signal_rt_sigreturn_fatal(ta, "spurious");
+        if (!ts || ts->signal_inflight != 1 || !ts->signal_restore.active) {
+                signal_rt_sigreturn_fatal(ts, "spurious");
         }
 
         if (!signal_restore_user_context(tf)) {
-                signal_rt_sigreturn_fatal(ta, "restore failed");
+                signal_rt_sigreturn_fatal(ts, "restore failed");
         }
 
         return 0;

@@ -2,15 +2,15 @@
 #include <common/types.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/proc_compat.h>
-#include <linux_compat/signal/signal_deliver.h>
-#include <linux_compat/signal/signal_init.h>
-#include <rendezvos/trap/trap.h>
+#include <linux_compat/append_fini.h>
 #include <linux_compat/proc_registry.h>
 #include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/vspace_copy.h>
+#include <linux_compat/fs/linux_fd_table.h>
 #include <modules/log/log.h>
 #include <rendezvos/error.h>
 #include <rendezvos/smp/percpu.h>
+#include <rendezvos/sync/cas_lock.h>
 #include <rendezvos/task/tcb.h>
 #include <syscall.h>
 
@@ -59,7 +59,10 @@ i64 sys_fork(void)
         }
 
         /* Create child task structure */
-        child = new_task_structure(percpu(kallocator), LINUX_PROC_APPEND_BYTES);
+        child = new_task_structure(percpu(kallocator),
+                                   LINUX_PROC_APPEND_BYTES,
+                                   linux_task_append_fini_ptr,
+                                   linux_task_append_fork_ptr);
         if (!child) {
                 pr_error(
                         "[PROC] fork: Failed to create child task structure\n");
@@ -94,9 +97,13 @@ i64 sys_fork(void)
                         child_pa->mmap_hint = parent_pa->mmap_hint;
                         child_pa->pgid = parent_pa->pgid ? parent_pa->pgid :
                                                            parent->pid;
-                        memcpy(child_pa->signal_dispositions,
-                               parent_pa->signal_dispositions,
-                               sizeof(child_pa->signal_dispositions));
+                }
+                if (child->append_copy
+                    && child->append_copy((struct Tcb_Base *)child,
+                                           (struct Tcb_Base *)parent)
+                               != REND_SUCCESS) {
+                        ret = -LINUX_ENOMEM;
+                        goto out_free_vspace;
                 }
         }
 
@@ -120,32 +127,6 @@ i64 sys_fork(void)
                 goto out_del_from_manager;
         }
 
-        {
-                linux_thread_append_t *parent_ta =
-                        linux_thread_append(parent_thread);
-                linux_thread_append_t *child_ta =
-                        linux_thread_append(child_thread);
-
-                if (child_ta) {
-                        linux_signal_init_thread_append(child_ta);
-                        /*
-                         * copy_thread copies append_thread_info verbatim; only
-                         * the runner-spawned main thread may carry test_cookie.
-                         * Fork children must not notify clean_server early or
-                         * user_test_runner will mark PASS while parent still
-                         * runs (e.g. test_fork_wait WNOHANG blocking wait4).
-                         */
-                        child_ta->test_cookie = 0;
-                        if (parent_ta) {
-                                child_ta->blocked_signals =
-                                        parent_ta->blocked_signals;
-                        }
-                }
-                if (child_pa) {
-                        sigemptyset(&child_pa->pending_signals);
-                }
-        }
-
         e = add_thread_to_manager(percpu(core_tm), child_thread);
         if (e != REND_SUCCESS) {
                 pr_error(
@@ -159,13 +140,6 @@ i64 sys_fork(void)
         if (e != REND_SUCCESS) {
                 pr_warn("[PROC] fork: Failed to register child PID: %d\n",
                         (int)e);
-        }
-
-        {
-                struct trap_frame *child_tf =
-                        (struct trap_frame *)child_thread->kstack_bottom - 1;
-
-                (void)linux_deliver_pending_signals(child_tf);
         }
 
         return (i64)child->pid;

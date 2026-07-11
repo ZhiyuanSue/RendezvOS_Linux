@@ -4,6 +4,7 @@
 #include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/signal/signal_queue.h>
+#include <linux_compat/signal/signal_state.h>
 #include <linux_compat/signal/signal_types.h>
 #include <linux_compat/signal/signal_uapi.h>
 #include <rendezvos/error.h>
@@ -24,14 +25,18 @@ static inline bool signal_can_catch_or_ignore(int signum)
 i64 sys_rt_sigaction(i64 signum_i, u64 act_ptr, u64 oldact_ptr, u64 sigsetsize)
 {
         Tcb_Base* current = get_cpu_current_task();
-        linux_proc_append_t* proc_append;
+        linux_signal_proc_state_t* ps;
         VSpace* vs;
         int signum = (int)signum_i;
         sigaction_t new_action;
 
-        if (!current || !(proc_append = linux_proc_append(current))
-            || !current->vs) {
+        if (!current || !current->vs) {
                 return -LINUX_ESRCH;
+        }
+
+        ps = linux_signal_proc_state(current);
+        if (!ps) {
+                return -LINUX_ENOMEM;
         }
 
         vs = current->vs;
@@ -51,7 +56,7 @@ i64 sys_rt_sigaction(i64 signum_i, u64 act_ptr, u64 oldact_ptr, u64 sigsetsize)
                 error_t e = linux_copy_sigaction_to_user(
                         vs,
                         oldact_ptr,
-                        &proc_append->signal_dispositions[signum - 1]);
+                        &ps->dispositions[signum - 1]);
                 i64 err = linux_mm_errno_from_copy(e);
                 if (err != 0) {
                         return err;
@@ -75,7 +80,7 @@ i64 sys_rt_sigaction(i64 signum_i, u64 act_ptr, u64 oldact_ptr, u64 sigsetsize)
                         return -LINUX_EINVAL;
                 }
 
-                proc_append->signal_dispositions[signum - 1] = new_action;
+                ps->dispositions[signum - 1] = new_action;
 
                 if (linux_signal_handler_is_special(new_action.sa_handler)) {
                         linux_signal_flush_pending(current, signum);

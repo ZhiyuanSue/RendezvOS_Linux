@@ -3,15 +3,17 @@
 #include <linux_compat/errno.h>
 #include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/proc_compat.h>
-#include <linux_compat/signal/signal_init.h>
+#include <linux_compat/append_fini.h>
+#include <linux_compat/fs/linux_fd_table.h>
 #include <linux_compat/proc_registry.h>
-#include <linux_compat/signal/signal_deliver.h>
+#include <linux_compat/signal/signal_state.h>
 #include <linux_compat/vspace_copy.h>
 #include <modules/log/log.h>
 #include <rendezvos/error.h>
+#include <rendezvos/mm/vmm.h>
+#include <common/refcount.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/tcb.h>
-#include <rendezvos/trap/trap.h>
 #include <syscall.h>
 
 /*
@@ -134,7 +136,11 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
          * fork).
          */
         if (flags & CLONE_VM) {
-                /* Share parent's VSpace - no refcount increment needed */
+                if (!ref_get_not_zero(&parent->vs->refcount)) {
+                        pr_error(
+                                "[PROC] clone: parent vspace refcount invalid\n");
+                        return -LINUX_ESRCH;
+                }
                 child_vs = parent->vs;
         } else {
                 /* Copy parent's VSpace */
@@ -147,7 +153,10 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
         }
 
         /* Create child task structure */
-        child = new_task_structure(percpu(kallocator), LINUX_PROC_APPEND_BYTES);
+        child = new_task_structure(percpu(kallocator),
+                                   LINUX_PROC_APPEND_BYTES,
+                                   linux_task_append_fini_ptr,
+                                   linux_task_append_fork_ptr);
         if (!child) {
                 pr_error(
                         "[PROC] clone: Failed to create child task structure\n");
@@ -181,10 +190,26 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
                         child_pa->pgid = parent_pa->pgid ? parent_pa->pgid :
                                                            parent->pid;
                         if (!(flags & CLONE_VM)) {
-                                memcpy(child_pa->signal_dispositions,
-                                       parent_pa->signal_dispositions,
-                                       sizeof(child_pa->signal_dispositions));
+                                if (linux_signal_proc_fork(child, parent)
+                                    != REND_SUCCESS) {
+                                        ret = -LINUX_ENOMEM;
+                                        goto out_free_task;
+                                }
+                        } else if (linux_signal_proc_attach(child)
+                                   != REND_SUCCESS) {
+                                ret = -LINUX_ENOMEM;
+                                goto out_free_task;
                         }
+                        if (linux_fs_proc_fork(child, parent) != REND_SUCCESS) {
+                                ret = -LINUX_ENOMEM;
+                                goto out_free_task;
+                        }
+                } else if (linux_signal_proc_attach(child) != REND_SUCCESS) {
+                        ret = -LINUX_ENOMEM;
+                        goto out_free_task;
+                } else if (linux_fs_proc_attach(child) != REND_SUCCESS) {
+                        ret = -LINUX_ENOMEM;
+                        goto out_free_task;
                 }
         }
 
@@ -213,21 +238,13 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
                 goto out_del_from_manager;
         }
 
-        linux_thread_append_t *parent_ta = linux_thread_append(parent_thread);
-        linux_thread_append_t *child_ta = linux_thread_append(child_thread);
+        if ((flags & CLONE_CHILD_CLEARTID) && child_tid != 0) {
+                linux_thread_append_t *child_ta =
+                        linux_thread_append(child_thread);
 
-        if (child_ta) {
-                child_ta->test_cookie = 0;
-                if (!(flags & CLONE_VM)) {
-                        linux_signal_init_thread_append(child_ta);
-                        if (parent_ta) {
-                                child_ta->blocked_signals =
-                                        parent_ta->blocked_signals;
-                        }
+                if (child_ta) {
+                        child_ta->clear_tid = child_tid;
                 }
-        }
-        if (child_pa && !(flags & CLONE_VM)) {
-                sigemptyset(&child_pa->pending_signals);
         }
 
         /*
@@ -283,11 +300,6 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
                 }
         }
 
-        struct trap_frame *child_tf =
-                (struct trap_frame *)child_thread->kstack_bottom - 1;
-
-        (void)linux_deliver_pending_signals(child_tf);
-
         /* TODO: Implement CLONE_FS, CLONE_FILES, CLONE_SIGHAND in Phase 2B/2C
          */
 
@@ -311,8 +323,8 @@ out_free_task:
                 delete_task(child);
         }
 out_put_vspace:
-        /* Only put refcount if we created a separate VSpace */
-        if (!(flags & CLONE_VM) && child_vs) {
+        /* ref_get (CLONE_VM) or copy failed before child task was created. */
+        if (child_vs && child_vs != &root_vspace && !child) {
                 ref_put(&child_vs->refcount, free_vspace_ref);
         }
         return ret;

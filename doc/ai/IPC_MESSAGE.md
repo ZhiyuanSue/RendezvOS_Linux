@@ -79,8 +79,10 @@ Today, many paths are **one-way** (e.g. clean server reaps a thread; no reply `M
 
 ## Call-site façade (clean server)
 
-- Current call site is in `linux_layer/syscall/thread_syscall.c` (`sys_exit`): it looks up the clean server port by name, then sends `kmsg_create(port->service_id, KMSG_OP_CLEAN_THREAD_REAP, LINUX_KMSG_FMT_THREAD_REAP, thread, exit_code)` (`include/linux_compat/ipc/clean_protocol.h`; `service_id` is bound to the port; see below).
-- Server: `clean_handle_message` checks `km->hdr.module == clean_server_service_id` (cached from the registered port) before decoding.
+- `linux_layer/proc/clean_ipc.c`: `linux_clean_send_thread_reap` / `linux_clean_send_task_reap` (`include/linux_compat/proc/clean_ipc.h`, opcodes in `include/linux_compat/ipc/clean_protocol.h`).
+- `sys_exit` / fatal fault: always `KMSG_OP_CLEAN_THREAD_REAP` (`delete_thread`); orphans also `KMSG_OP_CLEAN_TASK_REAP` (`delete_task`).
+- `wait4` reap: `KMSG_OP_CLEAN_TASK_REAP` with child pid after `exit_state=2` and `thread_number==0`.
+- Server: `servers/clean_server.c` dispatches by opcode; only core `delete_thread` / `delete_task`.
 
 ## Init and layering
 

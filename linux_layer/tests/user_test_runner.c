@@ -7,6 +7,7 @@
 #include <rendezvos/task/tcb.h>
 
 #include <linux_compat/elf_init.h>
+#include <linux_compat/append_fini.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/fs/vfs_kern_load.h>
 #include <linux_compat/fs/vfs_root_bootstrap.h>
@@ -71,15 +72,20 @@ static error_t linux_spawn_and_wait_test_path(const char *path, u32 test_index)
 
         ret = vfs_kern_read_file_slice(path, alloc, &elf_slice);
         if (ret < 0 || !elf_slice) {
-                pr_error("[ LINUX USER ] Failed to read test slice '%s': %lld\n",
-                         path,
-                         (long long)ret);
+                pr_error(
+                        "[ LINUX USER ] Failed to read test slice '%s': %lld\n",
+                        path,
+                        (long long)ret);
                 return (error_t)ret;
         }
 
         e = gen_task_from_elf(&thr,
                               LINUX_PROC_APPEND_BYTES,
                               LINUX_THREAD_APPEND_BYTES,
+                              linux_task_append_fini_ptr,
+                              linux_task_append_fork_ptr,
+                              linux_thread_append_fini_ptr,
+                              linux_thread_append_fork_ptr,
                               elf_slice,
                               linux_elf_init_handler_ptr);
 
@@ -226,8 +232,9 @@ static void linux_user_test_init(void)
                                    percpu(core_tm),
                                    (void *)1);
         if (err != REND_SUCCESS) {
-                pr_error("[ Linux compat ] BSP: user test thread create failed: %d\n",
-                         (int)err);
+                pr_error(
+                        "[ Linux compat ] BSP: user test thread create failed: %d\n",
+                        (int)err);
         }
 }
 

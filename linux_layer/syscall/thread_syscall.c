@@ -5,6 +5,7 @@
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/proc_registry.h>
 #include <linux_compat/signal/signal_queue.h>
+#include <linux_compat/signal/signal_state.h>
 #include <linux_compat/signal/signal_types.h>
 #include <rendezvos/ipc/ipc.h>
 #include <rendezvos/ipc/kmsg.h>
@@ -12,8 +13,9 @@
 #include <rendezvos/ipc/port.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/tcb.h>
-#include <linux_compat/ipc/clean_protocol.h>
 #include <linux_compat/ipc/exit_protocol.h>
+#include <linux_compat/proc/clean_ipc.h>
+#include <linux_compat/proc/wait_ipc.h>
 #include <linux_compat/time/linux_time_sleep.h>
 #include <linux_compat/test_sync_ipc.h>
 #include <linux_compat/fault.h>
@@ -22,9 +24,6 @@ void sys_exit(i64 exit_code)
 {
         Thread_Base* self = get_cpu_current_thread();
         Tcb_Base* task = get_cpu_current_task();
-        Message_Port_t* port = NULL;
-        Msg_Data_t* md = NULL;
-        Message_t* msg = NULL;
 
         if (!self)
                 goto out;
@@ -66,29 +65,25 @@ void sys_exit(i64 exit_code)
         }
 
         /*
-         * Notify parent's wait4 via IPC.
-         * Check if parent task exists (not just wait_port, since wait_port
-         * is created in fork and always exists).
-         *
-         * If parent exists: send notification to parent's wait_port
-         * If parent doesn't exist (orphan): notify clean_server directly
+         * Approach 2: child sends THREAD_REAP only; clean_server posts
+         * EXIT_NOTIFY to the parent after thread_number reaches zero.
          */
-        bool parent_exists = false;
+        bool reaper_exists = false;
         if (task && task->pid > 0) {
                 linux_proc_append_t* pa = linux_proc_append(task);
-                if (pa && pa->ppid > 0) {
-                        /* Check if parent task exists in proc_registry */
+
+                reaper_exists = proc_has_wait_reaper(pa);
+                if (reaper_exists && pa && pa->ppid > 0) {
                         Tcb_Base* parent_task = find_task_by_pid(pa->ppid);
+
                         if (parent_task) {
-                                linux_proc_append_t* parent_pa =
-                                        linux_proc_append(parent_task);
+                                linux_signal_proc_state_t* parent_ps =
+                                        linux_signal_proc_state(parent_task);
                                 sigaction_t* chld_disp;
 
-                                parent_exists = true;
-
-                                if (parent_pa) {
+                                if (parent_ps) {
                                         chld_disp =
-                                                &parent_pa->signal_dispositions
+                                                &parent_ps->dispositions
                                                          [SIGCHLD - 1];
                                         if (!(chld_disp->sa_flags
                                               & SA_NOCLDWAIT)) {
@@ -98,135 +93,41 @@ void sys_exit(i64 exit_code)
                                                         task->pid);
                                         }
                                 }
-
-                                Message_Port_t* wait_port =
-                                        proc_get_or_create_wait_port(pa->ppid);
-                                if (wait_port) {
-                                        /*
-                                         * Wakeup hook for parent wait4: parent
-                                         * blocks on recv_msg(wait_port) then
-                                         * reaps via exit_state (see
-                                         * sys_wait.c). Payload is not the reap
-                                         * source of truth.
-                                         */
-                                        Msg_Data_t* exit_md = kmsg_create(
-                                                wait_port->service_id,
-                                                KMSG_OP_PROC_EXIT_NOTIFY,
-                                                LINUX_KMSG_FMT_EXIT_NOTIFY,
-                                                (i64)task->pid,
-                                                (i32)exit_code);
-                                        if (exit_md) {
-                                                Message_t* exit_msg =
-                                                        create_message_with_msg(
-                                                                exit_md);
-                                                if (exit_msg) {
-                                                        error_t e =
-                                                                enqueue_msg_for_send(
-                                                                        exit_msg);
-                                                        if (e == REND_SUCCESS) {
-                                                                e = send_msg(
-                                                                        wait_port);
-                                                                if (e
-                                                                    != REND_SUCCESS) {
-                                                                        pr_error(
-                                                                                "[PROC] sys_exit: Failed to send exit message: %d\n",
-                                                                                (int)e);
-                                                                }
-                                                        } else {
-                                                                pr_error(
-                                                                        "[PROC] sys_exit: Failed to enqueue exit message: %d\n",
-                                                                        (int)e);
-                                                        }
-                                                } else {
-                                                        pr_error(
-                                                                "[PROC] sys_exit: Failed to create exit message\n");
-                                                }
-                                        }
-                                        ref_put(&wait_port->refcount,
-                                                free_message_port_ref);
-                                } else {
-                                        pr_warn("[PROC] sys_exit: Parent wait_port for ppid=%d not found\n",
-                                                pa->ppid);
-                                }
                         }
                 }
         }
 
         /*
-         * Exit intent: THREAD_FLAG_EXIT_REQUESTED (survives IPC status
-         * changes). Owner CPU scheduler moves running -> zombie on switch-away.
+         * No wait reaper: mark reaped now; TASK_REAP after THREAD_REAP removes
+         * the last thread. Live parent / kernel init keep exit_state==1.
          */
-        thread_or_flags(self, THREAD_FLAG_EXIT_REQUESTED);
-
-        /*
-         * Notify clean_server:
-         * - Always for orphan (parent doesn't exist).
-         * - Also for linux user-test runner synchronization (cookie-based
-         * wait).
-         *
-         * Rationale:
-         * - `wait4` uses direct parent notification and can reap zombies
-         * without clean_server involvement.
-         * - The linux user test framework
-         * (linux_layer/tests/user_test_runner.c) waits on
-         * `linux_user_test_notify_exit()` which is triggered from clean_server
-         * cleanup notifications keyed by `test_cookie`. If we skip clean_server
-         * when parent exists, those tests can hang.
-         */
-        bool need_clean_server_notify = !parent_exists;
-        if (!need_clean_server_notify) {
-                linux_thread_append_t* ta = linux_thread_append(self);
-                if (ta && ta->test_cookie != 0) {
-                        need_clean_server_notify = true;
+        if (task && !reaper_exists) {
+                linux_proc_append_t* pa = linux_proc_append(task);
+                if (pa) {
+                        pa->exit_state = 2;
                 }
         }
 
-        if (need_clean_server_notify) {
-                /* Notify clean_server (orphan or test sync). */
-                port = thread_lookup_port(CLEAN_SERVER_PORT_NAME);
-                if (!port) {
-                        pr_error("[PROC] sys_exit: port %s not found\n",
-                                 CLEAN_SERVER_PORT_NAME);
-                        goto out;
-                }
+        thread_or_flags(self, THREAD_FLAG_EXIT_REQUESTED);
 
-                md = kmsg_create(port->service_id,
-                                 KMSG_OP_CLEAN_THREAD_REAP,
-                                 LINUX_KMSG_FMT_THREAD_REAP,
-                                 self,
-                                 exit_code);
-                if (!md) {
-                        ref_put(&port->refcount, free_message_port_ref);
-                        pr_error("[PROC] sys_exit: kmsg_create failed\n");
-                        goto out;
-                }
+        /*
+         * schedule() only transitions running -> zombie on exit. After wait4
+         * recv_msg the parent may still be block_on_receive; force running so
+         * the next schedule can reap this thread in clean_server.
+         */
+        if (self) {
+                u64 st = thread_get_status(self);
 
-                msg = create_message_with_msg(md);
-                ref_put(&md->refcount, md->free_data);
-                if (!msg) {
-                        ref_put(&port->refcount, free_message_port_ref);
-                        pr_error(
-                                "[PROC] sys_exit: create_message_with_msg failed\n");
-                        goto out;
+                if (st == thread_status_block_on_receive
+                    || st == thread_status_block_on_send) {
+                        thread_set_status(self, thread_status_running);
                 }
+        }
 
-                error_t ie = enqueue_msg_for_send(msg);
-                if (ie != REND_SUCCESS) {
-                        ref_put(&msg->ms_queue_node.refcount, free_message_ref);
-                        ref_put(&port->refcount, free_message_port_ref);
-                        pr_error(
-                                "[PROC] sys_exit: enqueue_msg_for_send failed e=%d\n",
-                                (int)ie);
-                        goto out;
-                }
+        (void)linux_clean_send_thread_reap(self, exit_code);
 
-                ie = send_msg(port);
-                if (ie != REND_SUCCESS) {
-                        pr_error(
-                                "[PROC] sys_exit: send_msg to clean_server failed e=%d\n",
-                                (int)ie);
-                }
-                ref_put(&port->refcount, free_message_port_ref);
+        if (task && !reaper_exists && task->pid > 0) {
+                (void)linux_clean_send_task_reap(task->pid);
         }
 
 out:
@@ -238,72 +139,35 @@ out:
 
 void linux_fatal_user_fault(i64 exit_code)
 {
-        /*
-         * Minimal "fatal signal" behavior for linux compat:
-         * - mark task exit code/state (for wait4) -> zombie
-         * - request thread exit (scheduler will flip to zombie)
-         * - Always notify clean_server (will check parent status)
-         * - yield; do not return to user mode
-         *
-         * Note: For crashed processes, we always notify clean_server.
-         * clean_server will check if parent exists and decide whether to:
-         * - Keep zombie if parent exists (wait4 will reap)
-         * - Delete immediately if orphaned
-         */
         Thread_Base* self = get_cpu_current_thread();
         Tcb_Base* task = get_cpu_current_task();
-        Message_Port_t* port = NULL;
-        Msg_Data_t* md = NULL;
-        Message_t* msg = NULL;
+        bool reaper_exists = false;
 
         if (task) {
                 linux_proc_append_t* pa = linux_proc_append(task);
                 if (pa) {
                         pa->exit_code = (i32)exit_code;
-                        pa->exit_state = 1; /* zombie */
+                        pa->exit_state = 1;
+                        reaper_exists = proc_has_wait_reaper(pa);
+                }
+        }
+        if (task && !reaper_exists) {
+                linux_proc_append_t* pa = linux_proc_append(task);
+                if (pa) {
+                        pa->exit_state = 2;
                 }
         }
         if (self) {
                 thread_or_flags(self, THREAD_FLAG_EXIT_REQUESTED);
         }
 
-        port = thread_lookup_port(CLEAN_SERVER_PORT_NAME);
-        if (port) {
-                md = kmsg_create(port->service_id,
-                                 KMSG_OP_CLEAN_THREAD_REAP,
-                                 LINUX_KMSG_FMT_THREAD_REAP,
-                                 self,
-                                 exit_code);
-                if (md) {
-                        msg = create_message_with_msg(md);
-                        ref_put(&md->refcount, md->free_data);
-                        if (msg) {
-                                if (enqueue_msg_for_send(msg) == REND_SUCCESS) {
-                                        (void)send_msg(port);
-                                        /* Queue owns the message now; we
-                                         * release our claim */
-                                        msg = NULL;
-                                } else {
-                                        /* Enqueue failed; release our reference
-                                         */
-                                        ref_put(&msg->ms_queue_node.refcount,
-                                                free_message_ref);
-                                }
-                        }
-                }
-                ref_put(&port->refcount, free_message_port_ref);
+        (void)linux_clean_send_thread_reap(self, exit_code);
+        if (task && !reaper_exists && task->pid > 0) {
+                (void)linux_clean_send_task_reap(task->pid);
         }
 
-        /*
-         * Schedule to trigger transition to zombie status.
-         * The core scheduler will handle this because we set EXIT_REQUESTED
-         * flag.
-         */
         schedule(percpu(core_tm));
 
-        /*
-         * Should never reach here, but if we do, park in suspend.
-         */
         if (self) {
                 (void)thread_set_status(self, thread_status_suspend);
         }

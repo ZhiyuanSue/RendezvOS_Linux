@@ -16,8 +16,8 @@ i64 linux_vfs_read_file_slice(VSpace *vs, const char *path,
                               struct page_slice **out_slice);
 
 /*
- * Like linux_vfs_read_file_slice, but if @p path is missing tries /tests/<basename>
- * (initramfs layout from pack_user_rootfs.py).
+ * Like linux_vfs_read_file_slice, but if @p path is missing tries
+ * /tests/<basename> (initramfs layout from pack_user_rootfs.py).
  */
 i64 linux_vfs_read_file_for_exec_slice(VSpace *vs, const char *path,
                                        struct allocator *alloc,

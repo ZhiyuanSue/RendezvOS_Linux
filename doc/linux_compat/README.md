@@ -33,11 +33,14 @@
 | [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md) | vfs_server 协议 |
 | [`VFS_ARCHITECTURE.md`](VFS_ARCHITECTURE.md) | **VFS 三层、Linux 对齐、演进与验证门** |
 | [`VFS_IMPLEMENTATION_STATUS.md`](VFS_IMPLEMENTATION_STATUS.md) | **Phase 4 live：已写什么 / RPC 表 / 缺口** |
+| [`DIRECTORY_PHASE.md`](DIRECTORY_PHASE.md) | **下一目标：chdir / openat / getdents（无新 inode 层）** |
+| [`FILE_LOADING.md`](FILE_LOADING.md) | page_slice 统一文件加载（CPIO / IPC / embedded） |
 | [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) | cpio initramfs 方案 |
 | [`ROOTFS.md`](ROOTFS.md) | **rootfs/ 目录、Git 策略、fixtures vs generated** |
 | [`RAMFS_AND_VFS_STORAGE.md`](RAMFS_AND_VFS_STORAGE.md) | ramfs/存储后端笔记 |
 | [`USER_TESTS.md`](USER_TESTS.md) | 用户态测例 |
-| [`STDIO_SHIM.md`](STDIO_SHIM.md) | 无 VFS 阶段 console shim |
+| [`STDIO_SHIM.md`](STDIO_SHIM.md) | console + fd 表（方案 B） |
+| [`FD_TABLE.md`](FD_TABLE.md) | **per-pid fd 表 + server handle（定稿）** |
 | [`LINUX_COMPAT_CODING_STYLE.md`](LINUX_COMPAT_CODING_STYLE.md) | 代码风格 |
 
 ---

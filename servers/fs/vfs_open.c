@@ -1,10 +1,10 @@
 /*
- * openat / read / lseek / stat front-end (vfs_server).
+ * VFS server open/read front-end — path + handle API (scheme B).
  */
 
 #include "vfs_open.h"
 
-#include "vfs_fd.h"
+#include "vfs_handle.h"
 #include "vfs_path.h"
 #include "vfs_root.h"
 
@@ -15,8 +15,7 @@
 #include <rendezvos/mm/vmm.h>
 
 #define VFS_READ_CHUNK 4096u
-
-#define VFS_S_IFREG 0100000u
+#define VFS_S_IFREG    0100000u
 
 static Tcb_Base *vfs_task_for_pid(pid_t pid)
 {
@@ -27,44 +26,6 @@ static Tcb_Base *vfs_task_for_pid(pid_t pid)
         }
 
         return task;
-}
-
-static i64 vfs_resolve_path(i32 dirfd, const char *path, char *out, u64 out_cap)
-{
-        char norm[VFS_PATH_MAX];
-
-        if (!path || !out || out_cap == 0) {
-                return -LINUX_EINVAL;
-        }
-
-        if (dirfd != VFS_AT_FDCWD) {
-                return -LINUX_EBADF;
-        }
-
-        if (path[0] == '/') {
-                vfs_path_normalize(path, out, out_cap);
-                return 0;
-        }
-
-        {
-                const char *rel = path;
-
-                if (rel[0] == '.' && rel[1] == '/') {
-                        rel += 2;
-                }
-                u64 i = 0;
-
-                out[i++] = '/';
-                for (u64 j = 0; rel[j] != '\0' && i + 1 < out_cap; j++) {
-                        out[i++] = rel[j];
-                }
-                out[i] = '\0';
-        }
-
-        vfs_path_normalize(out, norm, sizeof(norm));
-        strncpy(out, norm, out_cap - 1);
-        out[out_cap - 1] = '\0';
-        return 0;
 }
 
 static i64 vfs_store_kstat(Tcb_Base *task, u64 user_statbuf,
@@ -84,19 +45,18 @@ static i64 vfs_store_kstat(Tcb_Base *task, u64 user_statbuf,
         return 0;
 }
 
-i64 vfs_openat(pid_t pid, i32 dirfd, const char *path, i32 flags, u32 mode)
+i64 vfs_open_path(const char *path, i32 flags, u32 mode)
 {
-        char abs[VFS_PATH_MAX];
         vfs_inode_t ino;
         i64 ret;
         i32 acc = flags & VFS_O_ACCMODE;
+        u32 handle;
 
-        ret = vfs_resolve_path(dirfd, path, abs, sizeof(abs));
-        if (ret < 0) {
-                return ret;
+        if (!path) {
+                return -LINUX_EINVAL;
         }
 
-        ret = vfs_root_lookup(abs, &ino);
+        ret = vfs_root_lookup(path, &ino);
 
         if (ret < 0) {
                 if (!(flags & VFS_O_CREAT)) {
@@ -104,18 +64,18 @@ i64 vfs_openat(pid_t pid, i32 dirfd, const char *path, i32 flags, u32 mode)
                 }
 
                 if (flags & VFS_O_DIRECTORY) {
-                        ret = vfs_root_mkdir(abs, mode);
+                        ret = vfs_root_mkdir(path, mode);
                         if (ret < 0) {
                                 return ret;
                         }
-                        ret = vfs_root_lookup(abs, &ino);
+                        ret = vfs_root_lookup(path, &ino);
                         if (ret < 0) {
                                 return ret;
                         }
                 } else {
                         u32 create_mode = (mode & 0777u) | VFS_S_IFREG;
 
-                        ret = vfs_root_create_file(abs, create_mode, &ino);
+                        ret = vfs_root_create_file(path, create_mode, &ino);
                         if (ret < 0) {
                                 return ret;
                         }
@@ -130,7 +90,8 @@ i64 vfs_openat(pid_t pid, i32 dirfd, const char *path, i32 flags, u32 mode)
                         return -LINUX_ENOTDIR;
                 }
 
-                if (!(flags & VFS_O_DIRECTORY) && ino.is_dir) {
+                if (!(flags & VFS_O_DIRECTORY) && ino.is_dir
+                    && acc != VFS_O_RDONLY) {
                         return -LINUX_EISDIR;
                 }
 
@@ -147,7 +108,6 @@ i64 vfs_openat(pid_t pid, i32 dirfd, const char *path, i32 flags, u32 mode)
         }
 
         if (ino.is_dir && acc != VFS_O_RDONLY) {
-                /* Directory fds are read-only for Phase 4 bootstrap. */
                 if (acc == VFS_O_WRONLY || acc == VFS_O_RDWR) {
                         return -LINUX_EISDIR;
                 }
@@ -159,13 +119,22 @@ i64 vfs_openat(pid_t pid, i32 dirfd, const char *path, i32 flags, u32 mode)
                 }
         }
 
-        return vfs_fd_open(pid, &ino, flags);
+        handle = vfs_handle_open(&ino, flags);
+        if (handle == 0) {
+                return -LINUX_EMFILE;
+        }
+
+        /*
+         * Bit 31 marks directory opens so compat can set is_dir without an
+         * extra RPC (see sys_openat in linux_layer).
+         */
+        return (i64)handle | (ino.is_dir ? (1LL << 31) : 0);
 }
 
-i64 vfs_read_fd(pid_t pid, i32 fd, u64 user_buf, u64 count)
+i64 vfs_read_handle(pid_t pid, u32 handle, u64 user_buf, u64 count)
 {
         Tcb_Base *task = vfs_task_for_pid(pid);
-        vfs_open_file_t *file;
+        vfs_open_handle_t *file;
         u8 chunk[VFS_READ_CHUNK];
         u64 remaining = count;
         u64 total = 0;
@@ -175,7 +144,7 @@ i64 vfs_read_fd(pid_t pid, i32 fd, u64 user_buf, u64 count)
                 return -LINUX_ESRCH;
         }
 
-        file = vfs_fd_get(pid, fd);
+        file = vfs_handle_get(handle);
         if (!file) {
                 return -LINUX_EBADF;
         }
@@ -221,10 +190,10 @@ i64 vfs_read_fd(pid_t pid, i32 fd, u64 user_buf, u64 count)
         return (i64)total;
 }
 
-i64 vfs_write_fd(pid_t pid, i32 fd, u64 user_buf, u64 count)
+i64 vfs_write_handle(pid_t pid, u32 handle, u64 user_buf, u64 count)
 {
         Tcb_Base *task = vfs_task_for_pid(pid);
-        vfs_open_file_t *file;
+        vfs_open_handle_t *file;
         u8 chunk[VFS_READ_CHUNK];
         u64 remaining = count;
         u64 total = 0;
@@ -234,7 +203,7 @@ i64 vfs_write_fd(pid_t pid, i32 fd, u64 user_buf, u64 count)
                 return -LINUX_ESRCH;
         }
 
-        file = vfs_fd_get(pid, fd);
+        file = vfs_handle_get(handle);
         if (!file) {
                 return -LINUX_EBADF;
         }
@@ -286,12 +255,12 @@ i64 vfs_write_fd(pid_t pid, i32 fd, u64 user_buf, u64 count)
         return (i64)total;
 }
 
-i64 vfs_lseek_fd(pid_t pid, i32 fd, i64 offset, i32 whence)
+i64 vfs_lseek_handle(u32 handle, i64 offset, i32 whence)
 {
-        vfs_open_file_t *file;
+        vfs_open_handle_t *file;
         i64 new_off;
 
-        file = vfs_fd_get(pid, fd);
+        file = vfs_handle_get(handle);
         if (!file) {
                 return -LINUX_EBADF;
         }
@@ -301,13 +270,13 @@ i64 vfs_lseek_fd(pid_t pid, i32 fd, i64 offset, i32 whence)
         }
 
         switch (whence) {
-        case 0: /* SEEK_SET */
+        case 0:
                 new_off = offset;
                 break;
-        case 1: /* SEEK_CUR */
+        case 1:
                 new_off = (i64)file->offset + offset;
                 break;
-        case 2: /* SEEK_END */
+        case 2:
                 new_off = (i64)file->ino.size + offset;
                 break;
         default:
@@ -322,17 +291,17 @@ i64 vfs_lseek_fd(pid_t pid, i32 fd, i64 offset, i32 whence)
         return new_off;
 }
 
-i64 vfs_fstat_fd(pid_t pid, i32 fd, u64 user_statbuf)
+i64 vfs_fstat_handle(pid_t pid, u32 handle, u64 user_statbuf)
 {
         Tcb_Base *task = vfs_task_for_pid(pid);
-        vfs_open_file_t *file;
+        vfs_open_handle_t *file;
         vfs_kstat_t st;
 
         if (!task) {
                 return -LINUX_ESRCH;
         }
 
-        file = vfs_fd_get(pid, fd);
+        file = vfs_handle_get(handle);
         if (!file) {
                 return -LINUX_EBADF;
         }
@@ -341,10 +310,8 @@ i64 vfs_fstat_fd(pid_t pid, i32 fd, u64 user_statbuf)
         return vfs_store_kstat(task, user_statbuf, &st);
 }
 
-i64 vfs_statat(pid_t pid, i32 dirfd, const char *path, u64 user_statbuf,
-               i32 flags)
+i64 vfs_stat_path(pid_t pid, const char *path, u64 user_statbuf, i32 flags)
 {
-        char abs[VFS_PATH_MAX];
         Tcb_Base *task = vfs_task_for_pid(pid);
         vfs_inode_t ino;
         vfs_kstat_t st;
@@ -355,13 +322,11 @@ i64 vfs_statat(pid_t pid, i32 dirfd, const char *path, u64 user_statbuf,
         if (!task) {
                 return -LINUX_ESRCH;
         }
-
-        ret = vfs_resolve_path(dirfd, path, abs, sizeof(abs));
-        if (ret < 0) {
-                return ret;
+        if (!path) {
+                return -LINUX_EINVAL;
         }
 
-        ret = vfs_root_lookup(abs, &ino);
+        ret = vfs_root_lookup(path, &ino);
         if (ret < 0) {
                 return ret;
         }
@@ -370,36 +335,128 @@ i64 vfs_statat(pid_t pid, i32 dirfd, const char *path, u64 user_statbuf,
         return vfs_store_kstat(task, user_statbuf, &st);
 }
 
-i64 vfs_mkdirat(pid_t pid, i32 dirfd, const char *path, u32 mode)
+i64 vfs_mkdir_path(const char *path, u32 mode)
 {
-        char abs[VFS_PATH_MAX];
-        i64 ret;
-
-        (void)pid;
-
-        ret = vfs_resolve_path(dirfd, path, abs, sizeof(abs));
-        if (ret < 0) {
-                return ret;
+        if (!path) {
+                return -LINUX_EINVAL;
         }
 
-        return vfs_root_mkdir(abs, mode);
+        return vfs_root_mkdir(path, mode);
 }
 
-i64 vfs_unlinkat(pid_t pid, i32 dirfd, const char *path, i32 flags)
+i64 vfs_unlink_path(const char *path, i32 flags)
 {
-        char abs[VFS_PATH_MAX];
-        i64 ret;
+        if (!path) {
+                return -LINUX_EINVAL;
+        }
 
-        (void)pid;
-
-        if (flags & 0x200) { /* AT_REMOVEDIR — not yet */
+        if (flags & 0x200) {
                 return -LINUX_ENOSYS;
         }
 
-        ret = vfs_resolve_path(dirfd, path, abs, sizeof(abs));
+        return vfs_root_unlink(path);
+}
+
+i64 vfs_validate_dir(const char *path)
+{
+        vfs_inode_t ino;
+        i64 ret;
+
+        if (!path) {
+                return -LINUX_EINVAL;
+        }
+
+        ret = vfs_root_lookup(path, &ino);
         if (ret < 0) {
                 return ret;
         }
+        if (!ino.is_dir) {
+                return -LINUX_ENOTDIR;
+        }
 
-        return vfs_root_unlink(abs);
+        return 0;
+}
+
+#define VFS_DIRENT64_HDR 19u
+
+static u16 vfs_dirent64_reclen(u64 name_len)
+{
+        u16 reclen = (u16)(VFS_DIRENT64_HDR + name_len + 1);
+
+        return (u16)((reclen + 7u) & ~7u);
+}
+
+i64 vfs_getdents64_handle(pid_t pid, u32 handle, u64 user_dirp, u64 count)
+{
+        Tcb_Base *task = vfs_task_for_pid(pid);
+        vfs_open_handle_t *file;
+        u8 chunk[512];
+        u64 written = 0;
+        u64 index;
+
+        if (!task) {
+                return -LINUX_ESRCH;
+        }
+        if (count == 0) {
+                return 0;
+        }
+
+        file = vfs_handle_get(handle);
+        if (!file) {
+                return -LINUX_EBADF;
+        }
+        if (!file->ino.is_dir) {
+                return -LINUX_ENOTDIR;
+        }
+
+        index = file->offset;
+
+        while (written < count) {
+                vfs_dirent_t ent;
+                u64 name_len;
+                u16 reclen;
+                u64 next_index;
+                i64 rd;
+                error_t e;
+
+                rd = vfs_root_readdir(file->ino.path, index, &ent);
+                if (rd < 0) {
+                        return rd;
+                }
+                if (rd > 0) {
+                        break;
+                }
+
+                name_len = strlen(ent.name);
+                reclen = vfs_dirent64_reclen(name_len);
+                if (written + reclen > count) {
+                        if (written == 0) {
+                                return -LINUX_EINVAL;
+                        }
+                        break;
+                }
+                if (reclen > sizeof(chunk)) {
+                        return -LINUX_EINVAL;
+                }
+
+                memset(chunk, 0, reclen);
+                memcpy(chunk, &ent.d_ino, sizeof(ent.d_ino));
+                next_index = index + 1;
+                memcpy(chunk + 8, &next_index, sizeof(next_index));
+                memcpy(chunk + 16, &reclen, sizeof(reclen));
+                chunk[18] = ent.d_type;
+                memcpy(chunk + VFS_DIRENT64_HDR, ent.name, name_len + 1);
+
+                e = linux_mm_store_to_user(
+                        task->vs, user_dirp + written, chunk, reclen);
+                if (e != REND_SUCCESS) {
+                        return written > 0 ? (i64)written : -LINUX_EFAULT;
+                }
+
+                written += reclen;
+                index = next_index;
+        }
+
+        file->offset = index;
+        return (i64)written;
 }

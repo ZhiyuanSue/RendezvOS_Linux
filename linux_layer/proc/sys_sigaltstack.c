@@ -4,7 +4,7 @@
 #include <common/types.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/linux_mm_radix.h>
-#include <linux_compat/proc_compat.h>
+#include <linux_compat/signal/signal_state.h>
 #include <linux_compat/signal/signal_types.h>
 #include <linux_compat/signal/signal_altstack.h>
 #include <modules/log/log.h>
@@ -106,13 +106,17 @@ i64 sys_sigaltstack(u64 ss_ptr, u64 old_ss_ptr)
 {
         Thread_Base *current_thread = get_cpu_current_thread();
         Tcb_Base *process;
-        linux_thread_append_t *thread_append;
+        linux_signal_thread_state_t *ts;
         VSpace *vs;
 
-        if (!current_thread
-            || !(thread_append = linux_thread_append(current_thread))
-            || !(process = current_thread->belong_tcb) || !process->vs) {
+        if (!current_thread || !(process = current_thread->belong_tcb)
+            || !process->vs) {
                 return -LINUX_ESRCH;
+        }
+
+        ts = linux_signal_thread_state(current_thread);
+        if (!ts) {
+                return -LINUX_ENOMEM;
         }
 
         vs = process->vs;
@@ -123,9 +127,7 @@ i64 sys_sigaltstack(u64 ss_ptr, u64 old_ss_ptr)
         if (old_ss_ptr != 0) {
                 stack_t old_stack;
 
-                memcpy(&old_stack,
-                       &thread_append->alt_stack,
-                       sizeof(old_stack));
+                memcpy(&old_stack, &ts->alt_stack, sizeof(old_stack));
                 if (old_stack.ss_sp == NULL
                     || (old_stack.ss_flags & SS_DISABLE)) {
                         old_stack.ss_sp = NULL;
@@ -142,7 +144,7 @@ i64 sys_sigaltstack(u64 ss_ptr, u64 old_ss_ptr)
                 stack_t new_stack;
                 int ret;
 
-                if (thread_append->alt_stack.ss_flags & SS_ONSTACK) {
+                if (ts->alt_stack.ss_flags & SS_ONSTACK) {
                         return -LINUX_EPERM;
                 }
 
@@ -163,17 +165,13 @@ i64 sys_sigaltstack(u64 ss_ptr, u64 old_ss_ptr)
                 }
 
                 if (new_stack.ss_flags & SS_DISABLE) {
-                        memset(&thread_append->alt_stack,
-                               0,
-                               sizeof(thread_append->alt_stack));
-                        thread_append->alt_stack.ss_flags = SS_DISABLE;
+                        memset(&ts->alt_stack, 0, sizeof(ts->alt_stack));
+                        ts->alt_stack.ss_flags = SS_DISABLE;
                         return 0;
                 }
 
                 new_stack.ss_flags &= ~SS_ONSTACK;
-                memcpy(&thread_append->alt_stack,
-                       &new_stack,
-                       sizeof(new_stack));
+                memcpy(&ts->alt_stack, &new_stack, sizeof(new_stack));
         }
 
         return 0;

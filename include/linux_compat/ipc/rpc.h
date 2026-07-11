@@ -36,6 +36,12 @@ size_t ipc_rpc_format_port_name(char* buf, size_t bufsize, const char* prefix,
 Message_Port_t* ipc_rpc_port_lookup_or_create(const char* port_name);
 
 /*
+ * Remove a globally registered RPC client port by name prefix + pid
+ * (idempotent).
+ */
+void ipc_rpc_unregister_port_by_pid(const char* prefix, pid_t pid);
+
+/*
  * Blocking RPC: variadic args match @req_fmt; reply port TLV 't' appended.
  * Response uses @resp_opcode + @resp_fmt (VFS passes KMSG_OP_VFS_RESP / "q").
  */

@@ -59,6 +59,9 @@ i64 sys_unlinkat(i32 dirfd, u64 user_pathname, i32 flags);
 i64 sys_getdents64(i32 fd, u64 user_dirp, u64 count);
 i64 sys_pipe(u64 user_pipefd);
 i64 sys_pipe2(u64 user_pipefd, i32 flags);
+i64 sys_mount(u64 user_source, u64 user_target, u64 user_fstype, u64 flags,
+              u64 user_data);
+i64 sys_umount2(u64 user_target, i32 flags);
 
 /* Time syscalls */
 i64 sys_gettimeofday(u64 user_tv, u64 user_tz);

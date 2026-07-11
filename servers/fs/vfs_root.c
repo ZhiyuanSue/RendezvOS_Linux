@@ -313,6 +313,12 @@ typedef struct vfs_readdir_build {
         u32 count;
 } vfs_readdir_build_t;
 
+/*
+ * Single vfs_server thread only — do not put ~50KiB on the kernel stack
+ * (192 slots × VFS_PATH_MAX names).
+ */
+static vfs_readdir_build_t vfs_readdir_scratch;
+
 static i32 vfs_readdir_slot_cmp(const vfs_readdir_slot_t *a,
                                 const vfs_readdir_slot_t *b)
 {
@@ -476,26 +482,27 @@ static i64 vfs_readdir_build(vfs_readdir_build_t *b, const char *dirpath)
 
 i64 vfs_root_readdir(const char *dirpath, u64 index, vfs_dirent_t *out)
 {
-        vfs_readdir_build_t build;
         i64 err;
 
         if (!dirpath || !out) {
                 return -LINUX_EINVAL;
         }
 
-        err = vfs_readdir_build(&build, dirpath);
+        err = vfs_readdir_build(&vfs_readdir_scratch, dirpath);
         if (err < 0) {
                 return err;
         }
 
-        if (index >= build.count) {
+        if (index >= vfs_readdir_scratch.count) {
                 return 1;
         }
 
         memset(out, 0, sizeof(*out));
-        strncpy(out->name, build.slots[index].name, sizeof(out->name) - 1);
+        strncpy(out->name,
+                vfs_readdir_scratch.slots[index].name,
+                sizeof(out->name) - 1);
         out->name[sizeof(out->name) - 1] = '\0';
-        out->d_type = build.slots[index].d_type;
-        out->d_ino = build.slots[index].d_ino;
+        out->d_type = vfs_readdir_scratch.slots[index].d_type;
+        out->d_ino = vfs_readdir_scratch.slots[index].d_ino;
         return 0;
 }

@@ -8,6 +8,8 @@
 
 #define PROC_PID_STR_MAX        16
 #define PROC_WAIT_PORT_NAME_MAX 32
+/** Linear scan cap for reparent / zombie lookup (TODO: reverse index). */
+#define PROC_PID_SCAN_MAX       4096
 
 /*
  * Process registry for PID lookup.
@@ -31,6 +33,9 @@ size_t proc_format_wait_port_name(char* buf, size_t bufsize, pid_t pid);
 
 /** Lookup or create+register the per-process wait IPC port. */
 Message_Port_t* proc_get_or_create_wait_port(pid_t pid);
+
+/** Remove @c wait_port_<pid> from the global port table (idempotent). */
+void proc_unregister_wait_port(pid_t pid);
 
 /*
  * Register a process in the registry.
@@ -80,5 +85,17 @@ bool proc_parent_has_unreaped_child(pid_t ppid, pid_t pgid,
  * @param task: Task to unregister
  */
 void unregister_process(Tcb_Base* task);
+
+/*
+ * Reparent live children of @p old_ppid (e.g. on parent TASK_REAP).
+ * Sets ppid to @p new_ppid (typically LINUX_INIT_REAP_PPID).
+ */
+void proc_reparent_children(pid_t old_ppid, pid_t new_ppid);
+
+/*
+ * True when a wait reaper exists: live parent, or kernel init (ppid 0 / dead
+ * parent). False only when no reaper will collect exit_state==1 zombies.
+ */
+bool proc_has_wait_reaper(linux_proc_append_t* pa);
 
 #endif

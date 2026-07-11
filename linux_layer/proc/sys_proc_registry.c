@@ -5,10 +5,28 @@
 #include <rendezvos/ipc/port.h>
 #include <rendezvos/task/tcb.h>
 #include <rendezvos/task/initcall.h>
+#include <rendezvos/sync/cas_lock.h>
 #include <common/string.h>
 #include <modules/log/log.h>
 
 extern struct Port_Table* global_port_table;
+
+static bool proc_child_zombie_ready(Tcb_Base* child, linux_proc_append_t* pa,
+                                    pid_t ppid, pid_t pgid, bool filter_pgid)
+{
+        bool ready;
+
+        if (!child || !pa || pa->ppid != ppid || pa->exit_state != 1) {
+                return false;
+        }
+        if (filter_pgid && pa->pgid != pgid) {
+                return false;
+        }
+        lock_cas(&child->thread_list_lock);
+        ready = (child->thread_number == 0);
+        unlock_cas(&child->thread_list_lock);
+        return ready;
+}
 
 size_t proc_format_pid(char* buf, size_t bufsize, pid_t pid)
 {
@@ -139,6 +157,20 @@ Message_Port_t* proc_get_or_create_wait_port(pid_t pid)
         return port;
 }
 
+void proc_unregister_wait_port(pid_t pid)
+{
+        char port_name[PROC_WAIT_PORT_NAME_MAX];
+
+        if (!global_port_table || pid <= 0) {
+                return;
+        }
+        if (proc_format_wait_port_name(port_name, sizeof(port_name), pid)
+            == 0) {
+                return;
+        }
+        (void)unregister_port(global_port_table, port_name);
+}
+
 void proc_registry_init(void)
 {
         name_index_init(&pid_index,
@@ -238,6 +270,47 @@ void unregister_process(Tcb_Base* task)
         proc_registry_evict_pid(task->pid, task);
 }
 
+void proc_reparent_children(pid_t old_ppid, pid_t new_ppid)
+{
+        pid_t candidate;
+
+        if (old_ppid <= 0) {
+                return;
+        }
+
+        for (candidate = 1; candidate < (pid_t)PROC_PID_SCAN_MAX; candidate++) {
+                Tcb_Base* child = find_task_by_pid(candidate);
+                linux_proc_append_t* child_pa;
+
+                if (!child) {
+                        continue;
+                }
+                child_pa = linux_proc_append(child);
+                if (!child_pa || child_pa->ppid != old_ppid) {
+                        continue;
+                }
+                child_pa->ppid = new_ppid;
+        }
+}
+
+bool proc_has_wait_reaper(linux_proc_append_t* pa)
+{
+        if (!pa) {
+                return false;
+        }
+        if (pa->ppid == LINUX_INIT_REAP_PPID) {
+                return true;
+        }
+        if (pa->ppid > 0) {
+                if (find_task_by_pid(pa->ppid)) {
+                        return true;
+                }
+                /* Parent exited: kernel init reaps via kernel_port. */
+                return true;
+        }
+        return false;
+}
+
 /*
  * Find a zombie child by parent PID.
  * This implements the lookup needed for wait4(pid == -1).
@@ -265,8 +338,8 @@ Tcb_Base* find_zombie_child(pid_t ppid)
                         continue;
                 }
 
-                /* Check if this is our child and in zombie state */
-                if (pa->ppid == ppid && pa->exit_state == 1) {
+                /* Zombie with all threads detached (THREAD_REAP done). */
+        if (proc_child_zombie_ready(child, pa, ppid, 0, false)) {
                         return child;
                 }
         }
@@ -296,10 +369,7 @@ Tcb_Base* find_zombie_child_in_pgid(pid_t ppid, pid_t pgid)
                         continue;
                 }
 
-                /* Check if this is our child, in zombie state, and matches pgid
-                 */
-                if (pa->ppid == ppid && pa->exit_state == 1
-                    && pa->pgid == pgid) {
+                if (proc_child_zombie_ready(child, pa, ppid, pgid, true)) {
                         return child;
                 }
         }

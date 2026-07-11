@@ -2,7 +2,8 @@
 
 #include <common/align.h>
 #include <linux_compat/proc_compat.h>
-#include <linux_compat/signal/signal_types.h>
+#include <linux_compat/fs/linux_fd_table.h>
+#include <linux_compat/signal/signal_state.h>
 #include <linux_compat/mm/linux_page_slice_file.h>
 #include <modules/elf/elf.h>
 #include <modules/log/log.h>
@@ -37,8 +38,9 @@ void linux_exec_reset_proc_state(Tcb_Base *task, vaddr max_load_end)
                 return;
         }
 
-        sigemptyset(&pa->pending_signals);
+        linux_signal_proc_reset(task);
         linux_proc_set_heap_from_elf_load(task, max_load_end);
+        linux_fs_proc_reset(task);
 }
 
 bool linux_exec_elf_slice_valid(struct page_slice *slice)

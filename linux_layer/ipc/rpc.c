@@ -116,6 +116,20 @@ Message_Port_t* ipc_rpc_port_lookup_or_create(const char* port_name)
         return port;
 }
 
+void ipc_rpc_unregister_port_by_pid(const char* prefix, pid_t pid)
+{
+        char port_name[PORT_NAME_LEN_MAX];
+
+        if (!global_port_table || !prefix || pid <= 0) {
+                return;
+        }
+        if (ipc_rpc_format_port_name(port_name, sizeof(port_name), prefix, pid)
+            == 0) {
+                return;
+        }
+        (void)unregister_port(global_port_table, port_name);
+}
+
 static bool ipc_rpc_recv_is_interrupt(Message_Port_t* reply_port,
                                       Message_t* msg)
 {
