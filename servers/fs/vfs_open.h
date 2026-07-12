@@ -29,5 +29,7 @@ i64 vfs_rename_path(const char *path, const char *newpath, i32 flags);
 i64 vfs_link_path(const char *path, const char *newpath, i32 flags);
 i64 vfs_validate_dir(const char *path);
 i64 vfs_getdents64_handle(pid_t pid, u32 handle, u64 user_dirp, u64 count);
+i64 vfs_readlink_path(pid_t pid, const char *path, u64 user_buf, u64 bufsiz);
+i64 vfs_faccessat_path(pid_t pid, const char *path, u32 mode, u32 flags);
 
 #endif /* _VFS_OPEN_H_ */

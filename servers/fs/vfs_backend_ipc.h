@@ -15,6 +15,13 @@
 #define VFS_BACKEND_IPC_OPC_WRITE     3u
 #define VFS_BACKEND_IPC_OPC_TRUNCATE  4u
 #define VFS_BACKEND_IPC_OPC_FLUSH     5u
+#define VFS_BACKEND_IPC_OPC_READDIR   6u
+#define VFS_BACKEND_IPC_OPC_READLINK  7u
+#define VFS_BACKEND_IPC_OPC_MKDIR       8u
+#define VFS_BACKEND_IPC_OPC_CREATE      9u
+#define VFS_BACKEND_IPC_OPC_UNLINK      10u
+#define VFS_BACKEND_IPC_OPC_RENAME      11u
+#define VFS_BACKEND_IPC_OPC_LINK        12u
 
 typedef i64 (*vfs_backend_service_fn)(vfs_backend_req_t *req);
 

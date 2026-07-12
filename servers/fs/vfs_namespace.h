@@ -4,7 +4,6 @@
 #include <common/stdbool.h>
 #include <common/types.h>
 
-#include "ramfs_layer.h"
 #include "vfs_backend_ops.h"
 #include "vfs_kstat.h"
 #include <linux_compat/fs/vfs_path.h>
@@ -27,8 +26,9 @@ typedef struct vfs_ns_node {
         bool is_dir;
         bool deleted;
         bool in_cpio;
+        bool overlay;
+        bool is_symlink;
         bool mount_covered;
-        const ramfs_entry_t *ram;
 } vfs_ns_node_t;
 
 error_t vfs_namespace_init(void);

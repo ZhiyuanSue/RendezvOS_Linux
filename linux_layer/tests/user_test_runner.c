@@ -221,6 +221,11 @@ static void *linux_user_test_thread(void *arg)
 
         linux_run_user_tests();
 
+        pr_info("[ Linux compat ] Trying initramfs /bin/ls demo\n");
+        if (linux_spawn_and_wait_test_path("/bin/ls", 9999u) != REND_SUCCESS) {
+                (void)linux_spawn_and_wait_test_path("/bin/busybox", 9998u);
+        }
+
         pr_info("[ Linux compat ] All tests completed\n");
 
 #ifdef RENDEZVOS_ROOT_AUTO_POWEROFF

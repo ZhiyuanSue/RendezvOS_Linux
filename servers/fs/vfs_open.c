@@ -6,6 +6,9 @@
 
 #include "vfs_handle.h"
 #include <linux_compat/fs/vfs_path.h>
+#include "vfs_backend.h"
+#include "vfs_mount.h"
+#include "vfs_perm.h"
 #include "vfs_root.h"
 
 #include <common/string.h>
@@ -17,6 +20,71 @@
 
 #define VFS_READ_CHUNK 4096u
 #define VFS_S_IFREG    0100000u
+
+static bool vfs_inode_symlink_target(const vfs_inode_t *ino, char *out, u64 cap)
+{
+        u64 len;
+
+        if (!ino || !ino->is_symlink || !ino->storage || !out || cap == 0) {
+                return false;
+        }
+
+        len = ino->size;
+        if (len >= cap) {
+                len = cap - 1;
+        }
+        memcpy(out, ino->storage, (size_t)len);
+        out[len] = '\0';
+        return true;
+}
+
+static void vfs_join_symlink_target(const char *base, const char *target,
+                                    char *out, u64 cap)
+{
+        char parent[VFS_PATH_MAX];
+
+        if (!target || !out || cap == 0) {
+                return;
+        }
+
+        if (target[0] == '/') {
+                vfs_path_normalize(target, out, cap);
+                return;
+        }
+
+        if (!vfs_path_parent(base, parent, sizeof(parent))) {
+                (void)vfs_path_join("/", target, out, cap);
+                return;
+        }
+
+        (void)vfs_path_join(parent, target, out, cap);
+}
+
+static i64 vfs_lookup_follow(const char *path, vfs_inode_t *out,
+                              bool follow_symlink)
+{
+        char target[VFS_PATH_MAX];
+        char resolved[VFS_PATH_MAX];
+        i64 ret;
+
+        ret = vfs_root_lookup(path, out);
+        if (ret < 0) {
+                return ret;
+        }
+        if (!follow_symlink || !out->is_symlink) {
+                return 0;
+        }
+        if (!vfs_inode_symlink_target(out, target, sizeof(target))) {
+                return -LINUX_EINVAL;
+        }
+
+        vfs_join_symlink_target(path, target, resolved, sizeof(resolved));
+        if (resolved[0] == '\0') {
+                return -LINUX_EINVAL;
+        }
+
+        return vfs_root_lookup(resolved, out);
+}
 
 static Tcb_Base *vfs_task_for_pid(pid_t pid)
 {
@@ -57,7 +125,7 @@ i64 vfs_open_path(const char *path, i32 flags, u32 mode)
                 return -LINUX_EINVAL;
         }
 
-        ret = vfs_root_lookup(path, &ino);
+        ret = vfs_lookup_follow(path, &ino, true);
 
         if (ret < 0) {
                 if (!(flags & VFS_O_CREAT)) {
@@ -314,8 +382,7 @@ i64 vfs_stat_path(pid_t pid, const char *path, u64 user_statbuf, i32 flags)
         vfs_inode_t ino;
         vfs_kstat_t st;
         i64 ret;
-
-        (void)flags;
+        bool follow_symlink = (flags & VFS_AT_SYMLINK_NOFOLLOW) == 0;
 
         if (!task) {
                 return -LINUX_ESRCH;
@@ -324,13 +391,105 @@ i64 vfs_stat_path(pid_t pid, const char *path, u64 user_statbuf, i32 flags)
                 return -LINUX_EINVAL;
         }
 
-        ret = vfs_root_lookup(path, &ino);
+        ret = vfs_lookup_follow(path, &ino, follow_symlink);
         if (ret < 0) {
                 return ret;
         }
 
         vfs_kstat_from_inode(&ino, &st);
         return vfs_store_kstat(task, user_statbuf, &st);
+}
+
+i64 vfs_readlink_path(pid_t pid, const char *path, u64 user_buf, u64 bufsiz)
+{
+        Tcb_Base *task = vfs_task_for_pid(pid);
+        vfs_inode_t ino;
+        vfs_mount_view_t mount_view;
+        char linkbuf[VFS_PATH_MAX];
+        i64 ret;
+        error_t e;
+
+        if (!task) {
+                return -LINUX_ESRCH;
+        }
+        if (!path || bufsiz == 0) {
+                return -LINUX_EINVAL;
+        }
+
+        ret = vfs_root_lookup(path, &ino);
+        if (ret < 0) {
+                return ret;
+        }
+        if (!ino.is_symlink) {
+                return -LINUX_EINVAL;
+        }
+
+        if (vfs_mount_view_for_path(path, &mount_view)) {
+                ret = vfs_backend_readlink(mount_view.backend_port, path, linkbuf,
+                                           sizeof(linkbuf));
+        } else if (ino.backend_port) {
+                ret = vfs_backend_readlink(ino.backend_port, path, linkbuf,
+                                           sizeof(linkbuf));
+        } else if (vfs_inode_symlink_target(&ino, linkbuf, sizeof(linkbuf))) {
+                ret = (i64)strlen(linkbuf);
+        } else {
+                return -LINUX_EINVAL;
+        }
+
+        if (ret < 0) {
+                return ret;
+        }
+
+        {
+                u64 copy_len = (u64)ret;
+
+                if (copy_len >= bufsiz) {
+                        copy_len = bufsiz - 1;
+                }
+
+                e = linux_mm_store_to_user(task->vs, user_buf, linkbuf,
+                                           (size_t)copy_len + 1);
+                if (e != REND_SUCCESS) {
+                        return -LINUX_EFAULT;
+                }
+        }
+
+        return ret;
+}
+
+i64 vfs_faccessat_path(pid_t pid, const char *path, u32 mode, u32 flags)
+{
+        vfs_inode_t ino;
+        i64 ret;
+        u32 check = 0;
+        bool follow_symlink = (flags & VFS_AT_SYMLINK_NOFOLLOW) == 0;
+
+        (void)pid;
+
+        if (!path) {
+                return -LINUX_EINVAL;
+        }
+
+        ret = vfs_lookup_follow(path, &ino, follow_symlink);
+        if (ret < 0) {
+                return ret;
+        }
+
+        if (mode == 0) {
+                return 0;
+        }
+
+        if (mode & 4u) {
+                check |= VFS_PERM_R;
+        }
+        if (mode & 2u) {
+                check |= VFS_PERM_W;
+        }
+        if (mode & 1u) {
+                check |= VFS_PERM_X;
+        }
+
+        return vfs_perm_check_mode_request(ino.mode, check);
 }
 
 i64 vfs_mkdir_path(const char *path, u32 mode)

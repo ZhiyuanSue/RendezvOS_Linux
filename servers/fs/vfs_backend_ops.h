@@ -21,6 +21,7 @@ typedef struct vfs_inode {
         u64 size;
         u32 nlink;
         bool is_dir;
+        bool is_symlink;
         bool writable;
 } vfs_inode_t;
 

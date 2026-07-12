@@ -61,6 +61,8 @@ i64 sys_renameat(i32 olddirfd, u64 user_oldpath, i32 newdirfd,
 i64 sys_linkat(i32 olddirfd, u64 user_oldpath, i32 newdirfd, u64 user_newpath,
                i32 flags);
 i64 sys_getdents64(i32 fd, u64 user_dirp, u64 count);
+i64 sys_readlinkat(i32 dirfd, u64 user_pathname, u64 user_buf, u64 bufsiz);
+i64 sys_faccessat(i32 dirfd, u64 user_pathname, i32 mode, i32 flags);
 i64 sys_pipe(u64 user_pipefd);
 i64 sys_pipe2(u64 user_pipefd, i32 flags);
 i64 sys_mount(u64 user_source, u64 user_target, u64 user_fstype, u64 flags,

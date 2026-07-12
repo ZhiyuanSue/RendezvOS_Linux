@@ -60,13 +60,24 @@ void vfs_mount_reset(void)
 
 const char *vfs_mount_backend_port_for_path(const char *path)
 {
+        vfs_mount_view_t view;
+
+        if (!vfs_mount_view_for_path(path, &view)) {
+                return NULL;
+        }
+
+        return view.backend_port;
+}
+
+bool vfs_mount_view_for_path(const char *path, vfs_mount_view_t *out)
+{
         u32 i;
-        const char *best = NULL;
-        u64 best_len = 0;
         char norm[VFS_PATH_MAX];
+        u64 best_len = 0;
+        u32 best_i = VFS_MOUNT_MAX;
 
         if (!path) {
-                return NULL;
+                return false;
         }
 
         vfs_path_normalize(path, norm, sizeof(norm));
@@ -84,11 +95,21 @@ const char *vfs_mount_backend_port_for_path(const char *path)
                 mlen = strlen(vfs_mounts[i].target);
                 if (mlen > best_len) {
                         best_len = mlen;
-                        best = vfs_mounts[i].backend_port;
+                        best_i = i;
                 }
         }
 
-        return best;
+        if (best_i >= VFS_MOUNT_MAX) {
+                return false;
+        }
+
+        if (out) {
+                out->target = vfs_mounts[best_i].target;
+                out->backend_port = vfs_mounts[best_i].backend_port;
+                out->fstype = vfs_mounts[best_i].fstype;
+                out->flags = vfs_mounts[best_i].flags;
+        }
+        return true;
 }
 
 i64 vfs_mount_register(const char *target, const char *fstype, u64 flags)
@@ -134,6 +155,13 @@ i64 vfs_mount_register(const char *target, const char *fstype, u64 flags)
                                 [sizeof(vfs_mounts[i].backend_port) - 1] = '\0';
                         vfs_mounts[i].flags = flags;
                         vfs_mounts[i].active = true;
+                        if (strcmp_s(fstype,
+                                     VFS_BACKEND_FSTYPE_RAMFS,
+                                     VFS_BACKEND_FSTYPE_MAX)
+                            == 0) {
+                                (void)vfs_backend_mkdir(backend_port, norm,
+                                                        0755u | 0040000u);
+                        }
                         (void)vfs_namespace_set_mount_cover(norm, true);
                         return 0;
                 }

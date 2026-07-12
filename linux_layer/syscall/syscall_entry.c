@@ -194,6 +194,18 @@ void syscall(struct trap_frame *syscall_ctx)
                                      (u64)syscall_ctx->ARCH_SYSCALL_ARG_3,
                                      (i32)syscall_ctx->ARCH_SYSCALL_ARG_4);
                 break;
+        case __NR_readlinkat:
+                ret = sys_readlinkat((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                     (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                     (u64)syscall_ctx->ARCH_SYSCALL_ARG_3,
+                                     (u64)syscall_ctx->ARCH_SYSCALL_ARG_4);
+                break;
+        case __NR_faccessat:
+                ret = sys_faccessat((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                    (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                    (i32)syscall_ctx->ARCH_SYSCALL_ARG_3,
+                                    (i32)syscall_ctx->ARCH_SYSCALL_ARG_4);
+                break;
         case __NR_lseek:
                 ret = sys_lseek((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
                                 (i64)syscall_ctx->ARCH_SYSCALL_ARG_2,

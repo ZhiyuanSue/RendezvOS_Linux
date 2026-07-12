@@ -6,10 +6,13 @@
 #include "ramfs_layer.h"
 
 #include <common/string.h>
+#include <linux_compat/errno.h>
 #include <modules/log/log.h>
 #include <rendezvos/error.h>
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/smp/percpu.h>
+
+#include "vfs_kstat.h"
 
 static ramfs_entry_t ramfs_entries[RAMFS_MAX_ENTRIES];
 static u32 ramfs_nentries;
@@ -431,4 +434,126 @@ error_t ramfs_truncate(ramfs_entry_t *ent, u64 size)
 
         ent->size = size;
         return REND_SUCCESS;
+}
+
+static i32 ramfs_readdir_name_cmp(const char *a, const char *b)
+{
+        return (i32)strcmp_s(a, b, 64);
+}
+
+static bool ramfs_readdir_insert_name(char names[][64], u32 *count, const char *name)
+{
+        u32 i;
+
+        if (!names || !count || !name || !name[0]) {
+                return false;
+        }
+
+        for (i = 0; i < *count; i++) {
+                if (ramfs_readdir_name_cmp(names[i], name) == 0) {
+                        return true;
+                }
+        }
+
+        if (*count >= RAMFS_MAX_ENTRIES) {
+                return false;
+        }
+
+        strncpy(names[*count], name, 63);
+        names[*count][63] = '\0';
+
+        for (i = *count; i > 0; i--) {
+                if (ramfs_readdir_name_cmp(names[i - 1], names[i]) <= 0) {
+                        break;
+                }
+                {
+                        char tmp[64];
+
+                        strncpy(tmp, names[i - 1], sizeof(tmp) - 1);
+                        tmp[sizeof(tmp) - 1] = '\0';
+                        strncpy(names[i - 1], names[i], 63);
+                        names[i - 1][63] = '\0';
+                        strncpy(names[i], tmp, 63);
+                        names[i][63] = '\0';
+                }
+        }
+
+        (*count)++;
+        return true;
+}
+
+i64 ramfs_readdir(const char *dirpath, u64 index, vfs_dirent_t *out)
+{
+        char norm[VFS_PATH_MAX];
+        char child_path[VFS_PATH_MAX];
+        char names[RAMFS_MAX_ENTRIES][64];
+        u32 name_count = 0;
+        u32 i;
+
+        if (!dirpath || !out) {
+                return -LINUX_EINVAL;
+        }
+
+        vfs_path_normalize(dirpath, norm, sizeof(norm));
+
+        if (index == 0) {
+                memset(out, 0, sizeof(*out));
+                strncpy(out->name, ".", sizeof(out->name) - 1);
+                out->d_type = VFS_DT_DIR;
+                out->d_ino = vfs_path_to_ino(norm);
+                return 0;
+        }
+        if (index == 1) {
+                char parent[VFS_PATH_MAX];
+
+                memset(out, 0, sizeof(*out));
+                strncpy(out->name, "..", sizeof(out->name) - 1);
+                out->d_type = VFS_DT_DIR;
+                if (vfs_path_parent(norm, parent, sizeof(parent))) {
+                        out->d_ino = vfs_path_to_ino(parent);
+                } else {
+                        out->d_ino = vfs_path_to_ino("/");
+                }
+                return 0;
+        }
+
+        index -= 2;
+
+        for (i = 0; i < ramfs_nentries; i++) {
+                char child_name[64];
+
+                if (!vfs_path_direct_child_name(
+                            norm, ramfs_entries[i].path, child_name,
+                            sizeof(child_name))) {
+                        continue;
+                }
+                (void)ramfs_readdir_insert_name(names, &name_count, child_name);
+        }
+
+        if (index >= name_count) {
+                return 1;
+        }
+
+        if (!vfs_path_join(norm, names[index], child_path, sizeof(child_path))) {
+                return -LINUX_EIO;
+        }
+
+        memset(out, 0, sizeof(*out));
+        strncpy(out->name, names[index], sizeof(out->name) - 1);
+        out->name[sizeof(out->name) - 1] = '\0';
+
+        {
+                const ramfs_entry_t *ent = ramfs_lookup(child_path);
+
+                if (ent && (ent->flags & RAMFS_FLAG_DIR)) {
+                        out->d_type = VFS_DT_DIR;
+                } else if (ent) {
+                        out->d_type = VFS_DT_REG;
+                } else {
+                        out->d_type = VFS_DT_UNKNOWN;
+                }
+        }
+
+        out->d_ino = vfs_path_to_ino(child_path);
+        return 0;
 }

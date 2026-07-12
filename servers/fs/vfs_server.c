@@ -77,6 +77,10 @@ static i64 vfs_rpc_dispatch(pid_t pid, u16 opcode, u64 p1, u64 p2, u64 p3,
                 return vfs_link_path(str, str2, (i32)p2);
         case KMSG_OP_VFS_GETDENTS64:
                 return vfs_getdents64_handle(pid, (u32)p1, p2, p3);
+        case KMSG_OP_VFS_READLINKAT:
+                return vfs_readlink_path(pid, str, p2, p3);
+        case KMSG_OP_VFS_FACCESSAT:
+                return vfs_faccessat_path(pid, str, (u32)p1, (u32)p2);
         default:
                 return -LINUX_ENOSYS;
         }
@@ -281,6 +285,24 @@ static i64 vfs_rpc_handler(u16 opcode, const kmsg_t *km, char **reply_port_out)
         }
         case KMSG_OP_VFS_GETCWD:
                 return -LINUX_ENOSYS;
+        case KMSG_OP_VFS_READLINKAT:
+                decode_err = ipc_serial_decode(km->payload,
+                                               km->hdr.payload_len,
+                                               VFS_KMSG_FMT_READLINKAT "t",
+                                               &str_param,
+                                               &param2,
+                                               &param3,
+                                               reply_port_out);
+                break;
+        case KMSG_OP_VFS_FACCESSAT:
+                decode_err = ipc_serial_decode(km->payload,
+                                               km->hdr.payload_len,
+                                               VFS_KMSG_FMT_FACCESSAT "t",
+                                               &str_param,
+                                               &param1,
+                                               &param2,
+                                               reply_port_out);
+                break;
         default:
                 decode_err = ipc_serial_decode(
                         km->payload, km->hdr.payload_len, "t", reply_port_out);

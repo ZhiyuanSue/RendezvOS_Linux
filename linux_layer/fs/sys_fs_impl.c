@@ -598,6 +598,82 @@ i64 sys_newfstatat(i32 dirfd, u64 user_pathname, u64 user_statbuf, i32 flags)
                                         (u32)flags);
 }
 
+i64 sys_readlinkat(i32 dirfd, u64 user_pathname, u64 user_buf, u64 bufsiz)
+{
+        Tcb_Base *current = sys_fs_current();
+        VSpace *vs;
+        char pathname[LINUX_VFS_PATH_MAX];
+        char abs[LINUX_VFS_PATH_MAX];
+        error_t e;
+        i64 ret;
+
+        if (!current || !current->vs) {
+                return -LINUX_ESRCH;
+        }
+
+        vs = current->vs;
+        if (!linux_vspace_is_user_table(vs)) {
+                return -LINUX_EFAULT;
+        }
+
+        e = linux_mm_load_from_user(
+                vs, user_pathname, pathname, sizeof(pathname));
+        if (e != REND_SUCCESS) {
+                return -LINUX_EFAULT;
+        }
+        pathname[sizeof(pathname) - 1] = '\0';
+
+        ret = linux_vfs_resolve_path(
+                current, dirfd, pathname, abs, sizeof(abs));
+        if (ret < 0) {
+                return ret;
+        }
+
+        return vfs_ipc_request_response(KMSG_OP_VFS_READLINKAT,
+                                        VFS_KMSG_FMT_READLINKAT,
+                                        abs,
+                                        user_buf,
+                                        bufsiz);
+}
+
+i64 sys_faccessat(i32 dirfd, u64 user_pathname, i32 mode, i32 flags)
+{
+        Tcb_Base *current = sys_fs_current();
+        VSpace *vs;
+        char pathname[LINUX_VFS_PATH_MAX];
+        char abs[LINUX_VFS_PATH_MAX];
+        error_t e;
+        i64 ret;
+
+        if (!current || !current->vs) {
+                return -LINUX_ESRCH;
+        }
+
+        vs = current->vs;
+        if (!linux_vspace_is_user_table(vs)) {
+                return -LINUX_EFAULT;
+        }
+
+        e = linux_mm_load_from_user(
+                vs, user_pathname, pathname, sizeof(pathname));
+        if (e != REND_SUCCESS) {
+                return -LINUX_EFAULT;
+        }
+        pathname[sizeof(pathname) - 1] = '\0';
+
+        ret = linux_vfs_resolve_path(
+                current, dirfd, pathname, abs, sizeof(abs));
+        if (ret < 0) {
+                return ret;
+        }
+
+        return vfs_ipc_request_response(KMSG_OP_VFS_FACCESSAT,
+                                        VFS_KMSG_FMT_FACCESSAT,
+                                        abs,
+                                        (u32)mode,
+                                        (u32)flags);
+}
+
 i64 sys_dup3(i32 oldfd, i32 newfd, i32 flags)
 {
         (void)flags;

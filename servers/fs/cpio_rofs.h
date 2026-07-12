@@ -6,6 +6,8 @@
 #include <linux_compat/fs/vfs_path.h>
 #include <rendezvos/error.h>
 
+#include "vfs_kstat.h"
+
 /*
  * Read-only newc cpio backend (initramfs image embedded via .incbin).
  *
@@ -18,6 +20,7 @@ typedef struct cpio_rofs_stat {
         u32 mode;
         u64 size;
         bool is_dir;
+        bool is_symlink;
         const u8 *data;
         u32 nlink;
 } cpio_rofs_stat_t;
@@ -32,5 +35,7 @@ i64 cpio_rofs_read(const cpio_rofs_stat_t *st, u64 offset, void *buf, u64 len);
 typedef bool (*cpio_rofs_visit_fn)(const char *path, const cpio_rofs_stat_t *st,
                                    void *ctx);
 void cpio_rofs_visit(cpio_rofs_visit_fn fn, void *ctx);
+
+i64 cpio_rofs_readdir(const char *dirpath, u64 index, vfs_dirent_t *out);
 
 #endif /* _CPIO_ROFS_H_ */

@@ -25,7 +25,6 @@ error_t vfs_root_init(const void *cpio_image, u64 cpio_len)
                 return -E_IN_PARAM;
         }
 
-        ramfs_init();
         vfs_namespace_reset();
 
         err = cpio_rofs_init(cpio_image, cpio_len);
@@ -40,11 +39,9 @@ error_t vfs_root_init(const void *cpio_image, u64 cpio_len)
 
         vfs_root_initialized = true;
 
-        pr_info("[VFS] root ready: cpio %u entries, namespace %u entries, "
-                "ramfs %u storage\n",
+        pr_info("[VFS] root ready: cpio %u entries, namespace %u entries\n",
                 cpio_rofs_parsed_count(),
-                vfs_namespace_count(),
-                ramfs_entry_count());
+                vfs_namespace_count());
         return REND_SUCCESS;
 }
 

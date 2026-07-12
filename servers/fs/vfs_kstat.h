@@ -35,6 +35,9 @@ typedef struct vfs_kstat {
 #define VFS_DT_UNKNOWN 0
 #define VFS_DT_DIR     4
 #define VFS_DT_REG     8
+#define VFS_DT_LNK     10
+
+#define VFS_AT_SYMLINK_NOFOLLOW 0x100
 
 typedef struct vfs_dirent {
         char name[VFS_PATH_MAX];

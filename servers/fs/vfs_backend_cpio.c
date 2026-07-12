@@ -47,8 +47,40 @@ static i64 vfs_backend_cpio_lookup(vfs_backend_req_t *req)
         req->ino_out->size = st.size;
         req->ino_out->nlink = st.nlink ? st.nlink : 1u;
         req->ino_out->is_dir = st.is_dir;
+        req->ino_out->is_symlink = st.is_symlink;
         req->ino_out->writable = false;
         return 0;
+}
+
+static i64 vfs_backend_cpio_readdir(vfs_backend_req_t *req)
+{
+        if (!req || !req->path || !req->dirent_out) {
+                return -LINUX_EINVAL;
+        }
+
+        return cpio_rofs_readdir(req->path, req->dir_index, req->dirent_out);
+}
+
+static i64 vfs_backend_cpio_readlink(vfs_backend_req_t *req)
+{
+        cpio_rofs_stat_t st;
+        u64 len;
+
+        if (!req || !req->path || !req->readlink_buf || req->readlink_cap == 0) {
+                return -LINUX_EINVAL;
+        }
+
+        if (!cpio_rofs_lookup(req->path, &st) || !st.is_symlink || !st.data) {
+                return -LINUX_EINVAL;
+        }
+
+        len = st.size;
+        if (len >= req->readlink_cap) {
+                len = req->readlink_cap - 1;
+        }
+        memcpy(req->readlink_buf, st.data, (size_t)len);
+        req->readlink_buf[len] = '\0';
+        return (i64)len;
 }
 
 static i64 vfs_backend_cpio_read(vfs_backend_req_t *req)
@@ -104,6 +136,16 @@ static i64 vfs_backend_cpio_service(vfs_backend_req_t *req)
                 return -LINUX_EROFS;
         case VFS_BACKEND_OP_FLUSH:
                 return vfs_backend_cpio_flush(req);
+        case VFS_BACKEND_OP_READDIR:
+                return vfs_backend_cpio_readdir(req);
+        case VFS_BACKEND_OP_READLINK:
+                return vfs_backend_cpio_readlink(req);
+        case VFS_BACKEND_OP_MKDIR:
+        case VFS_BACKEND_OP_CREATE:
+        case VFS_BACKEND_OP_UNLINK:
+        case VFS_BACKEND_OP_RENAME:
+        case VFS_BACKEND_OP_LINK:
+                return -LINUX_EROFS;
         default:
                 return -LINUX_EINVAL;
         }

@@ -5,8 +5,11 @@
 #include "cpio_rofs.h"
 
 #include <common/string.h>
+#include <linux_compat/errno.h>
 #include <modules/log/log.h>
 #include <rendezvos/error.h>
+
+#include "vfs_kstat.h"
 
 #define CPIO_NEWC_MAGIC       "070701"
 #define CPIO_NEWC_HDR_LEN     110
@@ -14,6 +17,7 @@
 
 #define CPIO_S_IFMT  0170000u
 #define CPIO_S_IFDIR 0040000u
+#define CPIO_S_IFLNK 0120000u
 
 typedef struct cpio_rofs_entry {
         char path[CPIO_ROFS_PATH_MAX];
@@ -22,6 +26,7 @@ typedef struct cpio_rofs_entry {
         u64 filesize;
         const u8 *data;
         bool is_dir;
+        bool is_symlink;
 } cpio_rofs_entry_t;
 
 typedef struct cpio_newc_header {
@@ -148,7 +153,8 @@ static void cpio_normalize_path(const char *name, char *out, u64 out_cap)
 }
 
 static error_t cpio_rofs_add_entry(const char *name, u32 mode, u32 nlink,
-                                   u64 filesize, const u8 *data, bool is_dir)
+                                   u64 filesize, const u8 *data, bool is_dir,
+                                   bool is_symlink)
 {
         cpio_rofs_entry_t *ent;
 
@@ -170,6 +176,7 @@ static error_t cpio_rofs_add_entry(const char *name, u32 mode, u32 nlink,
         ent->filesize = filesize;
         ent->data = data;
         ent->is_dir = is_dir;
+        ent->is_symlink = is_symlink;
 
         cpio_entry_count++;
         return REND_SUCCESS;
@@ -204,6 +211,7 @@ error_t cpio_rofs_init(const void *image, u64 image_len)
                 const char *name;
                 const u8 *data;
                 bool is_dir;
+                bool is_symlink;
 
                 if (!cpio_header_magic_ok(hdr)) {
                         pr_error("[VFS][cpio] bad magic at offset %llu\n",
@@ -237,10 +245,12 @@ error_t cpio_rofs_init(const void *image, u64 image_len)
                         return -E_IN_PARAM;
                 }
 
+                is_symlink = ((mode & CPIO_S_IFMT) == CPIO_S_IFLNK);
                 is_dir = ((mode & CPIO_S_IFMT) == CPIO_S_IFDIR);
 
                 err = cpio_rofs_add_entry(
-                        name, (u32)mode, nlink, filesize, data, is_dir);
+                        name, (u32)mode, nlink, filesize, data, is_dir,
+                        is_symlink);
                 if (err != REND_SUCCESS) {
                         return err;
                 }
@@ -281,6 +291,7 @@ bool cpio_rofs_lookup(const char *path, cpio_rofs_stat_t *out)
                         out->mode = cpio_entries[i].mode;
                         out->size = cpio_entries[i].filesize;
                         out->is_dir = cpio_entries[i].is_dir;
+                        out->is_symlink = cpio_entries[i].is_symlink;
                         out->data = cpio_entries[i].data;
                         out->nlink = cpio_entries[i].nlink ?
                                              cpio_entries[i].nlink :
@@ -343,6 +354,7 @@ void cpio_rofs_visit(cpio_rofs_visit_fn fn, void *ctx)
                 st.mode = cpio_entries[i].mode;
                 st.size = cpio_entries[i].filesize;
                 st.is_dir = cpio_entries[i].is_dir;
+                st.is_symlink = cpio_entries[i].is_symlink;
                 st.data = cpio_entries[i].data;
                 st.nlink = cpio_entries[i].nlink ? cpio_entries[i].nlink : 1u;
 
@@ -350,4 +362,130 @@ void cpio_rofs_visit(cpio_rofs_visit_fn fn, void *ctx)
                         break;
                 }
         }
+}
+
+static i32 cpio_readdir_name_cmp(const char *a, const char *b)
+{
+        return (i32)strcmp_s(a, b, 64);
+}
+
+static bool cpio_readdir_insert_name(char names[][64], u32 *count, const char *name)
+{
+        u32 i;
+
+        if (!names || !count || !name || !name[0]) {
+                return false;
+        }
+
+        for (i = 0; i < *count; i++) {
+                if (cpio_readdir_name_cmp(names[i], name) == 0) {
+                        return true;
+                }
+        }
+
+        if (*count >= CPIO_NEWC_MAX_ENTRIES) {
+                return false;
+        }
+
+        strncpy(names[*count], name, 63);
+        names[*count][63] = '\0';
+
+        for (i = *count; i > 0; i--) {
+                if (cpio_readdir_name_cmp(names[i - 1], names[i]) <= 0) {
+                        break;
+                }
+                {
+                        char tmp[64];
+
+                        strncpy(tmp, names[i - 1], sizeof(tmp) - 1);
+                        tmp[sizeof(tmp) - 1] = '\0';
+                        strncpy(names[i - 1], names[i], 63);
+                        names[i - 1][63] = '\0';
+                        strncpy(names[i], tmp, 63);
+                        names[i][63] = '\0';
+                }
+        }
+
+        (*count)++;
+        return true;
+}
+
+static u8 cpio_readdir_dtype(const char *child_path)
+{
+        cpio_rofs_stat_t st;
+
+        if (!cpio_rofs_lookup(child_path, &st)) {
+                return VFS_DT_UNKNOWN;
+        }
+        if (st.is_symlink) {
+                return VFS_DT_LNK;
+        }
+        if (st.is_dir) {
+                return VFS_DT_DIR;
+        }
+        return VFS_DT_REG;
+}
+
+i64 cpio_rofs_readdir(const char *dirpath, u64 index, vfs_dirent_t *out)
+{
+        char norm[VFS_PATH_MAX];
+        char child_path[VFS_PATH_MAX];
+        char names[CPIO_NEWC_MAX_ENTRIES][64];
+        u32 name_count = 0;
+        u32 i;
+
+        if (!dirpath || !out) {
+                return -LINUX_EINVAL;
+        }
+
+        vfs_path_normalize(dirpath, norm, sizeof(norm));
+
+        if (index == 0) {
+                memset(out, 0, sizeof(*out));
+                strncpy(out->name, ".", sizeof(out->name) - 1);
+                out->d_type = VFS_DT_DIR;
+                out->d_ino = vfs_path_to_ino(norm);
+                return 0;
+        }
+        if (index == 1) {
+                char parent[VFS_PATH_MAX];
+
+                memset(out, 0, sizeof(*out));
+                strncpy(out->name, "..", sizeof(out->name) - 1);
+                out->d_type = VFS_DT_DIR;
+                if (vfs_path_parent(norm, parent, sizeof(parent))) {
+                        out->d_ino = vfs_path_to_ino(parent);
+                } else {
+                        out->d_ino = vfs_path_to_ino("/");
+                }
+                return 0;
+        }
+
+        index -= 2;
+
+        for (i = 0; i < cpio_entry_count; i++) {
+                char child_name[64];
+
+                if (!vfs_path_direct_child_name(
+                            norm, cpio_entries[i].path, child_name,
+                            sizeof(child_name))) {
+                        continue;
+                }
+                (void)cpio_readdir_insert_name(names, &name_count, child_name);
+        }
+
+        if (index >= name_count) {
+                return 1;
+        }
+
+        if (!vfs_path_join(norm, names[index], child_path, sizeof(child_path))) {
+                return -LINUX_EIO;
+        }
+
+        memset(out, 0, sizeof(*out));
+        strncpy(out->name, names[index], sizeof(out->name) - 1);
+        out->name[sizeof(out->name) - 1] = '\0';
+        out->d_type = cpio_readdir_dtype(child_path);
+        out->d_ino = vfs_path_to_ino(child_path);
+        return 0;
 }

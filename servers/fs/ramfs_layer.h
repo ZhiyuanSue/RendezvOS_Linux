@@ -7,6 +7,8 @@
 
 #include <linux_compat/fs/vfs_path.h>
 
+#include "vfs_kstat.h"
+
 /*
  * In-memory writable storage backend (kmalloc buffers).
  * Path existence / delete state: vfs_namespace.c — not here.
@@ -45,5 +47,7 @@ error_t ramfs_link(const char *oldpath, const char *newpath);
 i64 ramfs_read(const ramfs_entry_t *ent, u64 offset, void *buf, u64 len);
 i64 ramfs_write(ramfs_entry_t *ent, u64 offset, const void *buf, u64 len);
 error_t ramfs_truncate(ramfs_entry_t *ent, u64 size);
+
+i64 ramfs_readdir(const char *dirpath, u64 index, vfs_dirent_t *out);
 
 #endif /* _RAMFS_LAYER_H_ */

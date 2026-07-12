@@ -44,6 +44,8 @@
 #define KMSG_OP_VFS_RENAMEAT      20u
 #define KMSG_OP_VFS_LINKAT        21u
 #define KMSG_OP_VFS_BACKEND_REGISTER 22u
+#define KMSG_OP_VFS_READLINKAT       23u
+#define KMSG_OP_VFS_FACCESSAT        24u
 
 /* Response: single i64 (Linux errno or non-negative syscall result). */
 #define KMSG_OP_VFS_RESP  0u
@@ -73,5 +75,7 @@
 #define VFS_KMSG_FMT_RENAMEAT      "ssu"
 #define VFS_KMSG_FMT_LINKAT        "ssu"
 #define VFS_KMSG_FMT_BACKEND_REGISTER "ssuu"
+#define VFS_KMSG_FMT_READLINKAT       "spu"
+#define VFS_KMSG_FMT_FACCESSAT        "suu"
 
 #endif /* _LINUX_COMPAT_FS_VFS_PROTOCOL_H_ */

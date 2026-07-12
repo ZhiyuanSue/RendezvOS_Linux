@@ -1,6 +1,7 @@
 #include "vfs_backend.h"
 
 #include "vfs_backend_ipc.h"
+#include "vfs_mount.h"
 
 #include <common/string.h>
 #include <linux_compat/errno.h>
@@ -145,6 +146,17 @@ const char *vfs_backend_overlay_port(void)
         return vfs_backend_overlay_port_ptr;
 }
 
+const char *vfs_backend_port_for_path(const char *path)
+{
+        vfs_mount_view_t view;
+
+        if (vfs_mount_view_for_path(path, &view)) {
+                return view.backend_port;
+        }
+
+        return vfs_backend_overlay_port();
+}
+
 bool vfs_backend_port_known(const char *port_name)
 {
         return vfs_backend_find_port(port_name) != NULL;
@@ -198,4 +210,107 @@ bool vfs_backend_lookup(const char *port, const char *path, vfs_inode_t *out)
         }
 
         return req.result == 0;
+}
+
+i64 vfs_backend_readdir(const char *port, const char *dirpath, u64 index,
+                        vfs_dirent_t *out)
+{
+        vfs_backend_req_t req;
+
+        if (!port || !dirpath || !out) {
+                return -LINUX_EINVAL;
+        }
+
+        req.port = port;
+        req.op = VFS_BACKEND_OP_READDIR;
+        req.path = dirpath;
+        req.dir_index = index;
+        req.dirent_out = out;
+        req.result = -LINUX_EINVAL;
+
+        if (vfs_backend_dispatch(&req) != 0) {
+                return req.result;
+        }
+
+        return req.result;
+}
+
+i64 vfs_backend_readlink(const char *port, const char *path, char *buf,
+                         u64 buf_cap)
+{
+        vfs_backend_req_t req;
+
+        if (!port || !path || !buf || buf_cap == 0) {
+                return -LINUX_EINVAL;
+        }
+
+        req.port = port;
+        req.op = VFS_BACKEND_OP_READLINK;
+        req.path = path;
+        req.readlink_buf = buf;
+        req.readlink_cap = buf_cap;
+        req.result = -LINUX_EINVAL;
+
+        if (vfs_backend_dispatch(&req) != 0) {
+                return req.result;
+        }
+
+        return req.result;
+}
+
+static i64 vfs_backend_path_op(const char *port, vfs_backend_op_t op,
+                               const char *path, const char *path2, u32 mode)
+{
+        vfs_backend_req_t req;
+
+        if (!port || !path) {
+                return -LINUX_EINVAL;
+        }
+
+        req.port = port;
+        req.op = op;
+        req.path = path;
+        req.path2 = path2;
+        req.mode_arg = mode;
+        req.result = -LINUX_EINVAL;
+
+        if (vfs_backend_dispatch(&req) != 0) {
+                return req.result;
+        }
+
+        return req.result;
+}
+
+i64 vfs_backend_mkdir(const char *port, const char *path, u32 mode)
+{
+        return vfs_backend_path_op(port, VFS_BACKEND_OP_MKDIR, path, NULL, mode);
+}
+
+i64 vfs_backend_create(const char *port, const char *path, u32 mode)
+{
+        return vfs_backend_path_op(port, VFS_BACKEND_OP_CREATE, path, NULL, mode);
+}
+
+i64 vfs_backend_unlink(const char *port, const char *path)
+{
+        return vfs_backend_path_op(port, VFS_BACKEND_OP_UNLINK, path, NULL, 0);
+}
+
+i64 vfs_backend_rename(const char *port, const char *oldpath, const char *newpath)
+{
+        if (!oldpath || !newpath) {
+                return -LINUX_EINVAL;
+        }
+
+        return vfs_backend_path_op(port, VFS_BACKEND_OP_RENAME, oldpath, newpath,
+                                   0);
+}
+
+i64 vfs_backend_link(const char *port, const char *oldpath, const char *newpath)
+{
+        if (!oldpath || !newpath) {
+                return -LINUX_EINVAL;
+        }
+
+        return vfs_backend_path_op(port, VFS_BACKEND_OP_LINK, oldpath, newpath, 0);
 }

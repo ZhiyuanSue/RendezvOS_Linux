@@ -8,8 +8,6 @@
 #include "vfs_kstat.h"
 #include <linux_compat/fs/vfs_path.h>
 
-struct ramfs_entry;
-
 /*
  * VFS middle layer facade: init + namespace/stat I/O entry points.
  * Namespace logic: vfs_namespace.c (cpio catalog + ramfs storage).

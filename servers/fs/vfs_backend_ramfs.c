@@ -132,6 +132,86 @@ static i64 vfs_backend_ramfs_flush(vfs_backend_req_t *req)
         return vfs_page_cache_flush_backing(req->ino);
 }
 
+static i64 vfs_backend_ramfs_err_from_rend(error_t err)
+{
+        switch (err) {
+        case REND_SUCCESS:
+                return 0;
+        case -E_RENDEZVOS:
+                return -LINUX_EEXIST;
+        case -E_IN_PARAM:
+                return -LINUX_ENOTDIR;
+        default:
+                return -LINUX_ENOMEM;
+        }
+}
+
+static i64 vfs_backend_ramfs_mkdir(vfs_backend_req_t *req)
+{
+        error_t err;
+
+        if (!req || !req->path) {
+                return -LINUX_EINVAL;
+        }
+
+        err = ramfs_mkdir(req->path, req->mode_arg);
+        return vfs_backend_ramfs_err_from_rend(err);
+}
+
+static i64 vfs_backend_ramfs_create(vfs_backend_req_t *req)
+{
+        error_t err;
+
+        if (!req || !req->path) {
+                return -LINUX_EINVAL;
+        }
+
+        err = ramfs_create_file(req->path, req->mode_arg);
+        return vfs_backend_ramfs_err_from_rend(err);
+}
+
+static i64 vfs_backend_ramfs_unlink(vfs_backend_req_t *req)
+{
+        error_t err;
+
+        if (!req || !req->path) {
+                return -LINUX_EINVAL;
+        }
+
+        err = ramfs_unlink(req->path);
+        if (err == REND_SUCCESS) {
+                return 0;
+        }
+        if (err == -E_IN_PARAM) {
+                return -LINUX_EINVAL;
+        }
+        return -LINUX_EIO;
+}
+
+static i64 vfs_backend_ramfs_rename(vfs_backend_req_t *req)
+{
+        error_t err;
+
+        if (!req || !req->path || !req->path2) {
+                return -LINUX_EINVAL;
+        }
+
+        err = ramfs_rename(req->path, req->path2);
+        return vfs_backend_ramfs_err_from_rend(err);
+}
+
+static i64 vfs_backend_ramfs_link(vfs_backend_req_t *req)
+{
+        error_t err;
+
+        if (!req || !req->path || !req->path2) {
+                return -LINUX_EINVAL;
+        }
+
+        err = ramfs_link(req->path, req->path2);
+        return vfs_backend_ramfs_err_from_rend(err);
+}
+
 static i64 vfs_backend_ramfs_service(vfs_backend_req_t *req)
 {
         if (!req) {
@@ -149,6 +229,23 @@ static i64 vfs_backend_ramfs_service(vfs_backend_req_t *req)
                 return vfs_backend_ramfs_truncate(req);
         case VFS_BACKEND_OP_FLUSH:
                 return vfs_backend_ramfs_flush(req);
+        case VFS_BACKEND_OP_READDIR:
+                if (!req->path || !req->dirent_out) {
+                        return -LINUX_EINVAL;
+                }
+                return ramfs_readdir(req->path, req->dir_index, req->dirent_out);
+        case VFS_BACKEND_OP_READLINK:
+                return -LINUX_EINVAL;
+        case VFS_BACKEND_OP_MKDIR:
+                return vfs_backend_ramfs_mkdir(req);
+        case VFS_BACKEND_OP_CREATE:
+                return vfs_backend_ramfs_create(req);
+        case VFS_BACKEND_OP_UNLINK:
+                return vfs_backend_ramfs_unlink(req);
+        case VFS_BACKEND_OP_RENAME:
+                return vfs_backend_ramfs_rename(req);
+        case VFS_BACKEND_OP_LINK:
+                return vfs_backend_ramfs_link(req);
         default:
                 return -LINUX_EINVAL;
         }
@@ -164,6 +261,8 @@ static i64 vfs_ramfs_rpc_handler(u16 opcode, const kmsg_t *km,
 static void vfs_ramfs_thread_entry(void)
 {
         i64 reg_ret;
+
+        ramfs_init();
 
         reg_ret = vfs_backend_ipc_register(
                 VFS_BACKEND_PORT_RAMFS,
