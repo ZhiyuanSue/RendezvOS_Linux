@@ -3,19 +3,18 @@
 
 #include <common/stdbool.h>
 #include <common/types.h>
+#include <linux_compat/fs/vfs_path.h>
 #include <rendezvos/error.h>
 #include <rendezvos/mm/page_slice.h>
 #include <rendezvos/task/tcb.h>
 
-#define LINUX_VFS_PATH_MAX   256
-#define LINUX_DIR_PATH_SLOTS 16
+#define LINUX_VFS_PATH_MAX   VFS_PATH_MAX
 
 /*
  * Initial fd slot count when a process fs table is created. The table lives in
  * a page_slice and may grow via linux_fd_alloc; this is not a hard upper bound.
  */
 #define LINUX_FS_FD_INIT_CAP 128
-#define LINUX_FD_MAX         LINUX_FS_FD_INIT_CAP
 
 #define LINUX_AT_FDCWD (-100)
 
@@ -36,14 +35,14 @@ typedef struct linux_fd_entry {
         char vfs_abs_path[LINUX_VFS_PATH_MAX];
 } linux_fd_entry_t;
 
-typedef struct linux_dir_path_slot {
-        u8 fd;
-        char path[LINUX_VFS_PATH_MAX];
-} linux_dir_path_slot_t;
-
 typedef struct linux_fs_state {
         struct page_slice *table;
 } linux_fs_state_t;
+
+/*
+ * linux_fd_get / linux_fs_cwd / linux_fs_dir_path_lookup return per-CPU scratch
+ * pointers valid until the next call on the same CPU; copy if retained.
+ */
 
 linux_fs_state_t *linux_fs_state(Tcb_Base *task);
 

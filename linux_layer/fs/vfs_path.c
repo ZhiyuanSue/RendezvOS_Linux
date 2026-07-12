@@ -362,3 +362,17 @@ bool vfs_path_join(const char *base, const char *rel, char *out, u64 out_cap)
         vfs_path_normalize(scratch, out, out_cap);
         return true;
 }
+
+bool vfs_path_equal(const char *a, const char *b)
+{
+        char na[VFS_PATH_MAX];
+        char nb[VFS_PATH_MAX];
+
+        if (!a || !b) {
+                return false;
+        }
+
+        vfs_path_normalize(a, na, sizeof(na));
+        vfs_path_normalize(b, nb, sizeof(nb));
+        return strcmp_s(na, nb, VFS_PATH_MAX) == 0;
+}

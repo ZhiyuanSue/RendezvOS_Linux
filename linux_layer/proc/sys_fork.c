@@ -25,9 +25,9 @@
  * This implements basic fork() semantics:
  * - Creates child process with copied address space
  * - Child returns 0, parent returns child PID
+ * - File descriptor table: linux_fs_proc_fork (page_slice clone + handle RETAIN)
  * - Does NOT implement:
  *   - COW (full page table copy instead)
- *   - File descriptor table sharing
  *   - Signal handler inheritance (partial via append copy hook)
  *   - Resource limits
  *

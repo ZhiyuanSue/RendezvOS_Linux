@@ -55,15 +55,6 @@ fail:
         return err;
 }
 
-error_t linux_page_slice_dup(struct page_slice** dst_out,
-                             struct page_slice* src)
-{
-        if (!dst_out || !src)
-                return -E_IN_PARAM;
-
-        return page_slice_clone(dst_out, src);
-}
-
 vaddr linux_page_slice_file_base(struct page_slice* slice)
 {
         struct page_slice_entry* entry;

@@ -3,16 +3,16 @@
 
 #include <common/stdbool.h>
 #include <common/types.h>
+#include <linux_compat/fs/vfs_path.h>
 #include <rendezvos/error.h>
 
 /*
  * Read-only newc cpio backend (initramfs image embedded via .incbin).
  *
- * Upward consumer: vfs_namespace.c / vfs_root.c only. Do not include from
- * linux_layer or RPC front. Parsed entry types are private to cpio_rofs.c.
+ * Upward consumer: vfs_namespace.c, vfs_root.c, vfs_backend_ops.c.
  */
 
-#define CPIO_ROFS_PATH_MAX 256
+#define CPIO_ROFS_PATH_MAX VFS_PATH_MAX
 
 typedef struct cpio_rofs_stat {
         u32 mode;

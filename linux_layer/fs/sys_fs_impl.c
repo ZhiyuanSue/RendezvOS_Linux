@@ -47,7 +47,6 @@ i64 sys_getcwd(u64 user_buf, u64 size)
         Tcb_Base *current = sys_fs_current();
         linux_fs_state_t *fs;
         VSpace *vs;
-        u64 len;
         error_t e;
 
         if (!current || !current->vs) {
@@ -67,17 +66,21 @@ i64 sys_getcwd(u64 user_buf, u64 size)
                 return -LINUX_EFAULT;
         }
 
-        len = strlen(linux_fs_cwd(fs)) + 1;
-        if (size < len) {
-                return -LINUX_ERANGE;
-        }
+        {
+                const char *cwd = linux_fs_cwd(fs);
+                u64 len = strlen(cwd) + 1;
 
-        e = linux_mm_store_to_user(vs, user_buf, linux_fs_cwd(fs), (size_t)len);
-        if (e != REND_SUCCESS) {
-                return -LINUX_EFAULT;
-        }
+                if (size < len) {
+                        return -LINUX_ERANGE;
+                }
 
-        return (i64)user_buf;
+                e = linux_mm_store_to_user(vs, user_buf, cwd, (size_t)len);
+                if (e != REND_SUCCESS) {
+                        return -LINUX_EFAULT;
+                }
+
+                return (i64)user_buf;
+        }
 }
 
 i64 sys_dup(i32 fd)
@@ -162,15 +165,6 @@ i64 sys_openat(i32 dirfd, u64 user_pathname, i32 flags, u64 mode)
                         VFS_KMSG_FMT_CLOSE,
                         ent.vfs_handle);
                 return -LINUX_EMFILE;
-        }
-
-        if (ent.is_dir) {
-                ret = linux_fs_dir_path_assign(
-                        linux_fs_state(current), fd, abs);
-                if (ret < 0 && ent.vfs_abs_path[0] == '\0') {
-                        (void)linux_fd_close(current, fd);
-                        return ret;
-                }
         }
 
         return (i64)fd;

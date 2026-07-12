@@ -43,7 +43,7 @@ servers/fs/              中端：namespace 树、page cache、mount、perm、ra
 | ID | 重复项 | 状态 | 目标 |
 |----|--------|------|------|
 | M1 | `servers/fs/vfs_path.c` ↔ `linux_vfs_path.c` normalize | ✅ | 单模块 `linux_layer/fs/vfs_path.c` + `linux_compat/fs/vfs_path.h` |
-| M2 | `VFS_PATH_MAX` ↔ `LINUX_VFS_PATH_MAX` | 🚧 | 均为 256；可 `#define LINUX_VFS_PATH_MAX VFS_PATH_MAX` |
+| M2 | `VFS_PATH_MAX` ↔ `LINUX_VFS_PATH_MAX` ↔ `CPIO_ROFS_PATH_MAX` | ✅ | 均为 `VFS_PATH_MAX`；`vfs_path_equal()` 共享 |
 | M3 | `vfs_kern_load.c` ↔ `vfs_exec_load.c` 灌 slice | 🚧 | 已共用 `linux_page_slice_copy_from_kva`；可再抽 `vfs_read_into_slice()` |
 | M4 | cpio read：`vfs_page_cache` vs `vfs_backend` direct | ⬜ | 统一经 page cache 或明确分层边界 |
 | M5 | `vfs_perm` request cred vs 未来 `setuid` compat | ⬜ | cred 真源只在 `linux_proc_append_t` |
@@ -71,33 +71,40 @@ servers/fs/              中端：namespace 树、page cache、mount、perm、ra
 
 ## fd 表与 page_slice（§FdSlice）
 
-### 当初设计意图（未完全落地）
+### 设计分层
 
-- **core `page_slice`**：内核侧逻辑连续字节流（buddy ≤2MiB/块），pgoff→kva 索引。
-- **设想**：打开的文件 / mmap 后端用 slice 表示内容；**fork 时**对 slice 做 **`page_slice_copy_to_slice`**（core 已有 API），子进程独立副本或 COW 策略。
-- **fd 表**：fd → `{ kind, slice? | handle, path }`。
+| 层 | 用途 |
+|----|------|
+| **fd 表 page_slice** | 每进程：`hdr(cwd,capacity)` + `linux_fd_entry_t[]`；fork **`page_slice_clone`** |
+| **ingest page_slice** | 内核读 ELF/manifest：`copy_from_kva` → load → **destroy** |
+| **文件内容** | 用户 open/read → **server handle** + namespace/page_cache（**不在** fd slice 内） |
 
-### 当前实现（方案 B，2026-07）
+### 当前实现（2026-07-12）
 
 | 能力 | 实现 |
 |------|------|
-| 用户 open/read/write | compat fd → **VFS server handle** → cpio/ramfs/page_cache |
-| fd 条目 | `linux_fd_entry_t`：`vfs_handle` + `vfs_abs_path`，**无 page_slice** |
-| fork | `linux_fs_proc_fork`：`memcpy` fs 状态 + 每个唯一 handle **IPC RETAIN** + pipe retain |
-| execve | `linux_fs_proc_reset`：release handles，重置 0/1/2 |
-| 内核读 ELF/manifest | **page_slice**（`vfs_kern_read_file_slice` / `linux_vfs_read_file_for_exec_slice`）→ `load_elf_to_vs` → **destroy** |
-| core slice 复制 | `page_slice_copy_to_slice` / `copy_to_buffer` / `copy_to_user` **存在**，compat **未用于 fd/fork** |
+| fd 表容器 | `linux_fs_state_t.table` = page_slice；初始 128 fd，+64 增长 |
+| fd 条目 | `vfs_handle` + `vfs_abs_path` + `is_dir` / pipe 元数据 |
+| fork | `page_slice_clone` + handle/pipe **RETAIN**（无 attach→init→clone 双建） |
+| execve | `linux_fs_proc_reset`：release + 重建 slice |
+| exit | `linux_fs_proc_release_for_exit`：**不** rebuild slice |
+| 内核 ingest | `linux_page_slice_copy_from_kva` / `vfs_kern_read_file_slice` |
+
+### 实现注意（非设计缺陷）
+
+- **hdr 不得上 kstack**（曾 4372B 含 dir_paths[] → 栈溢出）；hdr 现 ~260B，仍用 per-CPU scratch 读写。
+- 目录 fd 路径：**仅** `linux_fd_entry_t.vfs_abs_path`（已删 hdr 内冗余 `dir_paths[]`）。
 
 ### 缺口（待设计）
 
 | ID | 项 | 说明 |
 |----|-----|------|
-| F1 | fd 绑定 slice | 未做；文件内容在 server inode，不在进程 slice |
-| F2 | fork copy slice | 未做；fork 只共享 server handle（同 inode 偏移） |
-| F3 | mmap 文件后端 | Phase 2+；radix + 可能 slice 或按需 fault |
-| F4 | `page_slice_clone` 封装 | 可在 compat 包一层 `linux_page_slice_dup()` 调 core `copy_to_slice` |
+| F1 | fd 绑定文件内容 slice | 未做；方案 B 用 server handle |
+| F2 | fork 复制文件内容 slice | 未做；共享 handle/offset |
+| F3 | mmap 文件后端 | Phase 2+ |
+| ~~F4~~ | ~~linux_page_slice_dup~~ | 已删；fork fd 表直接用 **`page_slice_clone`** |
 
-**与测例关系**：当前 52/52 不依赖 F1–F2；execve/harness 的 slice 生命周期是 **load→map→destroy**，与 fd 表分离（见 [`FILE_LOADING.md`](FILE_LOADING.md) §5）。
+**与测例**：52/52 不依赖 F1–F2。见 [`FD_TABLE.md`](FD_TABLE.md)。
 
 ---
 
@@ -178,8 +185,8 @@ servers/fs/              中端：namespace 树、page cache、mount、perm、ra
 | P6-1 | `VFS_ARCHITECTURE.md` 对齐 | 🚧 |
 | P6-2 | `RAMFS_AND_VFS_STORAGE.md` | 🚧 |
 | P6-3 | `ROOTFS.md` | ✅ |
-| P6-4 | `VFS_IMPLEMENTATION_STATUS.md` 同步 | 🚧 |
-| P6-5 | `FD_TABLE.md` §page_slice 缺口 | 🚧 |
+| P6-4 | `VFS_IMPLEMENTATION_STATUS.md` 同步 | ✅ |
+| P6-5 | `FD_TABLE.md` page_slice 布局 | ✅ |
 
 ---
 
@@ -194,17 +201,18 @@ servers/fs/              中端：namespace 树、page cache、mount、perm、ra
 | P3 挂载 | **60%** |
 | P4 权限 | **50%** |
 | P5 syscall/RPC | **60%** |
-| F fd↔slice | **0%**（设计保留，方案 B 未走 slice） |
-| P6 文档 | **45%** |
+| F fd↔slice（文件内容） | **0%**（fd **表**已用 slice；文件字节仍 handle） |
+| P6 文档 | **70%** |
 
 ---
 
 ## 下一批建议
 
-1. **F1/F2 设计评审**：fd 是否继续纯 handle，还是在 mmap/大文件时再引入 slice + fork dup。
+1. **re-run 52/52**（fd 表栈/fix + runner task-reap 等待）。
 2. **M3**：统一 kernel 侧 read→slice 入口。
 3. **P3-5**：mount 真切换后端。
-4. **P5-2**：statx RPC。
+4. **P6-1/2**：刷新 `VFS_ARCHITECTURE.md`、`RAMFS_AND_VFS_STORAGE.md`（仍引用旧 vfs_fd / flat readdir）。
+5. **P5-2**：statx RPC。
 
 ---
 

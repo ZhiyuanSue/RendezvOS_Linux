@@ -19,12 +19,7 @@ static vfs_mount_rec_t vfs_mounts[VFS_MOUNT_MAX];
 
 static bool vfs_mount_path_equal(const char *a, const char *b)
 {
-        char na[VFS_PATH_MAX];
-        char nb[VFS_PATH_MAX];
-
-        vfs_path_normalize(a, na, sizeof(na));
-        vfs_path_normalize(b, nb, sizeof(nb));
-        return strcmp_s(na, nb, VFS_PATH_MAX) == 0;
+        return vfs_path_equal(a, b);
 }
 
 void vfs_mount_reset(void)

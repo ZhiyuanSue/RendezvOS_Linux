@@ -21,12 +21,7 @@ static struct allocator *ramfs_alloc(void)
 
 static bool ramfs_path_equal(const char *a, const char *b)
 {
-        char norm_a[VFS_PATH_MAX];
-        char norm_b[VFS_PATH_MAX];
-
-        vfs_path_normalize(a, norm_a, sizeof(norm_a));
-        vfs_path_normalize(b, norm_b, sizeof(norm_b));
-        return strcmp_s(norm_a, norm_b, VFS_PATH_MAX) == 0;
+        return vfs_path_equal(a, b);
 }
 
 static void ramfs_free_entry_data(ramfs_entry_t *ent)

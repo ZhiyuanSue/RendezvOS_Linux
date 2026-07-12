@@ -13,28 +13,25 @@
 #include <common/mm.h>
 #include <common/string.h>
 #include <rendezvos/error.h>
+#include <common/stddef.h>
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/mm/page_slice_copy.h>
 #include <rendezvos/smp/percpu.h>
 
-#define LINUX_DIR_PATH_FD_EMPTY ((u8)255)
 #define LINUX_FS_FD_REGION_BASE (2ULL * PAGE_SIZE)
 #define LINUX_FS_SLICE_FD_GROW  64u
 
+/*
+ * Slice header at byte offset 0: process-wide FS metadata (cwd + capacity).
+ * Per-fd state (kind, handle, vfs_abs_path, is_dir) lives at LINUX_FS_FD_REGION_BASE.
+ * Never allocate this struct on the kernel stack — kstack is only 8 KiB.
+ */
 typedef struct linux_fs_slice_hdr {
         char cwd[LINUX_VFS_PATH_MAX];
-        linux_dir_path_slot_t dir_paths[LINUX_DIR_PATH_SLOTS];
         u32 fd_capacity;
 } linux_fs_slice_hdr_t;
 
-/*
- * 4372 bytes — must not live on the 8KiB kernel stack. Nested helpers (e.g.
- * dir_path_store -> fd_capacity) used to allocate two hdr frames and corrupt
- * unrelated kernel memory (seen as bogus radix rmap pointers in del_vspace).
- */
-#define LINUX_FS_HDR_FD_CAPACITY_OFF                           \
-        (sizeof(((linux_fs_slice_hdr_t *)0)->cwd)              \
-         + sizeof(((linux_fs_slice_hdr_t *)0)->dir_paths))
+#define LINUX_FS_HDR_FD_CAPACITY_OFF offsetof(linux_fs_slice_hdr_t, fd_capacity)
 
 DEFINE_PER_CPU(linux_fs_slice_hdr_t, linux_fs_hdr_scratch);
 DEFINE_PER_CPU(linux_fs_slice_hdr_t, linux_fs_hdr_lookup_scratch);
@@ -250,10 +247,6 @@ static error_t linux_fs_table_create(struct page_slice **table_out,
         hdr->cwd[0] = '/';
         hdr->cwd[1] = '\0';
         hdr->fd_capacity = fd_capacity;
-        for (u32 i = 0; i < LINUX_DIR_PATH_SLOTS; i++) {
-                hdr->dir_paths[i].fd = LINUX_DIR_PATH_FD_EMPTY;
-                hdr->dir_paths[i].path[0] = '\0';
-        }
 
         err = linux_fs_slice_store(table, 0, hdr, sizeof(*hdr));
         if (err != REND_SUCCESS) {
@@ -349,114 +342,68 @@ void linux_fs_set_cwd(linux_fs_state_t *fs, const char *cwd)
 
 static void linux_fs_dir_paths_clear_all(linux_fs_state_t *fs)
 {
-        linux_fs_slice_hdr_t *hdr;
-        u32 i;
-
-        if (!fs || !fs->table) {
-                return;
-        }
-        hdr = linux_fs_hdr_buf();
-        if (linux_fs_hdr_load(fs, hdr) != REND_SUCCESS) {
-                return;
-        }
-
-        for (i = 0; i < LINUX_DIR_PATH_SLOTS; i++) {
-                hdr->dir_paths[i].fd = LINUX_DIR_PATH_FD_EMPTY;
-                hdr->dir_paths[i].path[0] = '\0';
-        }
-        (void)linux_fs_hdr_store(fs, hdr);
+        (void)fs;
 }
 
 static i64 linux_fs_dir_path_store(linux_fs_state_t *fs, i32 fd,
                                    const char *path)
 {
-        linux_fs_slice_hdr_t *hdr;
-        u32 i;
-
         if (!fs || !fs->table || fd < 0 || !path) {
                 return -LINUX_EINVAL;
         }
         if ((u32)fd >= linux_fs_fd_capacity(fs)) {
                 return -LINUX_EINVAL;
         }
-        hdr = linux_fs_hdr_buf();
-        if (linux_fs_hdr_load(fs, hdr) != REND_SUCCESS) {
-                return -LINUX_EINVAL;
-        }
 
-        for (i = 0; i < LINUX_DIR_PATH_SLOTS; i++) {
-                if (hdr->dir_paths[i].fd == (u8)fd) {
-                        strncpy(hdr->dir_paths[i].path,
-                                path,
-                                sizeof(hdr->dir_paths[i].path) - 1);
-                        hdr->dir_paths[i]
-                                .path[sizeof(hdr->dir_paths[i].path) - 1] = '\0';
-                        return linux_fs_hdr_store(fs, hdr) == REND_SUCCESS ?
-                                       0 :
-                                       -LINUX_EINVAL;
-                }
-        }
-
-        for (i = 0; i < LINUX_DIR_PATH_SLOTS; i++) {
-                if (hdr->dir_paths[i].fd == LINUX_DIR_PATH_FD_EMPTY) {
-                        hdr->dir_paths[i].fd = (u8)fd;
-                        strncpy(hdr->dir_paths[i].path,
-                                path,
-                                sizeof(hdr->dir_paths[i].path) - 1);
-                        hdr->dir_paths[i]
-                                .path[sizeof(hdr->dir_paths[i].path) - 1] = '\0';
-                        return linux_fs_hdr_store(fs, hdr) == REND_SUCCESS ?
-                                       0 :
-                                       -LINUX_EINVAL;
-                }
-        }
-
-        return -LINUX_EMFILE;
+        linux_fd_set_vfs_abs_path(fs, fd, path);
+        linux_fd_set_is_dir(fs, fd, true);
+        return 0;
 }
 
 static void linux_fs_dir_path_release(linux_fs_state_t *fs, i32 fd)
 {
-        linux_fs_slice_hdr_t *hdr;
-        u32 i;
+        linux_fd_entry_t ent;
 
         if (!fs || !fs->table || fd < 0) {
                 return;
         }
-        hdr = linux_fs_hdr_buf();
-        if (linux_fs_hdr_load(fs, hdr) != REND_SUCCESS) {
+        if (linux_fs_entry_load(fs, fd, &ent) != REND_SUCCESS) {
+                return;
+        }
+        if (!ent.is_dir) {
                 return;
         }
 
-        for (i = 0; i < LINUX_DIR_PATH_SLOTS; i++) {
-                if (hdr->dir_paths[i].fd == (u8)fd) {
-                        hdr->dir_paths[i].fd = LINUX_DIR_PATH_FD_EMPTY;
-                        hdr->dir_paths[i].path[0] = '\0';
-                        (void)linux_fs_hdr_store(fs, hdr);
-                        return;
-                }
-        }
+        ent.vfs_abs_path[0] = '\0';
+        (void)linux_fs_entry_store(fs, fd, &ent);
 }
 
 const char *linux_fs_dir_path_lookup(linux_fs_state_t *fs, i32 fd)
 {
-        linux_fs_slice_hdr_t *hdr;
-        u32 i;
+        linux_fd_entry_t ent;
 
         if (!fs || !fs->table || fd < 0) {
                 return NULL;
         }
-        hdr = linux_fs_hdr_lookup_buf();
-        if (linux_fs_hdr_load(fs, hdr) != REND_SUCCESS) {
+
+        if (linux_fs_entry_load(fs, fd, &ent) != REND_SUCCESS) {
+                return NULL;
+        }
+        if (!ent.is_dir || ent.vfs_abs_path[0] == '\0') {
                 return NULL;
         }
 
-        for (i = 0; i < LINUX_DIR_PATH_SLOTS; i++) {
-                if (hdr->dir_paths[i].fd == (u8)fd) {
-                        return hdr->dir_paths[i].path;
-                }
-        }
+        /*
+         * Return path in per-CPU lookup hdr scratch (same contract as cwd).
+         * Caller must copy if the pointer must survive another fs helper call.
+         */
+        {
+                linux_fs_slice_hdr_t *scratch = linux_fs_hdr_lookup_buf();
 
-        return NULL;
+                strncpy(scratch->cwd, ent.vfs_abs_path, sizeof(scratch->cwd) - 1);
+                scratch->cwd[sizeof(scratch->cwd) - 1] = '\0';
+                return scratch->cwd;
+        }
 }
 
 i64 linux_fs_dir_path_assign(linux_fs_state_t *fs, i32 fd, const char *path)
@@ -466,20 +413,19 @@ i64 linux_fs_dir_path_assign(linux_fs_state_t *fs, i32 fd, const char *path)
 
 void linux_fs_dir_path_dup(linux_fs_state_t *fs, i32 oldfd, i32 newfd)
 {
-        const char *path;
-        char path_copy[LINUX_VFS_PATH_MAX];
+        linux_fd_entry_t oldent;
 
         if (!fs || oldfd == newfd) {
                 return;
         }
 
-        linux_fs_dir_path_release(fs, newfd);
-        path = linux_fs_dir_path_lookup(fs, oldfd);
-        if (path) {
-                strncpy(path_copy, path, sizeof(path_copy) - 1);
-                path_copy[sizeof(path_copy) - 1] = '\0';
-                (void)linux_fs_dir_path_store(fs, newfd, path_copy);
+        if (linux_fs_entry_load(fs, oldfd, &oldent) != REND_SUCCESS
+            || !oldent.is_dir || oldent.vfs_abs_path[0] == '\0') {
+                linux_fs_dir_path_release(fs, newfd);
+                return;
         }
+
+        (void)linux_fs_entry_store(fs, newfd, &oldent);
 }
 
 void linux_fd_set_vfs_abs_path(linux_fs_state_t *fs, i32 fd, const char *path)
@@ -801,6 +747,7 @@ static error_t linux_fs_fork_copy_state(linux_fs_state_t *child,
 
 error_t linux_fs_proc_fork(Tcb_Base *child, Tcb_Base *parent)
 {
+        linux_proc_append_t *pa;
         linux_fs_state_t *parent_fs;
         linux_fs_state_t *child_fs;
         error_t e;
@@ -809,29 +756,34 @@ error_t linux_fs_proc_fork(Tcb_Base *child, Tcb_Base *parent)
                 return -E_IN_PARAM;
         }
 
-        parent_fs = linux_fs_state(parent);
-        e = linux_fs_proc_attach(child);
-        if (e != REND_SUCCESS) {
-                return e;
+        pa = linux_proc_append(child);
+        if (!pa) {
+                return -E_IN_PARAM;
         }
 
-        child_fs = linux_fs_state(child);
+        parent_fs = linux_fs_state(parent);
+
+        if (pa->fs) {
+                linux_fs_free_state(pa->fs);
+                pa->fs = NULL;
+        }
+
+        child_fs = linux_fs_alloc_state();
         if (!child_fs) {
                 return -E_RENDEZVOS;
         }
 
-        if (parent_fs) {
+        if (parent_fs && parent_fs->table) {
                 e = linux_fs_fork_copy_state(child_fs, parent_fs);
-                if (e != REND_SUCCESS) {
-                        return e;
-                }
         } else {
                 e = linux_fs_init_state(child_fs);
-                if (e != REND_SUCCESS) {
-                        return e;
-                }
+        }
+        if (e != REND_SUCCESS) {
+                linux_fs_free_state(child_fs);
+                return e;
         }
 
+        pa->fs = child_fs;
         return REND_SUCCESS;
 }
 
@@ -1056,6 +1008,10 @@ i64 linux_fd_dup2(Tcb_Base *task, i32 oldfd, i32 newfd)
         }
         if (linux_fs_entry_load(fs, newfd, &newent) != REND_SUCCESS) {
                 return -LINUX_EBADF;
+        }
+
+        if (newent.kind == LINUX_FD_PIPE) {
+                linux_pipe_fd_closed(newent.vfs_handle, newent.pipe_read);
         }
 
         replaced_handle = 0;

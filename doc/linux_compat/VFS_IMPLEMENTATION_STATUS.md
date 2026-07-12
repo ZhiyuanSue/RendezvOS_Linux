@@ -1,21 +1,22 @@
 # VFS Phase 4 — 实现状态（live）
 
-> **Purpose**: 记录 **已写什么 / 缺什么 / 怎么验**，避免只靠翻代码。  
-> **架构**: [`VFS_ARCHITECTURE.md`](VFS_ARCHITECTURE.md) · **fd 表**: [`FD_TABLE.md`](FD_TABLE.md)  
-> **IPC**: [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md)  
-> **Last updated**: 2026-07-09（方案 B fd 表落地）
+> **Purpose**: 已写什么 / 缺什么 / 怎么验  
+> **架构**: [`VFS_ARCHITECTURE.md`](VFS_ARCHITECTURE.md) · **演进**: [`VFS_EVOLUTION.md`](VFS_EVOLUTION.md)  
+> **fd 表**: [`FD_TABLE.md`](FD_TABLE.md) · **IPC**: [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md)  
+> **Last updated**: 2026-07-12
 
 ---
 
-## 1. 演进步骤
+## 1. 基线
 
-| Step | 内容 | 状态 |
-|------|------|------|
-| 0–6b | cpio / RPC / exec / page_slice | ✅ |
-| 7 | chdir + cwd + openat(dirfd) + getdents64 | 🟡 已接线 — 待 run 验证 |
-| **7b** | **方案 B：compat per-pid fd 表 + server open handle** | 🟡 **已实现** — 待 run |
-| 8 | pipe2 + exit 释放 handle | ⬜（dup/dup2 已在 compat） |
-| 9 | 磁盘 / mount | ⬜ deferred |
+| 项 | 状态 |
+|----|------|
+| x86_64 user harness | **52/52**（2026-07-12 前次基线；fd 表栈修复待 re-run） |
+| aarch64 user harness | **52/52** |
+| 命名空间 | 树形 `vfs_namespace` |
+| fd 表 | page_slice 容器 + server handle（方案 B） |
+| mount | 登记 + lookup 覆盖；**未**切换后端 |
+| page cache | cpio 小文件读缓存 |
 
 ---
 
@@ -25,20 +26,35 @@
 
 | 文件 | 职责 |
 |------|------|
-| `vfs_handle.c/h` | 全局 **open handle** 表（`struct file` 等价） |
-| `vfs_open.c/h` | 路径 open + handle I/O |
-| `vfs_root.c` / backends | 中端 inode / 数据（不变） |
+| `vfs_server.c` | RPC dispatch |
+| `vfs_namespace.c` | **树形** dentry、lookup/readdir/rename/link |
+| `vfs_mount.c` | mount 登记、namespace mount_covered |
+| `vfs_page_cache.c` | cpio 读缓存 |
+| `vfs_perm.c` | request cred + owner mode |
+| `vfs_handle.c` / `vfs_open.c` | open handle 表 + I/O |
+| `vfs_root.c` | init + 薄封装 → namespace |
+| `vfs_backend_ops.c` | cpio/ramfs 字节 I/O |
+| `ramfs_layer.c`, `cpio_rofs.c` | 平坦后端存储 |
+| `vfs_kern_load.c` | 内核侧 read→slice（manifest/exec） |
+
+**已删除**：`vfs_fd.c`, `servers/fs/vfs_path.c`（path 合并到 compat）
 
 **`linux_layer/fs/`**
 
 | 文件 | 职责 |
 |------|------|
-| `linux_fd_table.c` | per-pid fd 表（`linux_proc_append_t.fs`） |
-| `linux_vfs_path.c` | cwd + dirfd 路径展开 |
-| `sys_fs_impl.c` | syscall 查表 → console / VFS IPC |
-| `io/sys_write.c` | UART backend（console 条目调用） |
+| `linux_fd_table.c` | per-process fd 表（**page_slice**） |
+| `vfs_path.c` | **唯一** path normalize/join/equal |
+| `linux_vfs_path.c` | cwd + dirfd → abs |
+| `sys_fs_impl.c` | syscall → 查表 / IPC |
+| `vfs_exec_load.c` | exec IPC 读 ELF |
+| `vfs_root_bootstrap.c` | compat 早期 init |
 
-**已删除**：`vfs_fd.c/h`（bootstrap per-pid server fd 表）
+**`linux_layer/mm/`**
+
+| 文件 | 职责 |
+|------|------|
+| `linux_page_slice_file.c` | kva → page_slice（ingest） |
 
 ---
 
@@ -46,35 +62,33 @@
 
 | Syscall | 路径 |
 |---------|------|
-| `openat` / `*at` | compat 展开 abs path → RPC |
-| `read/write/close/fstat/lseek/getdents64` | compat 查 fd → **handle** RPC |
-| `getcwd` / `chdir` | **compat 本地 cwd**；chdir RPC 仅校验目录 |
-| `write(1/2)` | 查表：`CONSOLE_*` → UART；`VFS` → IPC（dup2 后可重定向） |
-| `dup` / `dup2` / `dup3` | **compat 本地** + `HANDLE_RETAIN` |
-| `pipe2` | ❌ ENOSYS |
+| `openat` / `*at` | compat abs path → RPC |
+| `read/write/close/fstat/lseek/getdents64` | compat fd → **handle** RPC |
+| `getcwd` / `chdir` | compat 本地 cwd（slice hdr） |
+| `dup` / `dup2` | compat + RETAIN |
+| `pipe2` | compat 本地 pipe 表 + fd 槽 |
+| `mount` / `umount2` | RPC + mount 登记 |
+| `renameat` / `linkat` | RPC → namespace |
+
+**Deprecated RPC**：`GETCWD`（compat 本地）；`DUP3`/`PIPE2` server stub（compat 实现）。
 
 ---
 
 ## 4. 验证
-
-Maintainer 本地：
 
 ```bash
 make ARCH=x86_64 config user build run | tee x86_64_run.log
 make ARCH=aarch64 config user build run | tee aarch64_run.log
 ```
 
-关注：`#3` `#6` `#7` `#12` `#13` `#22` `#51` stdout + harness 52/52。
-
-**本环境未跑 cross-gcc 构建**（2026-07-09 assistant turn）。
-
 ---
 
-## 5. 陷阱
+## 5. 已知陷阱
 
 | 项 | 说明 |
 |----|------|
-| OPEN RPC fmt | **`siu`**（abs path），不再是 `isiu` |
-| I/O RPC 第一参数 | **handle id**，不是 compat fd |
-| pid 用途 | 仅 user copy，**不**索引 fd |
-| fork fd | `linux_fs_proc_fork` + retain；见 FD_TABLE §7 |
+| OPEN RPC | **`siu`** abs path → handle |
+| I/O RPC | 第一参数是 **handle**，不是 compat fd |
+| fd 表 hdr | **勿**在 kstack 上大 struct；见 FD_TABLE §4 |
+| exit vs exec | exit **release only**；exec **reset** slice |
+| 测例 cookie | THREAD_REAP 早于 TASK_REAP；runner 等 pid 消失 |

@@ -26,4 +26,7 @@ bool vfs_path_is_root(const char *path);
 
 bool vfs_path_join(const char *base, const char *rel, char *out, u64 out_cap);
 
+/* Normalize both paths and compare (used by ramfs, mount, etc.). */
+bool vfs_path_equal(const char *a, const char *b);
+
 #endif /* _LINUX_COMPAT_FS_VFS_PATH_H_ */
