@@ -205,6 +205,8 @@ static void *linux_user_test_thread(void *arg)
                 return NULL;
         }
 
+        linux_vfs_wait_backends_ready();
+
         err = (error_t)linux_user_test_load_manifest();
         if (err != REND_SUCCESS) {
                 pr_error("[ Linux compat ] manifest load failed: %d\n",

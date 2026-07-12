@@ -1,9 +1,7 @@
 # Phase 4b — 目录语义（chdir / openat / getdents64）
 
-> **Status**: Step D1–D3 已接线（2026-07-09）；待双架构 run 验证 stdout #3/#13/#22  
-> **前置**: initramfs + open/read/close/fstat/mkdir/unlink 已双架构验证 — 见 [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md) §2026-07-09  
-> **Live 状态**: [`VFS_IMPLEMENTATION_STATUS.md`](VFS_IMPLEMENTATION_STATUS.md)  
-> **架构**: [`VFS_ARCHITECTURE.md`](VFS_ARCHITECTURE.md) §2.2–§2.3
+> **Status**: **已完成并归档**（2026-07-12）— 52/52 harness；后续变更见 [`VFS_EVOLUTION.md`](VFS_EVOLUTION.md)  
+> **勿**按本文「ENOSYS / 未实现」实施；下文保留作历史记录。
 
 ---
 

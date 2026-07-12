@@ -8,6 +8,7 @@
 #include <linux_compat/errno.h>
 #include <linux_compat/fs/vfs_protocol.h>
 #include <linux_compat/initcall.h>
+#include <rendezvos/task/initcall.h>
 #include <linux_compat/ipc/rpc.h>
 #include <rendezvos/ipc/ipc_serial.h>
 #include <rendezvos/smp/percpu.h>
@@ -22,13 +23,15 @@
 #include "vfs_perm.h"
 #include "vfs_root.h"
 #include "vfs_rpc.h"
+#include "vfs_backend.h"
 
 extern char rootfs_cpio_start[];
 extern char rootfs_cpio_end[];
 
 static Thread_Base *vfs_server_thread_ptr = NULL;
 static u16 vfs_server_service_id;
-static bool vfs_server_init_done;
+static bool vfs_service_data_done;
+static bool vfs_server_thread_done;
 
 static char vfs_server_thread_name[] = "vfs_server_thread";
 
@@ -255,6 +258,27 @@ static i64 vfs_rpc_handler(u16 opcode, const kmsg_t *km, char **reply_port_out)
                                                &param2,
                                                reply_port_out);
                 break;
+        case KMSG_OP_VFS_BACKEND_REGISTER: {
+                char *port_name = NULL;
+                char *fstype = NULL;
+
+                decode_err = ipc_serial_decode(
+                        km->payload,
+                        km->hdr.payload_len,
+                        VFS_KMSG_FMT_BACKEND_REGISTER "t",
+                        &port_name,
+                        &fstype,
+                        &param1,
+                        &param2,
+                        reply_port_out);
+                if (decode_err != REND_SUCCESS) {
+                        return -LINUX_EINVAL;
+                }
+                return vfs_backend_register(port_name,
+                                            fstype,
+                                            (u32)param1,
+                                            (u32)param2);
+        }
         case KMSG_OP_VFS_GETCWD:
                 return -LINUX_ENOSYS;
         default:
@@ -297,9 +321,8 @@ static void vfs_server_thread_entry(void)
                             vfs_rpc_handler);
 }
 
-static void vfs_server_init(void)
+static void vfs_service_data_init(void)
 {
-        Message_Port_t *port;
         error_t err;
         u64 cpio_len;
 
@@ -308,11 +331,11 @@ static void vfs_server_init(void)
                          (u64)percpu(cpu_number));
                 return;
         }
-        if (!linux_init_bsp_once(&vfs_server_init_done)) {
+        if (!linux_init_bsp_once(&vfs_service_data_done)) {
                 return;
         }
 
-        pr_info("[VFS] BSP init on CPU %llu\n", (u64)percpu(cpu_number));
+        pr_info("[VFS] data init on BSP CPU %llu\n", (u64)percpu(cpu_number));
 
         vfs_handle_init();
 
@@ -324,6 +347,28 @@ static void vfs_server_init(void)
                          cpio_len);
                 return;
         }
+
+        linux_init_bsp_mark_done(&vfs_service_data_done);
+}
+
+DEFINE_INIT_LEVEL(vfs_service_data_init, 3);
+
+static void vfs_server_init(void)
+{
+        Message_Port_t *port;
+        error_t err;
+
+        if (!global_port_table) {
+                pr_error("[VFS] global_port_table missing on CPU %llu\n",
+                         (u64)percpu(cpu_number));
+                return;
+        }
+        if (!linux_init_vfs_service_once(&vfs_server_thread_done)) {
+                return;
+        }
+
+        pr_info("[VFS] server thread init on CPU %llu\n",
+                (u64)percpu(cpu_number));
 
         port = create_message_port(VFS_SERVER_PORT_NAME);
         if (!port) {
@@ -355,7 +400,7 @@ static void vfs_server_init(void)
                 return;
         }
 
-        linux_init_bsp_mark_done(&vfs_server_init_done);
+        linux_init_vfs_service_mark_done(&vfs_server_thread_done);
 }
 
-DEFINE_INIT(vfs_server_init);
+DEFINE_INIT_LEVEL(vfs_server_init, 4);

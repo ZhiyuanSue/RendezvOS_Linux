@@ -112,14 +112,21 @@ typedef struct linux_fd_entry {
 
 | 用途 | slice 生命周期 | 内容 |
 |------|----------------|------|
-| **fd 表** | 与进程同生命周期 | hdr + fd 条目 |
-| **exec/manifest/ELF** | load → map → **destroy** | 文件字节 |
+| **fd 表** | 与进程同寿 | hdr + fd 条目 |
+| **文件内容（目标）** | server page cache | cpio/ramfs bytes；**待** PC-2 |
+| **ingest 临时** | load → destroy | 应用 exec/manifest；**待** 与 cache 统一 PC-4 |
 
-用户态 `open/read` 仍走 **server handle**，fd 条目 **不** 绑定文件内容 slice（见 `VFS_EVOLUTION.md` F1–F3 待决）。
+用户态 `open/read` → handle → inode → page cache。**kern load 暂 bypass cache**，属待统一项，非第二套永久设计。
 
 ---
 
-## 8. 验证门
+## 8. SMP
+
+同进程多线程共享 `linux_fs_state_t.table`；`cas_lock_t lock` 保护 table load/store/grow/fork clone 读父表。scratch 指针契约不变。
+
+---
+
+## 9. 验证门
 
 ```bash
 make ARCH=x86_64 user && make ARCH=x86_64 build && make ARCH=x86_64 run
@@ -130,7 +137,7 @@ make ARCH=aarch64 user && make ARCH=aarch64 build && make ARCH=aarch64 run
 
 ---
 
-## 9. 追溯
+## 10. 追溯
 
 | 日期 | 事件 |
 |------|------|

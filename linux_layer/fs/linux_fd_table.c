@@ -17,14 +17,17 @@
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/mm/page_slice_copy.h>
 #include <rendezvos/smp/percpu.h>
+#include <rendezvos/sync/cas_lock.h>
 
 #define LINUX_FS_FD_REGION_BASE (2ULL * PAGE_SIZE)
 #define LINUX_FS_SLICE_FD_GROW  64u
 
 /*
  * Slice header at byte offset 0: process-wide FS metadata (cwd + capacity).
- * Per-fd state (kind, handle, vfs_abs_path, is_dir) lives at LINUX_FS_FD_REGION_BASE.
- * Never allocate this struct on the kernel stack — kstack is only 8 KiB.
+ * Per-fd state lives at LINUX_FS_FD_REGION_BASE.
+ *
+ * hdr **persists in page_slice**; per-CPU scratch below is only a syscall-local
+ * staging buffer for read/modify/write (never a second copy of cwd on heap).
  */
 typedef struct linux_fs_slice_hdr {
         char cwd[LINUX_VFS_PATH_MAX];
@@ -32,6 +35,10 @@ typedef struct linux_fs_slice_hdr {
 } linux_fs_slice_hdr_t;
 
 #define LINUX_FS_HDR_FD_CAPACITY_OFF offsetof(linux_fs_slice_hdr_t, fd_capacity)
+
+static error_t linux_fs_ensure_pgoff(struct page_slice *table, u64 pgoff);
+static error_t linux_fs_ensure_bytes(struct page_slice *table, u64 byte_off,
+                                     size_t len);
 
 DEFINE_PER_CPU(linux_fs_slice_hdr_t, linux_fs_hdr_scratch);
 DEFINE_PER_CPU(linux_fs_slice_hdr_t, linux_fs_hdr_lookup_scratch);
@@ -45,6 +52,97 @@ static linux_fs_slice_hdr_t *linux_fs_hdr_buf(void)
 static linux_fs_slice_hdr_t *linux_fs_hdr_lookup_buf(void)
 {
         return &percpu(linux_fs_hdr_lookup_scratch);
+}
+
+static error_t linux_fs_table_load_unlocked(linux_fs_state_t *fs, u64 byte_off,
+                                            void *dst, size_t len)
+{
+        if (!fs || !fs->table || !dst) {
+                return -E_IN_PARAM;
+        }
+        return page_slice_copy_to_buffer(fs->table, byte_off, dst, len);
+}
+
+static error_t linux_fs_table_load(linux_fs_state_t *fs, u64 byte_off,
+                                   void *dst, size_t len)
+{
+        error_t err;
+
+        lock_cas(&fs->lock);
+        err = linux_fs_table_load_unlocked(fs, byte_off, dst, len);
+        unlock_cas(&fs->lock);
+        return err;
+}
+
+static error_t linux_fs_table_store_unlocked(linux_fs_state_t *fs, u64 byte_off,
+                                             const void *src, size_t len)
+{
+        size_t done = 0;
+        error_t err;
+
+        if (!fs || !fs->table || !src) {
+                return -E_IN_PARAM;
+        }
+
+        err = linux_fs_ensure_bytes(fs->table, byte_off, len);
+        if (err != REND_SUCCESS) {
+                return err;
+        }
+
+        while (done < len) {
+                u64 off = byte_off + (u64)done;
+                u64 pgoff = PAGE_SLICE_BYTE_TO_PGOFF(off);
+                u64 in_page = PAGE_SLICE_IN_PAGE_OFF(off);
+                struct page_slice_entry *entry;
+                size_t chunk;
+
+                entry = page_slice_lookup(fs->table, pgoff);
+                if (!entry) {
+                        return -E_RENDEZVOS;
+                }
+
+                chunk = PAGE_SIZE - (size_t)in_page;
+                if (chunk > len - done) {
+                        chunk = len - done;
+                }
+
+                memcpy((void *)(entry->kernel_virtual_address + in_page),
+                       (const u8 *)src + done,
+                       chunk);
+                done += chunk;
+        }
+        return REND_SUCCESS;
+}
+
+static error_t linux_fs_table_store(linux_fs_state_t *fs, u64 byte_off,
+                                    const void *src, size_t len)
+{
+        error_t err;
+
+        lock_cas(&fs->lock);
+        err = linux_fs_table_store_unlocked(fs, byte_off, src, len);
+        unlock_cas(&fs->lock);
+        return err;
+}
+
+static u32 linux_fs_table_fd_capacity_locked(linux_fs_state_t *fs)
+{
+        u32 cap = 0;
+
+        if (!fs || !fs->table) {
+                return 0;
+        }
+
+        lock_cas(&fs->lock);
+        if (page_slice_copy_to_buffer(fs->table,
+                                      LINUX_FS_HDR_FD_CAPACITY_OFF,
+                                      &cap,
+                                      sizeof(cap))
+            != REND_SUCCESS) {
+                cap = 0;
+        }
+        unlock_cas(&fs->lock);
+        return cap;
 }
 
 static u64 linux_fs_fd_byte_off(i32 fd)
@@ -105,13 +203,46 @@ static error_t linux_fs_ensure_bytes(struct page_slice *table, u64 byte_off,
         return REND_SUCCESS;
 }
 
-static error_t linux_fs_slice_load(struct page_slice *table, u64 byte_off,
-                                   void *dst, size_t len)
+static error_t linux_fs_hdr_load(const linux_fs_state_t *fs,
+                                 linux_fs_slice_hdr_t *hdr)
 {
-        if (!table || !dst) {
+        if (!fs || !fs->table || !hdr) {
                 return -E_IN_PARAM;
         }
-        return page_slice_copy_to_buffer(table, byte_off, dst, len);
+        return linux_fs_table_load((linux_fs_state_t *)fs, 0, hdr, sizeof(*hdr));
+}
+
+static error_t linux_fs_hdr_store(linux_fs_state_t *fs,
+                                  const linux_fs_slice_hdr_t *hdr)
+{
+        if (!fs || !fs->table || !hdr) {
+                return -E_IN_PARAM;
+        }
+        return linux_fs_table_store(fs, 0, hdr, sizeof(*hdr));
+}
+
+static error_t linux_fs_entry_load(const linux_fs_state_t *fs, i32 fd,
+                                   linux_fd_entry_t *ent)
+{
+        if (!fs || !fs->table || !ent || fd < 0) {
+                return -E_IN_PARAM;
+        }
+        return linux_fs_table_load((linux_fs_state_t *)fs,
+                                   linux_fs_fd_byte_off(fd),
+                                   ent,
+                                   sizeof(*ent));
+}
+
+static error_t linux_fs_entry_store(linux_fs_state_t *fs, i32 fd,
+                                    const linux_fd_entry_t *ent)
+{
+        if (!fs || !fs->table || !ent || fd < 0) {
+                return -E_IN_PARAM;
+        }
+        return linux_fs_table_store(fs,
+                                    linux_fs_fd_byte_off(fd),
+                                    ent,
+                                    sizeof(*ent));
 }
 
 static error_t linux_fs_slice_store(struct page_slice *table, u64 byte_off,
@@ -152,65 +283,6 @@ static error_t linux_fs_slice_store(struct page_slice *table, u64 byte_off,
                 done += chunk;
         }
         return REND_SUCCESS;
-}
-
-static u32 linux_fs_table_fd_capacity(const struct page_slice *table)
-{
-        u32 cap = 0;
-
-        if (!table) {
-                return 0;
-        }
-        if (linux_fs_slice_load((struct page_slice *)table,
-                                LINUX_FS_HDR_FD_CAPACITY_OFF,
-                                &cap,
-                                sizeof(cap))
-            != REND_SUCCESS) {
-                return 0;
-        }
-        return cap;
-}
-
-static error_t linux_fs_hdr_load(const linux_fs_state_t *fs,
-                                 linux_fs_slice_hdr_t *hdr)
-{
-        if (!fs || !fs->table || !hdr) {
-                return -E_IN_PARAM;
-        }
-        return linux_fs_slice_load(fs->table, 0, hdr, sizeof(*hdr));
-}
-
-static error_t linux_fs_hdr_store(linux_fs_state_t *fs,
-                                  const linux_fs_slice_hdr_t *hdr)
-{
-        if (!fs || !fs->table || !hdr) {
-                return -E_IN_PARAM;
-        }
-        return linux_fs_slice_store(fs->table, 0, hdr, sizeof(*hdr));
-}
-
-static error_t linux_fs_entry_load(const linux_fs_state_t *fs, i32 fd,
-                                   linux_fd_entry_t *ent)
-{
-        if (!fs || !fs->table || !ent || fd < 0) {
-                return -E_IN_PARAM;
-        }
-        return linux_fs_slice_load(fs->table,
-                                   linux_fs_fd_byte_off(fd),
-                                   ent,
-                                   sizeof(*ent));
-}
-
-static error_t linux_fs_entry_store(linux_fs_state_t *fs, i32 fd,
-                                    const linux_fd_entry_t *ent)
-{
-        if (!fs || !fs->table || !ent || fd < 0) {
-                return -E_IN_PARAM;
-        }
-        return linux_fs_slice_store(fs->table,
-                                    linux_fs_fd_byte_off(fd),
-                                    ent,
-                                    sizeof(*ent));
 }
 
 static error_t linux_fs_table_create(struct page_slice **table_out,
@@ -273,11 +345,14 @@ static error_t linux_fs_grow_fd_cap(linux_fs_state_t *fs, u32 new_cap)
         }
 
         hdr = linux_fs_hdr_buf();
-        err = linux_fs_hdr_load(fs, hdr);
+        lock_cas(&fs->lock);
+        err = linux_fs_table_load_unlocked(fs, 0, hdr, sizeof(*hdr));
         if (err != REND_SUCCESS) {
+                unlock_cas(&fs->lock);
                 return err;
         }
         if (new_cap <= hdr->fd_capacity) {
+                unlock_cas(&fs->lock);
                 return REND_SUCCESS;
         }
 
@@ -285,6 +360,7 @@ static error_t linux_fs_grow_fd_cap(linux_fs_state_t *fs, u32 new_cap)
         new_size = linux_fs_table_byte_size(new_cap);
         err = page_slice_set_size(&fs->table, new_size);
         if (err != REND_SUCCESS) {
+                unlock_cas(&fs->lock);
                 return err;
         }
 
@@ -293,12 +369,15 @@ static error_t linux_fs_grow_fd_cap(linux_fs_state_t *fs, u32 new_cap)
         for (pgoff = old_pages; pgoff < new_pages; pgoff++) {
                 err = linux_fs_ensure_pgoff(fs->table, pgoff);
                 if (err != REND_SUCCESS) {
+                        unlock_cas(&fs->lock);
                         return err;
                 }
         }
 
         hdr->fd_capacity = new_cap;
-        return linux_fs_hdr_store(fs, hdr);
+        err = linux_fs_table_store_unlocked(fs, 0, hdr, sizeof(*hdr));
+        unlock_cas(&fs->lock);
+        return err;
 }
 
 u32 linux_fs_fd_capacity(const linux_fs_state_t *fs)
@@ -306,21 +385,27 @@ u32 linux_fs_fd_capacity(const linux_fs_state_t *fs)
         if (!fs || !fs->table) {
                 return 0;
         }
-        return linux_fs_table_fd_capacity(fs->table);
+        return linux_fs_table_fd_capacity_locked((linux_fs_state_t *)fs);
 }
 
 const char *linux_fs_cwd(const linux_fs_state_t *fs)
 {
-        linux_fs_slice_hdr_t *hdr;
+        linux_fs_slice_hdr_t *scratch;
 
         if (!fs || !fs->table) {
                 return "/";
         }
-        hdr = linux_fs_hdr_lookup_buf();
-        if (linux_fs_hdr_load(fs, hdr) != REND_SUCCESS) {
+
+        scratch = linux_fs_hdr_lookup_buf();
+        if (linux_fs_table_load((linux_fs_state_t *)fs,
+                                0,
+                                scratch->cwd,
+                                LINUX_VFS_PATH_MAX)
+            != REND_SUCCESS) {
                 return "/";
         }
-        return hdr->cwd;
+        scratch->cwd[LINUX_VFS_PATH_MAX - 1] = '\0';
+        return scratch->cwd;
 }
 
 void linux_fs_set_cwd(linux_fs_state_t *fs, const char *cwd)
@@ -490,6 +575,7 @@ static linux_fs_state_t *linux_fs_alloc_state(void)
         }
 
         fs->table = NULL;
+        lock_init_cas(&fs->lock);
         return fs;
 }
 
@@ -723,7 +809,7 @@ static void linux_fs_fork_retain_resources(linux_fs_state_t *fs)
 }
 
 static error_t linux_fs_fork_copy_state(linux_fs_state_t *child,
-                                        const linux_fs_state_t *parent)
+                                        linux_fs_state_t *parent)
 {
         error_t err;
 
@@ -736,7 +822,9 @@ static error_t linux_fs_fork_copy_state(linux_fs_state_t *child,
                 child->table = NULL;
         }
 
+        lock_cas((cas_lock_t *)&parent->lock);
         err = page_slice_clone(&child->table, parent->table);
+        unlock_cas((cas_lock_t *)&parent->lock);
         if (err != REND_SUCCESS) {
                 return err;
         }

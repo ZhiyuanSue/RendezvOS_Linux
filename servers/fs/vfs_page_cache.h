@@ -3,15 +3,28 @@
 
 #include <common/types.h>
 
+#include "vfs_backend_ops.h"
+
+struct page_slice;
+
 void vfs_page_cache_reset(void);
-
-/*
- * Read through bootstrap page cache for read-only cpio files.
- * Returns bytes read (>=0) or Linux errno (<0).
- */
-i64 vfs_page_cache_read_cpio(const char *path, const u8 *data, u64 size,
-                             u64 offset, void *buf, u64 len);
-
 void vfs_page_cache_drop(const char *path);
+
+i64 vfs_page_cache_read_inode(const vfs_inode_t *ino, u64 offset, void *buf,
+                              u64 len);
+
+i64 vfs_page_cache_write_inode(const vfs_inode_t *ino, u64 offset,
+                               const void *buf, u64 len);
+
+i64 vfs_page_cache_clone_inode(const vfs_inode_t *ino,
+                               struct page_slice **out_slice);
+
+/* Write-through mirror after ramfs backend persisted bytes. */
+void vfs_page_cache_sync_write(const vfs_inode_t *ino, u64 offset,
+                               const void *buf, u64 len);
+
+/* ramfs: copy dirty cache to kmalloc; cpio: drop overlay (no writeback). */
+i64 vfs_page_cache_flush_backing(const vfs_inode_t *ino);
+void vfs_page_cache_drop_backing(const vfs_inode_t *ino);
 
 #endif /* _VFS_PAGE_CACHE_H_ */

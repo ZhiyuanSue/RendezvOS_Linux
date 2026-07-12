@@ -92,3 +92,15 @@ make ARCH=aarch64 config user build run | tee aarch64_run.log
 | fd 表 hdr | **勿**在 kstack 上大 struct；见 FD_TABLE §4 |
 | exit vs exec | exit **release only**；exec **reset** slice |
 | 测例 cookie | THREAD_REAP 早于 TASK_REAP；runner 等 pid 消失 |
+| fd 表 SMP | 多线程同进程改表无锁；见 EVOLUTION §SMP |
+
+---
+
+## 6. 下一批（代码）
+
+见 [`VFS_EVOLUTION.md`](VFS_EVOLUTION.md) §PageCache、§下一批：
+
+1. page cache → page_slice + kern/user 读统一（PC-2~5）
+2. mount 后端切换（P3-5）
+3. fd 表 spinlock（多线程前）
+4. statx / symlink

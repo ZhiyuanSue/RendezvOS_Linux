@@ -1,7 +1,9 @@
 # VFS 演进路线图（待办）
 
-> **基线（2026-07-12）**：树形 `vfs_namespace` + cpio page cache + mount 登记/覆盖 + bootstrap 权限 + renameat/linkat。  
-> **验证**：x86_64 **52/52**；aarch64 **52/52**。
+> **基线（2026-07-12）**：树形 `vfs_namespace` + cpio page cache + mount 登记/覆盖 + bootstrap 权限 + renameat/linkat + **fd 表 page_slice**。  
+> **验证**：x86_64 **52/52**（fd 栈修复后待 re-run）；aarch64 **52/52**（前次基线）。
+
+**文档层级**：本文 = 演进与待办真源；[`VFS_ARCHITECTURE.md`](VFS_ARCHITECTURE.md) = 分层原则；[`VFS_IMPLEMENTATION_STATUS.md`](VFS_IMPLEMENTATION_STATUS.md) = live 文件索引。
 
 ---
 
@@ -17,116 +19,127 @@
 
 ## 架构分层（当前）
 
-```
-linux_layer/fs/          compat：fd 表、cwd、path 展开、syscall → IPC
-        ↕ IPC (vfs_protocol.h)
-servers/fs/              中端：namespace 树、page cache、mount、perm、ramfs/cpio
+```text
+linux_layer/fs/          compat：fd 表(page_slice)、cwd、path、syscall → IPC
+        ↕ IPC
+servers/fs/              namespace 树、page cache、mount、perm、ramfs/cpio 后端
+        ↕ vfs_backend_dispatch (sync / async IPC)
+  cpio / ramfs / blkdev   各后端线程或 in-process handler
 ```
 
 | 模块 | 文件 | 职责 |
 |------|------|------|
-| 命名空间 | `vfs_namespace.c` | 树形 dentry、lookup/mkdir/unlink/rename/link、readdir |
-| 后端 | `ramfs_layer.c`, `cpio_rofs` | 字节存储；路径状态在 namespace |
-| 缓存 | `vfs_page_cache.c` | cpio 小文件读缓存（≤256KiB） |
-| 挂载 | `vfs_mount.c` | mount 登记、覆盖 cpio 子项、umount EBUSY/DETACH |
-| 权限 | `vfs_perm.c` | request cred + owner mode 位 |
-| 路径 | **`include/linux_compat/fs/vfs_path.h` + `linux_layer/fs/vfs_path.c`** | 唯一实现；compat 仅 `linux_vfs_resolve_path` |
-| RPC 面 | `vfs_open.c`, `vfs_server.c` | open/handle I/O + dispatch |
-| Facade | `vfs_root.c` | init + 薄封装 |
+| 命名空间 | `vfs_namespace.c` | 树形 dentry；**启动只 materialize 元数据** |
+| 后端框架 | `vfs_backend.c`, `vfs_backend_ipc.c`, `vfs_backend_*.c` | VFS→后端 **仅 IPC**；每后端 `DEFINE_INIT_LEVEL(…,4)` @ **CPU1** |
+| 后端 cpio | `cpio_rofs.c`, `vfs_backend_cpio.c` | `vfs_cpio_backend_port` 线程 |
+| 后端 ramfs | `ramfs_layer.c`, `vfs_backend_ramfs.c` | `vfs_ramfs_backend_port` 线程 |
+| 后端 blkdev | `vfs_backend_blkdev.c` | `vfs_blkdev_port` 线程（伪 64KiB 盘） |
+| 缓存 | `vfs_page_cache.c` | 按需 **page_slice**；文件/页双 LRU |
+| 内核 ingest | `vfs_kern_load.c` | **cache clone** 或直填 owned slice |
+| 挂载 / 权限 | `vfs_mount.c`, `vfs_perm.c` | mount 登记 + owner mode |
+| 路径 | `linux_layer/fs/vfs_path.c` | 唯一 normalize/join/equal |
+| fd 表 | `linux_fd_table.c` | 每进程 **page_slice**（cwd + fd 条目）；**非**文件内容 |
+
+---
+
+## page_slice 三种用途（勿混）
+
+| 用途 | 谁持有 | 内容 | 生命周期 |
+|------|--------|------|----------|
+| **A. fd 表 slice** | `linux_proc_append_t.fs` | hdr(cwd,capacity) + `linux_fd_entry_t[]` | 与进程同寿；fork **clone** |
+| **B. 文件字节 slice**（目标态） | server **page cache** | cpio/ramfs 文件内容 pgoff→kva | LRU/引用；按需填充 |
+| **C. ingest 临时 slice** | exec/manifest/test harness | 单次读入后 map/load | **load → destroy** |
+
+**当前缺口**：B 未用 page_slice；page cache 用 `u8*` kmalloc。C 与 B **未统一**（kern load 直拷 cpio 指针）。
+
+**目标（下一批实现）**：**B 与 C 合并** — 所有「把文件读进内核可寻址连续字节流」走 **同一 page cache 层**，底层存储用 **core page_slice**；启动 **只建 namespace/cpio 元数据**，**不**预读文件体。
+
+---
+
+## 启动卡顿：现状 vs 目标
+
+| 阶段 | 现在做什么 | 是否读文件字节 |
+|------|------------|----------------|
+| `cpio_rofs_init` | 线性解析 cpio 头，建平坦 entry 表（`data` = 镜像内指针） | ❌ 不拷贝 payload |
+| `vfs_namespace_init` | `cpio_rofs_visit` → 每路径 **materialize 树节点**（mode/is_dir） | ❌ 不读文件体 |
+| 用户 `read` / page cache miss | 按需 fill **page_slice** cache 槽 | ✅ 按需 |
+| `vfs_kern_read_file_slice` | **cache clone**（小文件）或直填 owned slice | ✅ 复用 cache |
+
+**你观察到的卡顿**主要来自：(1) cpio 解析 + 全镜像 visit 建树；(2) harness **每个测例** kern load 全量拷贝 ELF（未复用 cache/slice）。  
+**目标**：boot 仅 (1) 元数据；(2) 首次读文件时才 fill page_slice cache，exec/harness **复用同一路径**。
+
+---
+
+## Page cache 统一演进（§PageCache — 合并原 M3/M4/F）
+
+原「F 文件内容↔slice」与「P2 缓存」「M3 kern load」「M4 backend direct」**是同一主线**，不是四条线：
+
+| ID | 项 | 状态 | 说明 |
+|----|-----|------|------|
+| PC-1 | 启动仅 metadata | 🚧 | namespace populate **已**只建节点；cpio 解析仍一次扫全镜像（必要） |
+| PC-2 | page cache 存 **page_slice** | ✅ | LRU 槽内 slice；>256KiB 直填 owned slice |
+| PC-3 | cpio miss → slice 按需 insert | ✅ | `vfs_pcache_fill_from_inode` |
+| PC-4 | **`vfs_kern_read_file_slice` → cache clone** | ✅ | `vfs_page_cache_clone_inode` |
+| PC-5 | 统一 read 路径 | ✅ | `vfs_page_cache_read_inode` + backend_ops |
+| PC-6 | ramfs 写 mirror + dirty + flush-on-drop | ✅ | `sync_write` / `flush_backing` |
+| PC-7 | dirty 页 / 写合并 / O_DIRECT | 🚧 | per-page `VFS_PCACHE_PAGE_DIRTY`；无 O_DIRECT |
+| PC-8 | LRU / 热页策略 | ✅ | 文件级 active/inactive + `page_list_node` 页 touch |
+| **BE-1** | **后端消息框架** | ✅ | 全 IPC：`vfs_backend_ipc_call` → 各 backend 线程 |
+| **BE-2** | **cpio flush=drop** | ✅ | `VFS_BACKEND_CAP_FLUSH_DROP`；不写回镜像 |
+| **BE-3** | **blkdev 线程 stub** | 🚧 | `vfs_blkdev_port` + `vfs_cpio/ramfs_backend_port` |
+
+**fd 表（用途 A）不参与 PC 线**：open/read 仍 **fd → server handle → inode → page cache**；不在 fd slice 里塞文件 bytes（除非未来 mmap 专门设计）。
+
+---
+
+## fd 表 SMP 锁（§SMP）
+
+| 事实 | 说明 |
+|------|------|
+| 共享对象 | 同进程线程共享 `linux_fs_state_t.table` |
+| 保护 | `cas_lock_t lock` — load/store/grow/fork-clone 读父表 |
+| scratch | per-CPU；持锁仅覆盖 slice 读写，返回 scratch 后释放锁 |
+| 残余 | 同 CPU 嵌套 scratch API 仍应避免；多线程 scratch 已按 CPU 隔离 |
 
 ---
 
 ## 重构合并清单（§Merge）
 
-演进过程中 **应合并** 的重复逻辑：
-
 | ID | 重复项 | 状态 | 目标 |
 |----|--------|------|------|
-| M1 | `servers/fs/vfs_path.c` ↔ `linux_vfs_path.c` normalize | ✅ | 单模块 `linux_layer/fs/vfs_path.c` + `linux_compat/fs/vfs_path.h` |
-| M2 | `VFS_PATH_MAX` ↔ `LINUX_VFS_PATH_MAX` ↔ `CPIO_ROFS_PATH_MAX` | ✅ | 均为 `VFS_PATH_MAX`；`vfs_path_equal()` 共享 |
-| M3 | `vfs_kern_load.c` ↔ `vfs_exec_load.c` 灌 slice | 🚧 | 已共用 `linux_page_slice_copy_from_kva`；可再抽 `vfs_read_into_slice()` |
-| M4 | cpio read：`vfs_page_cache` vs `vfs_backend` direct | ⬜ | 统一经 page cache 或明确分层边界 |
-| M5 | `vfs_perm` request cred vs 未来 `setuid` compat | ⬜ | cred 真源只在 `linux_proc_append_t` |
-| M6 | 架构文档 vs `VFS_EVOLUTION` vs `VFS_IMPLEMENTATION_STATUS` | 🚧 | 以本文 + ARCHITECTURE 为准，IMPLEMENTATION_STATUS 做 live 索引 |
-
-**不必合并**（分层正确）：
-
-- compat **fd 表** vs server **handle 表**（方案 B）
-- compat **路径展开** vs server **namespace lookup**
-- **page_slice 加载**（内核 ingest）vs 用户态 **read/write IPC**
+| M1 | path 双实现 | ✅ | `linux_layer/fs/vfs_path.c` |
+| M2 | 路径常量 + equal | ✅ | `VFS_PATH_MAX` 统一；`vfs_path_equal()` |
+| M3 | kern load ↔ exec load | ✅ | `vfs_page_cache_clone_inode` |
+| M4 | cache vs backend direct | ✅ | `vfs_page_cache_read_inode` |
+| M5 | perm cred vs setuid | ⬜ | cred 真源 `linux_proc_append_t` |
+| M6 | 文档三角 | 🚧 | 本文 + ARCHITECTURE + IMPLEMENTATION_STATUS |
 
 ---
 
-## Path 规范化（§Path）
+## fd 表 page_slice（§FdSlice — 用途 A）
 
-**栈策略**（非“零栈”，而是 **小栈 + 不复制路径体**）：
-
-1. collapse 只存 `(offset, len)` 指向 scratch 内分量，~100B 元数据。
-2. `normalize` 一层 `scratch[256]`，结果写入 **调用者的 `out`**。
-3. 无 `join` 递归。
-
-**后续（若要求工作区完全离栈）**：caller-scratch API 或 kallocator 单次 scratch（见 P5-5）。
-
----
-
-## fd 表与 page_slice（§FdSlice）
-
-### 设计分层
-
-| 层 | 用途 |
-|----|------|
-| **fd 表 page_slice** | 每进程：`hdr(cwd,capacity)` + `linux_fd_entry_t[]`；fork **`page_slice_clone`** |
-| **ingest page_slice** | 内核读 ELF/manifest：`copy_from_kva` → load → **destroy** |
-| **文件内容** | 用户 open/read → **server handle** + namespace/page_cache（**不在** fd slice 内） |
-
-### 当前实现（2026-07-12）
-
-| 能力 | 实现 |
+| 能力 | 状态 |
 |------|------|
-| fd 表容器 | `linux_fs_state_t.table` = page_slice；初始 128 fd，+64 增长 |
-| fd 条目 | `vfs_handle` + `vfs_abs_path` + `is_dir` / pipe 元数据 |
-| fork | `page_slice_clone` + handle/pipe **RETAIN**（无 attach→init→clone 双建） |
-| execve | `linux_fs_proc_reset`：release + 重建 slice |
-| exit | `linux_fs_proc_release_for_exit`：**不** rebuild slice |
-| 内核 ingest | `linux_page_slice_copy_from_kva` / `vfs_kern_read_file_slice` |
+| 表体在 page_slice | ✅ |
+| fork `page_slice_clone` | ✅ |
+| exit 不 rebuild | ✅ |
+| hdr 不上 kstack | ✅ |
+| dir 路径单源 `vfs_abs_path` | ✅ |
+| SMP 锁 | ✅ |
 
-### 实现注意（非设计缺陷）
-
-- **hdr 不得上 kstack**（曾 4372B 含 dir_paths[] → 栈溢出）；hdr 现 ~260B，仍用 per-CPU scratch 读写。
-- 目录 fd 路径：**仅** `linux_fd_entry_t.vfs_abs_path`（已删 hdr 内冗余 `dir_paths[]`）。
-
-### 缺口（待设计）
-
-| ID | 项 | 说明 |
-|----|-----|------|
-| F1 | fd 绑定文件内容 slice | 未做；方案 B 用 server handle |
-| F2 | fork 复制文件内容 slice | 未做；共享 handle/offset |
-| F3 | mmap 文件后端 | Phase 2+ |
-| ~~F4~~ | ~~linux_page_slice_dup~~ | 已删；fork fd 表直接用 **`page_slice_clone`** |
-
-**与测例**：52/52 不依赖 F1–F2。见 [`FD_TABLE.md`](FD_TABLE.md)。
+详见 [`FD_TABLE.md`](FD_TABLE.md)。
 
 ---
 
 ## P0 — 测例阻塞
 
-| ID | 项 | 状态 |
-|----|-----|------|
-| P0-1 | `openat(dirfd, rel, O_CREATE)` | ✅ |
-| P0-2 | 进程 exit 释放 VFS handle | ✅ |
-| P0-3 | rootfs 布局澄清 | ✅ |
-| P0-4 | aarch64 path 栈溢出（execve） | ✅ |
+全部 ✅（fd 修复待 re-run 确认）。
 
 ---
 
-## P1 — 命名空间结构
+## P1 — 命名空间
 
-| ID | 项 | 状态 |
-|----|-----|------|
-| P1-1 | 树形 dentry | ✅ |
-| P1-2 | readdir 持久子节点索引 | ✅ |
-| P1-3 | 中间目录 materialize | ✅ |
-| P1-4 | `..` / `.` 语义 | ✅ |
+全部 ✅。
 
 ---
 
@@ -134,47 +147,37 @@ servers/fs/              中端：namespace 树、page cache、mount、perm、ra
 
 | ID | 项 | 状态 |
 |----|-----|------|
-| P2-1 | page cache（cpio 小文件读） | ✅ |
-| P2-2 | 写路径 cache 失效 | ✅ |
-| P2-3 | dirty 页 / 写合并 | ⬜ |
-| P2-4 | `O_DIRECT` | ⬜ |
+| P2-1 | cpio 按需 page_slice cache | ✅ |
+| P2-2 | ramfs 写 mirror + flush-on-drop | ✅ |
+| P2-3 | dirty / 写合并 | 🚧 → **PC-7** |
+| P2-4 | O_DIRECT | ⬜ → **PC-7** |
+| **P2-5** | **page cache → page_slice** | ✅ |
+| **P2-6** | **kern/user 读统一** | ✅ |
 
 ---
 
-## P3 — 挂载与多后端
+## P3 — 挂载
 
-| ID | 项 | 状态 |
-|----|-----|------|
-| P3-1 | mount 点登记 | ✅ |
-| P3-2 | mount 覆盖 lookup | ✅ |
-| P3-3 | `umount2` MNT_DETACH / EBUSY | ✅ |
-| P3-4 | bind mount | ⬜ |
-| P3-5 | mount 后 walk 真切换后端 | ⬜ |
+| P3-4 bind | ⬜ |
+| P3-5 后端切换 | ⬜ |
+| 其余 | ✅ |
 
 ---
 
-## P4 — 权限与安全
+## P4 — 权限
 
-| ID | 项 | 状态 |
-|----|-----|------|
-| P4-1 | mode bootstrap（root 绕过） | ✅ |
-| P4-2 | uid/gid / euid（owner 位） | ✅ |
-| P4-3 | group/other、sticky | ⬜ |
-| P4-4 | `O_NOFOLLOW` / symlink | ⬜ |
+| P4-3 sticky/group | ⬜ |
+| P4-4 symlink | ⬜ |
+| 其余 | ✅ |
 
 ---
 
-## P5 — 兼容层 / RPC
+## P5 — syscall / RPC
 
-| ID | 项 | 状态 |
-|----|-----|------|
-| P5-1 | `renameat` / `renameat2` | ✅ |
-| P5-1b | `linkat`（ramfs） | ✅ |
-| P5-2 | `statx` / `faccessat2` | ⬜ |
-| P5-3 | OPEN bit31 `is_dir` | ✅ |
-| P5-4 | `readlinkat` / `symlinkat` | ⬜ |
-| P5-5 | path caller-scratch / kmalloc 工作区 | ⬜ |
-| **P5-6** | **path 单模块合并（M1）** | **✅** |
+| P5-2 statx | ⬜ |
+| P5-4 readlink/symlink | ⬜ |
+| P5-5 path kmalloc scratch | ⬜ |
+| 其余 | ✅ |
 
 ---
 
@@ -182,11 +185,14 @@ servers/fs/              中端：namespace 树、page cache、mount、perm、ra
 
 | ID | 项 | 状态 |
 |----|-----|------|
-| P6-1 | `VFS_ARCHITECTURE.md` 对齐 | 🚧 |
-| P6-2 | `RAMFS_AND_VFS_STORAGE.md` | 🚧 |
+| P6-1 | `VFS_ARCHITECTURE.md` | ✅ 2026-07-12 刷新 |
+| P6-2 | `RAMFS_AND_VFS_STORAGE.md` | ✅ 2026-07-12 刷新 |
 | P6-3 | `ROOTFS.md` | ✅ |
-| P6-4 | `VFS_IMPLEMENTATION_STATUS.md` 同步 | ✅ |
-| P6-5 | `FD_TABLE.md` page_slice 布局 | ✅ |
+| P6-4 | `VFS_IMPLEMENTATION_STATUS.md` | ✅ |
+| P6-5 | `FD_TABLE.md` | ✅ |
+| P6-6 | `DIRECTORY_PHASE.md` 归档标记 | ✅ |
+| P6-7 | `PROGRESS.md` 与 52/52 对齐 | ⬜ |
+| P6-8 | `VFS_SERVER_IPC.md` MOUNT/rename opcodes | ⬜ |
 
 ---
 
@@ -194,25 +200,21 @@ servers/fs/              中端：namespace 树、page cache、mount、perm、ra
 
 | 阶段 | 进度 |
 |------|------|
-| P0 测例阻塞 | **100%** |
-| P1 命名空间 | **100%** |
-| M1 path 合并 | **100%** |
-| P2 缓存 | **50%** |
+| P0 / P1 / M1 / M2 | **100%** |
+| fd 表 slice（用途 A） | **100%** |
+| P2 缓存（page_slice 统一） | **90%** |
 | P3 挂载 | **60%** |
 | P4 权限 | **50%** |
-| P5 syscall/RPC | **60%** |
-| F fd↔slice（文件内容） | **0%**（fd **表**已用 slice；文件字节仍 handle） |
-| P6 文档 | **70%** |
+| P5 syscall | **60%** |
+| P6 文档 | **85%** |
 
 ---
 
-## 下一批建议
+## 下一批实现顺序（建议）
 
-1. **re-run 52/52**（fd 表栈/fix + runner task-reap 等待）。
-2. **M3**：统一 kernel 侧 read→slice 入口。
-3. **P3-5**：mount 真切换后端。
-4. **P6-1/2**：刷新 `VFS_ARCHITECTURE.md`、`RAMFS_AND_VFS_STORAGE.md`（仍引用旧 vfs_fd / flat readdir）。
-5. **P5-2**：statx RPC。
+1. **P3-5**：mount 真切换后端。
+2. **PC-7 / O_DIRECT**；块设备 writeback。
+3. **P5-2** statx；**P6-7/8** 文档收尾。
 
 ---
 
@@ -227,7 +229,6 @@ make ARCH=aarch64 user && make ARCH=aarch64 build && make ARCH=aarch64 run
 
 ## 参考
 
-- [`ROOTFS.md`](ROOTFS.md)
+- [`FD_TABLE.md`](FD_TABLE.md) · [`FILE_LOADING.md`](FILE_LOADING.md)
 - [`VFS_ARCHITECTURE.md`](VFS_ARCHITECTURE.md)
-- [`FD_TABLE.md`](FD_TABLE.md)
-- [`FILE_LOADING.md`](FILE_LOADING.md)
+- [`VFS_IMPLEMENTATION_STATUS.md`](VFS_IMPLEMENTATION_STATUS.md)

@@ -1,7 +1,7 @@
-# Ramfs 与 VFS 存储层（Phase 4 后端笔记）
+# Ramfs 与 VFS 存储层
 
-> **Status**: 后端实现笔记；**架构 / 对齐 / 验证以 [`VFS_ARCHITECTURE.md`](VFS_ARCHITECTURE.md) 为准**  
-> **Index**: [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) · [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md)
+> **Status**: 2026-07-12  
+> **架构**: [`VFS_ARCHITECTURE.md`](VFS_ARCHITECTURE.md) · **演进**: [`VFS_EVOLUTION.md`](VFS_EVOLUTION.md)
 
 ---
 
@@ -9,54 +9,59 @@
 
 | 问题 | 答案 |
 |------|------|
-| initramfs | 内存中的文件内容；**cpio 只读底 + ramfs 可写 overlay** |
-| 写 cpio？ | 不能；写只进 ramfs |
-| inode / page cache？ | Phase 4 用 **entry + buffer** 承担职责；见架构 doc §2 |
-| core | 仅 `percpu(kallocator)` |
+| initramfs | incbin cpio 只读 + ramfs 可写 overlay |
+| 写 cpio？ | 不能；写 ramfs |
+| 启动读文件？ | **只**解析 cpio + namespace **元数据**；文件体 **按需** read/cache |
+| page cache | cpio 读路径；**待** 改为 page_slice 后端（PC-2） |
+| kern load | **暂** bypass cache；与 page cache **待统一**（PC-4） |
 
 ---
 
-## 2. 分层（摘要）
+## 2. 查找顺序
 
-见 [`VFS_ARCHITECTURE.md`](VFS_ARCHITECTURE.md) §1 三层图。
-
-演进待办见 [`VFS_EVOLUTION.md`](VFS_EVOLUTION.md)。
-
-**查找顺序**（`vfs_namespace_lookup`）：树 walk → 节点 `deleted` 过滤 → ramfs 或 cpio 填 `vfs_inode_t`。
+`vfs_namespace_lookup`：树 walk → `deleted` / `mount_covered` → 填 `vfs_inode_t`（cpio 指针或 ramfs 缓冲）。
 
 ---
 
-## 3. 模块与 cpio 接口
+## 3. 模块表
 
 | 文件 | 层 | 职责 |
 |------|-----|------|
-| `cpio_rofs.c` | 后端 | 只读；**公开 API 见架构 doc §4** |
-| `ramfs_layer.c` | 后端 | 可写 kmalloc（**无** path/deleted 状态） |
-| `vfs_namespace.c` | 中端 | 路径真源：cpio 目录 + ramfs 覆盖 + deleted |
-| `vfs_root.c` | 中端 | 薄 facade → namespace |
-| `vfs_path.c` | 中端 | 路径规范化 |
-| `vfs_open.c` / `vfs_fd.c` | 前端 server | open/fd/RPC（见实现状态 doc） |
-| `vfs_server.c` | 前端 server | RPC loop |
+| `cpio_rofs.c` | 后端 | 解析 cpio；lookup/read；`data` 指向镜像 |
+| `ramfs_layer.c` | 后端 | 可写 kmalloc 字节 |
+| `vfs_namespace.c` | 中端 | **路径真源**；启动 visit 建树 |
+| `vfs_page_cache.c` | 中端 | cpio 读 cache（kmalloc；→ page_slice） |
+| `vfs_mount.c` | 中端 | mount 登记 + cover |
+| `vfs_perm.c` | 中端 | owner mode |
+| `vfs_root.c` | 中端 | init facade |
+| `vfs_backend_ops.c` | 中端 | read/write 分发 |
+| `vfs_handle.c` / `vfs_open.c` | server 前端 | handle 表 + open |
+| `vfs_kern_load.c` | 内核 ingest | read→slice（**待** 接 cache） |
+| `linux_layer/fs/vfs_path.c` | compat+server 共享 | path normalize |
 
-cpio **不**再提供 boot dump；成功时仅 `vfs_root_init` 一行计数日志。
+**已删除**：`vfs_fd.c`, `servers/fs/vfs_path.c`。
 
 ---
 
-## 4. ramfs 限制（bootstrap）
+## 4. ramfs 限制
 
 | 项 | 值 |
 |----|-----|
 | 最大条目 | 128 |
 | 单文件最大 | 256 KiB |
-| 并发 | vfs_server 单线程，无锁 |
+| vfs_server | 单线程 RPC |
 
 ---
 
 ## 5. 实施状态
 
-见 **[`VFS_IMPLEMENTATION_STATUS.md`](VFS_IMPLEMENTATION_STATUS.md)**（live 快照，改代码同步更新）。
-
 ```text
-✅ namespace 树 + openat/getdents/chdir + page cache + mount 登记
-⬜ mount 覆盖 lookup / linkat / uid 权限
+✅ namespace 树 + openat/getdents/chdir + mount 登记/覆盖
+✅ page cache（kmalloc 版）+ 写失效
+✅ rename/link + bootstrap perm
+⬜ page cache → page_slice（PC-2）
+⬜ kern load 与 read 统一（PC-4）
+⬜ mount 后端切换（P3-5）
 ```
+
+Live 细节：[`VFS_IMPLEMENTATION_STATUS.md`](VFS_IMPLEMENTATION_STATUS.md)。

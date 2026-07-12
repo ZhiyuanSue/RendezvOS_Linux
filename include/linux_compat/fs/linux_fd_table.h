@@ -4,8 +4,10 @@
 #include <common/stdbool.h>
 #include <common/types.h>
 #include <linux_compat/fs/vfs_path.h>
+#include <linux_compat/fs/vfs_path.h>
 #include <rendezvos/error.h>
 #include <rendezvos/mm/page_slice.h>
+#include <rendezvos/sync/cas_lock.h>
 #include <rendezvos/task/tcb.h>
 
 #define LINUX_VFS_PATH_MAX   VFS_PATH_MAX
@@ -37,6 +39,7 @@ typedef struct linux_fd_entry {
 
 typedef struct linux_fs_state {
         struct page_slice *table;
+        cas_lock_t lock;
 } linux_fs_state_t;
 
 /*

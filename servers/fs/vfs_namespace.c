@@ -2,6 +2,7 @@
  * Tree-structured VFS namespace: cpio (read-only catalog) + ramfs storage.
  */
 
+#include "vfs_backend.h"
 #include "vfs_namespace.h"
 
 #include "cpio_rofs.h"
@@ -271,19 +272,43 @@ static vfs_ns_node_t *vfs_ns_ensure_path_nodes(const char *path, bool is_dir)
 
 static i64 vfs_ns_fill_inode(const vfs_ns_node_t *node, vfs_inode_t *out)
 {
+        const char *port;
+
         if (!node || !out) {
                 return -LINUX_EINVAL;
         }
 
+        /*
+         * Routing (longest mount prefix wins, then overlay vs root catalog):
+         * 1. Path under a mount point → that mount's registered backend port.
+         * 2. Writable overlay node (ramfs) → overlay backend.
+         * 3. Cpio catalog node → root backend (boot image).
+         */
+        port = vfs_mount_backend_port_for_path(node->path);
+        if (port) {
+                if (vfs_backend_lookup(port, node->path, out)) {
+                        return 0;
+                }
+                return -LINUX_EIO;
+        }
+
         if (node->ram) {
-                if (vfs_backend_ramfs_lookup(node->path, out)) {
+                port = vfs_backend_overlay_port();
+                if (!port) {
+                        return -LINUX_ENXIO;
+                }
+                if (vfs_backend_lookup(port, node->path, out)) {
                         return 0;
                 }
                 return -LINUX_EIO;
         }
 
         if (node->in_cpio) {
-                if (vfs_backend_cpio_lookup(node->path, out)) {
+                port = vfs_backend_root_port();
+                if (!port) {
+                        return -LINUX_ENXIO;
+                }
+                if (vfs_backend_lookup(port, node->path, out)) {
                         return 0;
                 }
                 return -LINUX_EIO;
