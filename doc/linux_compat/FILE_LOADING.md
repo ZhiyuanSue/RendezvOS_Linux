@@ -65,14 +65,16 @@ linux_user_test_load_manifest
 
 linux_spawn_and_wait_test_path
   → vfs_kern_read_file_slice(path)
-  → gen_task_from_elf → linux_elf_init_handler → page_slice_destroy
+  → gen_task_from_elf(..., &linux_task_append_hooks, &linux_thread_append_hooks, slice)
+  → run_elf_program → thread.append_hooks.init (brk, register, drop slice)
 ```
 
 ### spawn / task_test（embedded）
 
 ```text
 linux_page_slice_copy_from_kva(_num_app range)
-  → gen_task_from_elf → linux_elf_init_handler
+  → gen_task_from_elf(..., &linux_task_append_hooks, &linux_thread_append_hooks, slice)
+  → run_elf_program → thread.append_hooks.init
 ```
 
 ---

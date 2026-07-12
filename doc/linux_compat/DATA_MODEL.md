@@ -15,13 +15,23 @@
 
 ## 2. append 区（单一真源）
 
-**约束**：不在 [`core/include/rendezvos/task/tcb.h`](../../core/include/rendezvos/task/tcb.h) 的 `TCB_COMMON` / `THREAD_COMMON` 里加入 Linux 专用字段。
+**约束**：不在 core 的 `TCB_COMMON` / `THREAD_COMMON` 里加入 Linux 专用字段；`append_hooks` 与 append 尾数组紧挨在 `Tcb_Base` / `Thread_Base` 结构体末尾（见 core `tcb.h`）。
 
-建议在 **`linux_layer`** 新增头文件（名称待定，如 `linux_layer/include/proc_compat.h` 或 `include/linux_compat/proc_compat.h`）：
+定义见 [`include/linux_compat/proc_compat.h`](../../include/linux_compat/proc_compat.h)：
 
-- `struct linux_proc_append` — 放入 `Tcb_Base.append_tcb_info[]`
-- `struct linux_thread_append` — 放入 `Thread_Base.append_thread_info[]`
-- `LINUX_PROC_APPEND_BYTES` / `LINUX_THREAD_APPEND_BYTES` — **全仓库唯一宏**，与 `new_task_structure`、`new_thread_structure`、`gen_task_from_elf`、`create_thread` 的 append 长度参数一致。
+- `linux_proc_append_t` → `Tcb_Base.append_tcb_info[]`
+- `linux_thread_append_t` → `Thread_Base.append_thread_info[]`
+- `LINUX_PROC_APPEND_BYTES` / `LINUX_THREAD_APPEND_BYTES` — 仅用于填 **静态 hook 表** 的 `append_info_len`
+
+**生命周期**由 core + compat hook 驱动，详见 [`APPEND_HOOKS.md`](APPEND_HOOKS.md)：
+
+| 路径 | task hook | thread hook |
+|------|-----------|-------------|
+| `gen_task_from_elf` | `new_task_structure(&linux_task_append_hooks)` | `init` 在 `run_elf_program` |
+| fork/clone | `copy` 在填好 `child_pa` 后 | `copy` 在 `copy_thread` 内 |
+| exit/teardown | `fini` on `delete_task` | `fini` on `del_thread_structure` |
+
+调用 `new_task_structure` / `create_thread` / `gen_task_from_elf` 时 **只传 hook 表指针**，不再单独传 append 长度。
 
 ### 2.1 `linux_proc_append`（Phase 1 已实现字段）
 
@@ -37,12 +47,13 @@
 
 **不**在此结构保存「VMA 根指针」：用户映射由 **`vs` 的 Radix Tree** 表达。
 
-### 2.2 `linux_thread_append`（建议字段）
+### 2.2 `linux_thread_append`（Phase 1+ 字段）
 
 | 字段 | 阶段 | 目的 |
 |------|------|------|
-| `clear_child_tid` 用户 VA | P1 | `set_tid_address` / futex 类（后期） |
-| 每线程 `sigmask` | P2 | 与 `rt_sigprocmask` 对齐 |
+| `clear_tid` | P1 | `set_tid_address` / `CLONE_CHILD_CLEARTID` |
+| `test_cookie` | 测例 | harness 与 clean_server 关联（fork 子进程须为 0，见 APPEND_HOOKS） |
+| `signal` / `sleep_port` | P2 | 每线程信号与 sleep IPC |
 
 ## 3. 进程登记簿（proc registry）
 

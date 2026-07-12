@@ -17,19 +17,19 @@
 /*
  * Simplified fork implementation for Linux compatibility.
  *
+ * Append lifecycle: see doc/linux_compat/APPEND_HOOKS.md
+ * - new_task_structure(&linux_task_append_hooks)
+ * - memset + static proc fields on child_pa, then task.append_hooks->copy
+ * - copy_thread (core calls thread.append_hooks->copy; no append memcpy)
+ *
  * This implements basic fork() semantics:
  * - Creates child process with copied address space
  * - Child returns 0, parent returns child PID
  * - Does NOT implement:
  *   - COW (full page table copy instead)
  *   - File descriptor table sharing
- *   - Signal handler inheritance
+ *   - Signal handler inheritance (partial via append copy hook)
  *   - Resource limits
- *
- * Implementation notes:
- * - Uses core's copy_thread() API to create child thread
- * - Child thread resumes from the fork syscall with return value 0
- * - Parent's trap_frame is copied to child's kernel stack
  *
  * Limitations:
  * - Only supports single-threaded processes calling fork
@@ -97,8 +97,7 @@ i64 sys_fork(void)
                                                            parent->pid;
                 }
                 if (child->append_hooks && child->append_hooks->copy
-                    && child->append_hooks->copy((struct Tcb_Base *)child,
-                                                 (struct Tcb_Base *)parent)
+                    && child->append_hooks->copy(child, parent)
                                != REND_SUCCESS) {
                         ret = -LINUX_ENOMEM;
                         goto out_free_vspace;

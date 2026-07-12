@@ -18,6 +18,7 @@
 | [`CODE_STRUCTURE.md`](CODE_STRUCTURE.md) | **目录与模块职责（现行）** |
 | [`FILE_LOADING.md`](FILE_LOADING.md) | **page_slice 统一文件加载（CPIO / IPC / embedded）** |
 | [`DATA_MODEL.md`](DATA_MODEL.md) | 进程/线程、`pid`/`tid`、登记簿 |
+| [`APPEND_HOOKS.md`](APPEND_HOOKS.md) | **append 生命周期 hook（init/copy/fini）** |
 | [`SYSCALLS.md`](SYSCALLS.md) | **实现顺序**与文件清单 |
 | [`MM_AND_COW.md`](MM_AND_COW.md) | Radix 虚存真源、COW、页故障 |
 | [`IPC_RPC_FRAMEWORK.md`](IPC_RPC_FRAMEWORK.md) | RPC / one-way server 模板 |
@@ -54,7 +55,7 @@
 | [`COPY_VSPACE_DESIGN.md`](COPY_VSPACE_DESIGN.md) | 地址空间复制 |
 | [`WAIT4_IMPLEMENTATION_STATUS.md`](WAIT4_IMPLEMENTATION_STATUS.md) | wait4 状态 |
 | [`CORE_MODIFICATION_STRATEGY.md`](CORE_MODIFICATION_STRATEGY.md) | 提议 core 变更策略 |
-| [`CORE_MODIFICATION_BRK_FIX.md`](CORE_MODIFICATION_BRK_FIX.md) | brk 相关 core 变更 |
+| [`CORE_MODIFICATION_BRK_FIX.md`](CORE_MODIFICATION_BRK_FIX.md) | ~~brk / elf_init 传参~~（**已废弃**，见 APPEND_HOOKS） |
 
 与 **必读** 冲突时，以必读为准。
 

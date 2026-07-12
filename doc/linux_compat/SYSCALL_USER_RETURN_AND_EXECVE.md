@@ -157,14 +157,16 @@ arch_syscall_set_user_int_arg(tf, 0, (u64)sig);
 
 失败路径：在步骤 6 之前失败则返回 `-errno`，旧映射保留。
 
-### 5.3 与 `linux_elf_init_handler` 的区别
+### 5.3 首次 spawn vs exec（append hook）
 
 | | 首次 `gen_task_from_elf` | exec |
 |--|--------------------------|------|
-| `register_process` | 是 | **否**（同 pid） |
+| `register_process` | 是（`thread.init`） | **否**（同 pid） |
 | MM | 新 `create_vspace` | `vspace_clear` + `load_elf_to_vs` |
 | 进用户 | 路径 B（`run_elf_program`） | 路径 A（`arch_syscall_set_user_return`） |
-| brk / signal | `linux_elf_init_handler` | `linux_exec_reset_proc_state` |
+| brk / signal | `linux_thread_append_init` | `linux_exec_reset_proc_state` |
+
+详见 [`APPEND_HOOKS.md`](APPEND_HOOKS.md)。
 
 ### 5.4 建议文件（linux_layer）
 

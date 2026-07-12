@@ -98,7 +98,7 @@ If blocked, state blocker explicitly in review output/history.
   - #44 `PASS: SIG_IGN still works`; no `[SIGNAL] deliver: invalid user handler`
   - #49 `[TEST 49/52] PASS` **after** `=== Test Summary ===`
   - #49 multiple children: exit_code 10, 20, 30
-  - Fork/clone diff: child `test_cookie == 0`
+  - Fork/clone: `linux_thread_append_copy` clears child `test_cookie`
 
 ## I) Linux compat time syscall changes
 

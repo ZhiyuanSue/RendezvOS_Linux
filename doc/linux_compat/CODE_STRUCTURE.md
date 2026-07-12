@@ -25,7 +25,7 @@ linux_layer/
 │   ├── linux_mm_radix.c / linux_vspace.c
 │   └── sys_{mmap,munmap,brk,…}.c
 ├── loader/
-│   └── linux_elf_init.c       # spawn 后 brk、slice destroy
+│   └── linux_elf_init.c       # append hook 表 + ELF init / fork copy / fini
 ├── signal/                    # Phase 2B 信号
 ├── time/
 ├── ipc/

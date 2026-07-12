@@ -123,11 +123,22 @@ Format: Context / Decision / Consequences.
 
 ## 2026-05 | Fork/clone children must not inherit `test_cookie`
 
-- Context: Integrated user test runner waits on `linux_thread_append_t.test_cookie` via `clean_server` → `linux_user_test_notify_exit`. `copy_thread` memcpy’s the whole thread append; fork children inherited the cookie and **prematurely completed** harness test #49 while the parent was still in `wait4`.
-- Decision: In `sys_fork` / `sys_clone`, set `child_ta->test_cookie = 0` after `copy_thread`. Only the ELF spawned by `gen_task_from_elf` keeps the runner cookie.
+- Context: Integrated user test runner waits on `linux_thread_append_t.test_cookie` via `clean_server` → `linux_user_test_notify_exit`. Fork children inherited the cookie and **prematurely completed** harness test #49 while the parent was still in `wait4`.
+- Decision: **`linux_thread_append_copy`** clears `test_cookie` and `clear_tid` on every `copy_thread` child. Only the ELF spawned by `gen_task_from_elf` keeps the runner cookie (set in `user_test_runner` after spawn).
 - Consequences:
-  - Documented in [`BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md`](linux_compat/BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md) §B and [`CROSS_ARCH_VERIFICATION_LOG.md`](linux_compat/CROSS_ARCH_VERIFICATION_LOG.md) checklist.
-  - Any new `copy_thread` consumer with integrated tests must apply the same rule.
+  - Documented in [`APPEND_HOOKS.md`](linux_compat/APPEND_HOOKS.md) §5, [`BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md`](linux_compat/BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md) §B, and [`CROSS_ARCH_VERIFICATION_LOG.md`](linux_compat/CROSS_ARCH_VERIFICATION_LOG.md) checklist.
+  - Any new `copy_thread` consumer with integrated tests must keep `thread.copy` clearing runner-only fields.
+
+---
+
+## 2026-07 | Append lifecycle via hook tables (init / copy / fini)
+
+- Context: Linux proc/thread state lived in core append bytes; separate `elf_init_handler` params and `copy_thread` append memcpy caused drift and fork bugs.
+- Decision: Core exposes `task_append_hooks_t` / `thread_append_hooks_t` (`append_info_len` + init/copy/fini). Compat defines static `linux_*_append_hooks`; ELF first load uses `thread.init`; fork/clone use `task.copy` + `thread.copy`; teardown uses `fini`.
+- Consequences:
+  - Canonical compat doc: [`APPEND_HOOKS.md`](linux_compat/APPEND_HOOKS.md).
+  - `gen_task_from_elf` / `new_task_structure` / `create_thread` take hook table pointers only.
+  - `linux_task_append_clone()` encapsulates CLONE_VM vs fork signal/fs policy for `sys_clone`.
 
 ---
 

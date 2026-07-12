@@ -1,4 +1,5 @@
 #include <linux_compat/append_hooks.h>
+#include <linux_compat/clone_flags.h>
 
 #include <common/align.h>
 #include <common/stddef.h>
@@ -23,20 +24,20 @@ extern struct Port_Table *global_port_table;
 
 const task_append_hooks_t linux_task_append_hooks = {
         .append_info_len = LINUX_PROC_APPEND_BYTES,
-        .copy = linux_task_append_fork,
+        .copy = linux_task_append_copy,
         .fini = linux_task_append_fini,
 };
 
 const thread_append_hooks_t linux_thread_append_hooks = {
         .append_info_len = LINUX_THREAD_APPEND_BYTES,
         .init = linux_thread_append_init,
-        .copy = linux_thread_append_fork,
+        .copy = linux_thread_append_copy,
         .fini = linux_thread_append_fini,
 };
 
-void linux_task_append_fini(struct Tcb_Base *tcb)
+void linux_task_append_fini(Tcb_Base *tcb)
 {
-        Tcb_Base *task = (Tcb_Base *)tcb;
+        Tcb_Base *task = tcb;
         pid_t pid;
 
         if (!task) {
@@ -52,29 +53,29 @@ void linux_task_append_fini(struct Tcb_Base *tcb)
         linux_fs_proc_destroy(task);
 }
 
-error_t linux_task_append_fork(struct Tcb_Base *child, struct Tcb_Base *parent)
+error_t linux_task_append_copy(Tcb_Base *dst, Tcb_Base *src)
 {
-        Tcb_Base *c = (Tcb_Base *)child;
-        Tcb_Base *p = (Tcb_Base *)parent;
-        linux_proc_append_t *ppa;
+        Tcb_Base *d = dst;
+        Tcb_Base *s = src;
+        linux_proc_append_t *spa;
 
-        if (!c) {
+        if (!d) {
                 return -E_IN_PARAM;
         }
 
-        ppa = p ? linux_proc_append(p) : NULL;
-        if (ppa) {
-                if (linux_signal_proc_fork(c, p) != REND_SUCCESS) {
+        spa = s ? linux_proc_append(s) : NULL;
+        if (spa) {
+                if (linux_signal_proc_fork(d, s) != REND_SUCCESS) {
                         return -E_RENDEZVOS;
                 }
-                if (linux_fs_proc_fork(c, p) != REND_SUCCESS) {
+                if (linux_fs_proc_fork(d, s) != REND_SUCCESS) {
                         return -E_RENDEZVOS;
                 }
         } else {
-                if (linux_signal_proc_attach(c) != REND_SUCCESS) {
+                if (linux_signal_proc_attach(d) != REND_SUCCESS) {
                         return -E_RENDEZVOS;
                 }
-                if (linux_fs_proc_attach(c) != REND_SUCCESS) {
+                if (linux_fs_proc_attach(d) != REND_SUCCESS) {
                         return -E_RENDEZVOS;
                 }
         }
@@ -82,9 +83,33 @@ error_t linux_task_append_fork(struct Tcb_Base *child, struct Tcb_Base *parent)
         return REND_SUCCESS;
 }
 
-void linux_thread_append_fini(struct Thread_Base *thread)
+error_t linux_task_append_clone(Tcb_Base *dst, Tcb_Base *src, u64 clone_flags)
 {
-        Thread_Base *thr = (Thread_Base *)thread;
+        Tcb_Base *d = dst;
+        Tcb_Base *s = src;
+
+        if (!d) {
+                return -E_IN_PARAM;
+        }
+        if (!s) {
+                return linux_task_append_copy(dst, NULL);
+        }
+        if (clone_flags & CLONE_VM) {
+                if (linux_signal_proc_attach(d) != REND_SUCCESS) {
+                        return -E_RENDEZVOS;
+                }
+        } else if (linux_signal_proc_fork(d, s) != REND_SUCCESS) {
+                return -E_RENDEZVOS;
+        }
+        if (linux_fs_proc_fork(d, s) != REND_SUCCESS) {
+                return -E_RENDEZVOS;
+        }
+        return REND_SUCCESS;
+}
+
+void linux_thread_append_fini(Thread_Base *thread)
+{
+        Thread_Base *thr = thread;
 
         if (!thr) {
                 return;
@@ -94,33 +119,32 @@ void linux_thread_append_fini(struct Thread_Base *thread)
         linux_signal_thread_destroy(thr);
 }
 
-error_t linux_thread_append_fork(struct Thread_Base *child,
-                                 struct Thread_Base *parent)
+error_t linux_thread_append_copy(Thread_Base *dst, Thread_Base *src)
 {
-        Thread_Base *c = (Thread_Base *)child;
-        Thread_Base *p = (Thread_Base *)parent;
-        linux_thread_append_t *child_ta;
+        Thread_Base *d = dst;
+        Thread_Base *s = src;
+        linux_thread_append_t *dst_ta;
 
-        if (!c) {
+        if (!d) {
                 return -E_IN_PARAM;
         }
 
-        child_ta = linux_thread_append(c);
-        if (!child_ta) {
+        dst_ta = linux_thread_append(d);
+        if (!dst_ta) {
                 return REND_SUCCESS;
         }
 
         /* Fork/clone policy: child must not inherit runner cookie or clear_tid. */
-        child_ta->test_cookie = 0;
-        child_ta->clear_tid = 0;
+        dst_ta->test_cookie = 0;
+        dst_ta->clear_tid = 0;
 
-        return linux_signal_thread_fork_inherit(c, p, true);
+        return linux_signal_thread_fork_inherit(d, s, true);
 }
 
-error_t linux_thread_append_init(struct Thread_Base *thread,
+error_t linux_thread_append_init(Thread_Base *thread,
                                  const elf_load_info_t *info)
 {
-        Thread_Base *thr = (Thread_Base *)thread;
+        Thread_Base *thr = thread;
         Tcb_Base *tcb = thr ? thr->belong_tcb : NULL;
         linux_proc_append_t *pa;
 

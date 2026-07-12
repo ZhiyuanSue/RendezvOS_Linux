@@ -15,7 +15,7 @@
  *
  * IMPORTANT: append sizes live in @c task_append_hooks / @c thread_append_hooks
  * (@p append_info_len). These macros are the linux-layer struct sizes for the
- * static hook tables only.
+ * static hook tables only. Lifecycle: doc/linux_compat/APPEND_HOOKS.md
  */
 
 typedef struct linux_proc_append {
@@ -28,7 +28,7 @@ typedef struct linux_proc_append {
         /* Process relationships */
         /*
          * Parent PID. LINUX_INIT_REAP_PPID (0) means kernel init reaps via
-         * kernel_port after parent exit (reparent in task append_fini).
+         * kernel_port after parent exit (reparent in task append fini hook).
          */
         pid_t ppid;
         pid_t pgid; /* Process group ID (for wait4 pid==0, pid<-1) */

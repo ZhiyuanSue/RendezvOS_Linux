@@ -1,5 +1,7 @@
 # Core/ 修改方案：修复elf_init传递机制
 
+> **已废弃（2026-07）**：brk / 首次 ELF 初始化已改为 **`thread_append_hooks.init`**，由 `run_elf_program` 调用。现行说明见 **[`APPEND_HOOKS.md`](APPEND_HOOKS.md)**。下文仅作历史考古。
+
 ## 🎯 问题诊断
 
 ### 发现的问题

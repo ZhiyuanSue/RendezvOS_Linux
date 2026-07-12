@@ -116,7 +116,7 @@
   }
   ```
 - **问题记录**：
-  - 初期brk未正确初始化（通过core/修改elf_init解决）
+  - 初期 brk 未正确初始化（已通过 `thread_append_hooks.init` 解决，见 [`APPEND_HOOKS.md`](../linux_compat/APPEND_HOOKS.md)）
 
 #### 2. mmap
 - **实现质量**：8/10

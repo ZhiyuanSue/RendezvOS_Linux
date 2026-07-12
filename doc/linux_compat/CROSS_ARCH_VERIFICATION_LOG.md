@@ -184,7 +184,7 @@ WNOHANG subtest: both use `WNOHANG returned 0` → blocking wait → `Child exit
 | aarch64 `rt_sigreturn` incomplete restore | Full EL0 trap frame save/restore | `linux_layer/signal/arch/signal_context_*.c`, `signal_restore_arch_*.h` |
 | Signal arch `#ifdef` in deliver | Split to `linux_layer/signal/arch/` | `signal_deliver.c`, `signal_restore.c` |
 | SIG_IGN stale pending + spurious warn | `linux_signal_flush_pending()`; special-handler helpers | `signal_queue.c`, `sys_rt_sigaction.c`, `signal_deliver.c` |
-| Fork child inherits `test_cookie` → runner early PASS | `child_ta->test_cookie = 0` on fork/clone | `sys_fork.c`, `sys_clone.c` |
+| Fork child inherits `test_cookie` → runner early PASS | `linux_thread_append_copy` clears cookie | `linux_elf_init.c` |
 | aarch64 clone child user SP | `arch_set_thread_user_sp` on clone stack | `sys_clone.c` (earlier gate) |
 
 ### User payload
@@ -209,7 +209,7 @@ WNOHANG subtest: both use `WNOHANG returned 0` → blocking wait → `Child exit
 3. **#44**: `PASS: SIG_IGN still works` present; no `rt_sigaction(SIG_IGN) returned error`.
 4. **#49 ordering**: `[TEST 49/52] PASS` **after** `=== Test Summary ===`.
 5. **#49 exit codes**: reaped 10, 20, 30 (not three×10).
-6. **Fork review**: any `copy_thread` append copy → clear `test_cookie` on child unless explicitly a runner main thread.
+6. **Fork review**: `thread.append_hooks.copy` must clear runner-only fields (`test_cookie`, `clear_tid`) unless explicitly a runner main thread.
 
 ---
 

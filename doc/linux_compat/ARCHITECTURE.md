@@ -39,7 +39,7 @@ flowchart LR
   Clean --> IPC
 ```
 
-- **linux_layer**：Linux 语义（`fork`/`wait`/`mmap` 标志解析、错误码、`brk` 游标等）。
+- **linux_layer**：Linux 语义（`fork`/`wait`/`mmap` 标志解析、错误码、`brk` 游标等）。进程/线程扩展区通过 **append hook 表** 挂接 core（见 [`APPEND_HOOKS.md`](APPEND_HOOKS.md)）。
 - **core**：调度、IPC 原语、地址空间对象、radix tree、页表操作、trap 分发。
 - **servers**：与现有 [`servers/clean_server.c`](../../servers/clean_server.c) 同构的内核线程 + 端口；按需新增。
 

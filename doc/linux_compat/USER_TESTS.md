@@ -11,7 +11,7 @@ integrated harness（`filesystem:true`）下：
 1. `make user` 将静态 ELF 写入 `rootfs/tests/`，并生成 `rootfs/tests/manifest`（每行一个绝对路径）。
 2. `make rootfs` 将 `rootfs/` 打成 cpio 并链进内核。
 3. BSP 线程 `linux_user_test_load_manifest()` 经 **`vfs_kern_read_file_slice("/tests/manifest")`** 解析 manifest（page_slice，无整文件 kmalloc）。
-4. 每个测例路径同样经 **`vfs_kern_read_file_slice`** 加载后 `gen_task_from_elf`。
+4. 每个测例路径同样经 **`vfs_kern_read_file_slice`** 加载后 **`gen_task_from_elf(..., &linux_task_append_hooks, &linux_thread_append_hooks, slice)`**（append 生命周期见 [`APPEND_HOOKS.md`](APPEND_HOOKS.md)）。
 
 测例**数据文件**（`./text.txt`、`./mnt/`）是 `rootfs/` 里的 fixtures，由用户态 `open/read` 经 VFS 访问，不走上述 slice 路径。
 

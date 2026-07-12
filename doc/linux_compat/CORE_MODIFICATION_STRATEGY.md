@@ -35,10 +35,7 @@ error_t copy_user_page_table(VSpace* src_vs, VSpace* dst_vs,
 
 #### brk信息传递
 **需求**: 正确设置进程的brk值
-**当前状态**: linux_elf_init_handler可能未被正确调用
-**建议修改**: 
-- 确保ELF加载器正确调用init handler
-- 或者在gen_task_from_elf中显式传递brk信息
+**当前状态**: ✅ 已通过 `thread_append_hooks.init`（`linux_thread_append_init`）在 `run_elf_program` 中完成；见 [`APPEND_HOOKS.md`](APPEND_HOOKS.md)
 
 ### 3. 页故障处理
 

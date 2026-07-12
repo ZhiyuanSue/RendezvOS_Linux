@@ -4,9 +4,8 @@
 #include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/append_hooks.h>
-#include <linux_compat/fs/linux_fd_table.h>
+#include <linux_compat/clone_flags.h>
 #include <linux_compat/proc_registry.h>
-#include <linux_compat/signal/signal_state.h>
 #include <linux_compat/vspace_copy.h>
 #include <modules/log/log.h>
 #include <rendezvos/error.h>
@@ -36,7 +35,8 @@
  *            unsigned long tls);
  *
  * Implementation notes:
- * - Reuses copy_thread() from core for thread creation
+ * - Append: memset + proc static fields, then linux_task_append_clone (see APPEND_HOOKS.md)
+ * - Reuses copy_thread() from core (thread.append_hooks.copy)
  * - With CLONE_VM: shares parent's VSpace (no refcount increment needed)
  * - With CLONE_THREAD: sets same thread group (stored in proc_append)
  * - TLS setup via CLONE_SETTLS (architecture-specific)
@@ -47,32 +47,6 @@
  * - TLS implementation is architecture-specific (x86_64 only for now)
  * - No namespace support (CLONE_NEW*)
  */
-
-/* Clone flag definitions */
-#define CLONE_VM             0x00000100
-#define CLONE_FS             0x00000200
-#define CLONE_FILES          0x00000400
-#define CLONE_SIGHAND        0x00000800
-#define CLONE_PIDFD          0x00001000
-#define CLONE_PTRACE         0x00002000
-#define CLONE_VFORK          0x00004000
-#define CLONE_PARENT         0x00008000
-#define CLONE_THREAD         0x00010000
-#define CLONE_NEWNS          0x00020000
-#define CLONE_SYSVSEM        0x00040000
-#define CLONE_SETTLS         0x00080000
-#define CLONE_PARENT_SETTID  0x00100000
-#define CLONE_CHILD_CLEARTID 0x00200000
-#define CLONE_DETACHED       0x00400000
-#define CLONE_UNTRACED       0x00800000
-#define CLONE_CHILD_SETTID   0x01000000
-#define CLONE_NEWCGROUP      0x02000000
-#define CLONE_NEWUTS         0x04000000
-#define CLONE_NEWIPC         0x08000000
-#define CLONE_NEWUSER        0x10000000
-#define CLONE_NEWPID         0x20000000
-#define CLONE_NEWNET         0x40000000
-#define CLONE_IO             0x80000000
 
 /*
  * Validate clone flag combinations.
@@ -187,25 +161,9 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
                         child_pa->ppid = parent->pid;
                         child_pa->pgid = parent_pa->pgid ? parent_pa->pgid :
                                                            parent->pid;
-                        if (!(flags & CLONE_VM)) {
-                                if (linux_signal_proc_fork(child, parent)
-                                    != REND_SUCCESS) {
-                                        ret = -LINUX_ENOMEM;
-                                        goto out_free_task;
-                                }
-                        } else if (linux_signal_proc_attach(child)
-                                   != REND_SUCCESS) {
-                                ret = -LINUX_ENOMEM;
-                                goto out_free_task;
-                        }
-                        if (linux_fs_proc_fork(child, parent) != REND_SUCCESS) {
-                                ret = -LINUX_ENOMEM;
-                                goto out_free_task;
-                        }
-                } else if (linux_signal_proc_attach(child) != REND_SUCCESS) {
-                        ret = -LINUX_ENOMEM;
-                        goto out_free_task;
-                } else if (linux_fs_proc_attach(child) != REND_SUCCESS) {
+                }
+                if (linux_task_append_clone(child, parent, flags)
+                    != REND_SUCCESS) {
                         ret = -LINUX_ENOMEM;
                         goto out_free_task;
                 }
