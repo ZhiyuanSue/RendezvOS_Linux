@@ -6,8 +6,7 @@
 #include <rendezvos/task/thread_loader.h>
 #include <rendezvos/task/tcb.h>
 
-#include <linux_compat/elf_init.h>
-#include <linux_compat/append_fini.h>
+#include <linux_compat/append_hooks.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/fs/vfs_kern_load.h>
 #include <linux_compat/fs/vfs_root_bootstrap.h>
@@ -80,14 +79,9 @@ static error_t linux_spawn_and_wait_test_path(const char *path, u32 test_index)
         }
 
         e = gen_task_from_elf(&thr,
-                              LINUX_PROC_APPEND_BYTES,
-                              LINUX_THREAD_APPEND_BYTES,
-                              linux_task_append_fini_ptr,
-                              linux_task_append_fork_ptr,
-                              linux_thread_append_fini_ptr,
-                              linux_thread_append_fork_ptr,
-                              elf_slice,
-                              linux_elf_init_handler_ptr);
+                              &linux_task_append_hooks,
+                              &linux_thread_append_hooks,
+                              elf_slice);
 
         if (e != REND_SUCCESS || !thr) {
                 page_slice_destroy(&elf_slice);

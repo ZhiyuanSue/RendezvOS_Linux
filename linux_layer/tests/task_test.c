@@ -5,8 +5,7 @@
 #include <rendezvos/mm/vmm.h>
 #include <rendezvos/task/thread_loader.h>
 #include <rendezvos/smp/percpu.h>
-#include <linux_compat/elf_init.h>
-#include <linux_compat/append_fini.h>
+#include <linux_compat/append_hooks.h>
 #include <linux_compat/mm/linux_page_slice_file.h>
 #include <linux_compat/proc_compat.h>
 
@@ -45,14 +44,9 @@ int task_test(void)
                 }
 
                 e = gen_task_from_elf(NULL,
-                                      LINUX_PROC_APPEND_BYTES,
-                                      LINUX_THREAD_APPEND_BYTES,
-                                      linux_task_append_fini_ptr,
-                                      linux_task_append_fork_ptr,
-                                      linux_thread_append_fini_ptr,
-                                      linux_thread_append_fork_ptr,
-                                      slice,
-                                      linux_elf_init_handler_ptr);
+                                      &linux_task_append_hooks,
+                                      &linux_thread_append_hooks,
+                                      slice);
                 if (e != REND_SUCCESS) {
                         page_slice_destroy(&slice);
                         continue;

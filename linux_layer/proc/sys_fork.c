@@ -2,7 +2,7 @@
 #include <common/types.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/proc_compat.h>
-#include <linux_compat/append_fini.h>
+#include <linux_compat/append_hooks.h>
 #include <linux_compat/proc_registry.h>
 #include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/vspace_copy.h>
@@ -60,9 +60,7 @@ i64 sys_fork(void)
 
         /* Create child task structure */
         child = new_task_structure(percpu(kallocator),
-                                   LINUX_PROC_APPEND_BYTES,
-                                   linux_task_append_fini_ptr,
-                                   linux_task_append_fork_ptr);
+                                   &linux_task_append_hooks);
         if (!child) {
                 pr_error(
                         "[PROC] fork: Failed to create child task structure\n");
@@ -98,9 +96,9 @@ i64 sys_fork(void)
                         child_pa->pgid = parent_pa->pgid ? parent_pa->pgid :
                                                            parent->pid;
                 }
-                if (child->append_copy
-                    && child->append_copy((struct Tcb_Base *)child,
-                                           (struct Tcb_Base *)parent)
+                if (child->append_hooks && child->append_hooks->copy
+                    && child->append_hooks->copy((struct Tcb_Base *)child,
+                                                 (struct Tcb_Base *)parent)
                                != REND_SUCCESS) {
                         ret = -LINUX_ENOMEM;
                         goto out_free_vspace;
@@ -120,7 +118,7 @@ i64 sys_fork(void)
         parent_thread = get_cpu_current_thread();
 
         child_thread =
-                copy_thread(parent_thread, child, 0, LINUX_THREAD_APPEND_BYTES);
+                copy_thread(parent_thread, child, 0);
         if (!child_thread) {
                 pr_error("[PROC] fork: Failed to create child thread\n");
                 ret = -LINUX_ENOMEM;

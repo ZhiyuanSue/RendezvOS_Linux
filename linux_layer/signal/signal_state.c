@@ -6,15 +6,9 @@
 #include <linux_compat/signal/signal_state.h>
 
 #include <common/string.h>
-#include <common/mm.h>
 #include <rendezvos/error.h>
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/smp/percpu.h>
-
-static bool linux_signal_thread_state_is_heap(linux_signal_thread_state_t *ts)
-{
-        return ts && (uintptr_t)ts >= (uintptr_t)KERNEL_VIRT_OFFSET;
-}
 
 static void linux_signal_init_proc_state(linux_signal_proc_state_t *ps)
 {
@@ -208,10 +202,6 @@ error_t linux_signal_thread_attach(Thread_Base *thread)
                 return -E_IN_PARAM;
         }
 
-        if (ta->signal && !linux_signal_thread_state_is_heap(ta->signal)) {
-                ta->signal = NULL;
-        }
-
         if (ta->signal) {
                 linux_signal_init_thread_state(ta->signal);
                 return REND_SUCCESS;
@@ -249,7 +239,6 @@ error_t linux_signal_thread_fork_inherit(Thread_Base *child,
 {
         linux_thread_append_t *cta;
         linux_thread_append_t *pta;
-        linux_signal_thread_state_t *parent_ts;
         sigset_t blocked;
         error_t e;
 
@@ -264,31 +253,9 @@ error_t linux_signal_thread_fork_inherit(Thread_Base *child,
 
         sigemptyset(&blocked);
         pta = parent ? linux_thread_append(parent) : NULL;
-        parent_ts = pta ? pta->signal : NULL;
-        if (copy_blocked && parent_ts) {
-                blocked = parent_ts->blocked_signals;
+        if (copy_blocked && pta && pta->signal) {
+                blocked = pta->signal->blocked_signals;
         }
-
-        /*
-         * copy_thread() memcopies append bytes — child may inherit parent's
-         * heap pointers. Never free a block the parent still references.
-         */
-        if (cta->signal) {
-                if (parent_ts && cta->signal == parent_ts) {
-                        cta->signal = NULL;
-                } else {
-                        linux_signal_thread_free(cta->signal);
-                        cta->signal = NULL;
-                }
-        }
-
-        /*
-         * sleep_port is per-thread; copy_thread must not share it with parent.
-         * Timer event bytes are copied by value — zero the child's copy.
-         */
-        cta->sleep_port = NULL;
-        cta->sleep_timer_token = 0;
-        memset(&cta->sleep_timer_event, 0, sizeof(cta->sleep_timer_event));
 
         e = linux_signal_thread_attach(child);
         if (e != REND_SUCCESS) {

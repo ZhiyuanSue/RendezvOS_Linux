@@ -3,7 +3,7 @@
 #include <linux_compat/errno.h>
 #include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/proc_compat.h>
-#include <linux_compat/append_fini.h>
+#include <linux_compat/append_hooks.h>
 #include <linux_compat/fs/linux_fd_table.h>
 #include <linux_compat/proc_registry.h>
 #include <linux_compat/signal/signal_state.h>
@@ -154,9 +154,7 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
 
         /* Create child task structure */
         child = new_task_structure(percpu(kallocator),
-                                   LINUX_PROC_APPEND_BYTES,
-                                   linux_task_append_fini_ptr,
-                                   linux_task_append_fork_ptr);
+                                   &linux_task_append_hooks);
         if (!child) {
                 pr_error(
                         "[PROC] clone: Failed to create child task structure\n");
@@ -231,7 +229,7 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
          * grow downward).
          */
         child_thread =
-                copy_thread(parent_thread, child, 0, LINUX_THREAD_APPEND_BYTES);
+                copy_thread(parent_thread, child, 0);
         if (!child_thread) {
                 pr_error("[PROC] clone: Failed to create child thread\n");
                 ret = -LINUX_ENOMEM;

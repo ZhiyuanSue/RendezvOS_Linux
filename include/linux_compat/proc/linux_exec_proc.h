@@ -6,7 +6,7 @@
 #include <rendezvos/mm/page_slice.h>
 #include <rendezvos/task/tcb.h>
 
-/* brk / mmap_hint from PT_LOAD high water (matches linux_elf_init_handler). */
+/* brk / mmap_hint from PT_LOAD high water (matches linux_thread_append_init). */
 void linux_proc_set_heap_from_elf_load(Tcb_Base *task, vaddr max_load_end);
 
 /* Clear signal pending state and apply heap layout for a fresh exec image. */

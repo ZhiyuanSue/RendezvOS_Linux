@@ -13,8 +13,9 @@
  * - linux-layer state lives in the append area of Tcb_Base / Thread_Base
  * - core does not interpret these bytes
  *
- * IMPORTANT: the creator path must pass append sizes consistently (single
- * source of truth: these macros).
+ * IMPORTANT: append sizes live in @c task_append_hooks / @c thread_append_hooks
+ * (@p append_info_len). These macros are the linux-layer struct sizes for the
+ * static hook tables only.
  */
 
 typedef struct linux_proc_append {
