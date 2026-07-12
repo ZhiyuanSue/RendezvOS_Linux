@@ -4,6 +4,8 @@
 
 #include "vfs_handle.h"
 
+#include <linux_compat/fs/vfs_path.h>
+
 #include <common/string.h>
 #include <linux_compat/errno.h>
 
@@ -98,4 +100,57 @@ i64 vfs_handle_close(u32 handle)
 
         memset(h, 0, sizeof(*h));
         return 0;
+}
+
+static bool vfs_handle_path_under_mount(const char *handle_path,
+                                        const char *mount_path, u64 mlen)
+{
+        if (!handle_path || !mount_path) {
+                return false;
+        }
+
+        if (strcmp_s(handle_path, mount_path, VFS_PATH_MAX) == 0) {
+                return true;
+        }
+
+        if (mlen == 0) {
+                return false;
+        }
+
+        if (strcmp_s(handle_path, mount_path, (size_t)mlen) != 0) {
+                return false;
+        }
+
+        return handle_path[mlen] == '/';
+}
+
+bool vfs_handle_busy_under_path(const char *path)
+{
+        char norm[VFS_PATH_MAX];
+        u64 mlen;
+        u32 i;
+
+        if (!path) {
+                return false;
+        }
+
+        vfs_path_normalize(path, norm, sizeof(norm));
+        mlen = strlen(norm);
+
+        for (i = 1; i < VFS_HANDLE_MAX; i++) {
+                if (!vfs_handles[i].in_use) {
+                        continue;
+                }
+
+                if (vfs_path_is_root(norm)) {
+                        return true;
+                }
+
+                if (vfs_handle_path_under_mount(vfs_handles[i].ino.path, norm,
+                                                mlen)) {
+                        return true;
+                }
+        }
+
+        return false;
 }

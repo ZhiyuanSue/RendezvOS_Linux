@@ -25,6 +25,8 @@ i64 vfs_fstat_handle(pid_t pid, u32 handle, u64 user_statbuf);
 i64 vfs_stat_path(pid_t pid, const char *path, u64 user_statbuf, i32 flags);
 i64 vfs_mkdir_path(const char *path, u32 mode);
 i64 vfs_unlink_path(const char *path, i32 flags);
+i64 vfs_rename_path(const char *path, const char *newpath, i32 flags);
+i64 vfs_link_path(const char *path, const char *newpath, i32 flags);
 i64 vfs_validate_dir(const char *path);
 i64 vfs_getdents64_handle(pid_t pid, u32 handle, u64 user_dirp, u64 count);
 

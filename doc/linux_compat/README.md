@@ -34,6 +34,7 @@
 | [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md) | vfs_server 协议 |
 | [`VFS_ARCHITECTURE.md`](VFS_ARCHITECTURE.md) | **VFS 三层、Linux 对齐、演进与验证门** |
 | [`VFS_IMPLEMENTATION_STATUS.md`](VFS_IMPLEMENTATION_STATUS.md) | **Phase 4 live：已写什么 / RPC 表 / 缺口** |
+| [`VFS_EVOLUTION.md`](VFS_EVOLUTION.md) | **VFS 演进待办（树 / page cache / mount / 权限）** |
 | [`DIRECTORY_PHASE.md`](DIRECTORY_PHASE.md) | **下一目标：chdir / openat / getdents（无新 inode 层）** |
 | [`FILE_LOADING.md`](FILE_LOADING.md) | page_slice 统一文件加载（CPIO / IPC / embedded） |
 | [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) | cpio initramfs 方案 |

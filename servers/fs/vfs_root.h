@@ -6,13 +6,13 @@
 
 #include "vfs_backend_ops.h"
 #include "vfs_kstat.h"
-#include "vfs_path.h"
+#include <linux_compat/fs/vfs_path.h>
 
 struct ramfs_entry;
 
 /*
- * VFS middle layer: namespace + storage overlay (cpio read-only + ramfs).
- * Consumed by vfs_server front (RPC/open/fd), not by linux_layer directly.
+ * VFS middle layer facade: init + namespace/stat I/O entry points.
+ * Namespace logic: vfs_namespace.c (cpio catalog + ramfs storage).
  */
 
 error_t vfs_root_init(const void *cpio_image, u64 cpio_len);
@@ -29,6 +29,9 @@ i64 vfs_root_lookup(const char *path, vfs_inode_t *out);
 i64 vfs_root_mkdir(const char *path, u32 mode);
 i64 vfs_root_create_file(const char *path, u32 mode, vfs_inode_t *out);
 i64 vfs_root_unlink(const char *path);
+
+i64 vfs_root_rename(const char *oldpath, const char *newpath);
+i64 vfs_root_link(const char *oldpath, const char *newpath);
 
 i64 vfs_root_read(const vfs_inode_t *ino, u64 offset, void *buf, u64 len);
 i64 vfs_root_write(vfs_inode_t *ino, u64 offset, const void *buf, u64 len);

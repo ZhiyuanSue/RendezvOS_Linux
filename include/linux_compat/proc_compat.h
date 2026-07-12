@@ -26,6 +26,10 @@ typedef struct linux_proc_append {
                           last mmap) */
 
         /* Process relationships */
+        u32 uid;
+        u32 gid;
+        u32 euid;
+        u32 egid;
         /*
          * Parent PID. LINUX_INIT_REAP_PPID (0) means kernel init reaps via
          * kernel_port after parent exit (reparent in task append fini hook).

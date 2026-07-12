@@ -95,6 +95,10 @@ i64 sys_fork(void)
                         child_pa->mmap_hint = parent_pa->mmap_hint;
                         child_pa->pgid = parent_pa->pgid ? parent_pa->pgid :
                                                            parent->pid;
+                        child_pa->uid = parent_pa->uid;
+                        child_pa->gid = parent_pa->gid;
+                        child_pa->euid = parent_pa->euid;
+                        child_pa->egid = parent_pa->egid;
                 }
                 if (child->append_hooks && child->append_hooks->copy
                     && child->append_hooks->copy(child, parent)

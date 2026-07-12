@@ -17,7 +17,9 @@
 #include <rendezvos/task/thread_loader.h>
 
 #include "vfs_handle.h"
+#include "vfs_mount.h"
 #include "vfs_open.h"
+#include "vfs_perm.h"
 #include "vfs_root.h"
 #include "vfs_rpc.h"
 
@@ -33,7 +35,7 @@ static char vfs_server_thread_name[] = "vfs_server_thread";
 extern struct Port_Table *global_port_table;
 
 static i64 vfs_rpc_dispatch(pid_t pid, u16 opcode, u64 p1, u64 p2, u64 p3,
-                            u64 p4, const char *str)
+                            u64 p4, const char *str, const char *str2)
 {
         (void)p4;
 
@@ -60,6 +62,16 @@ static i64 vfs_rpc_dispatch(pid_t pid, u16 opcode, u64 p1, u64 p2, u64 p3,
                 return vfs_unlink_path(str, (i32)p1);
         case KMSG_OP_VFS_CHDIR:
                 return vfs_validate_dir(str);
+        case KMSG_OP_VFS_VALIDATE_DIR:
+                return vfs_validate_dir(str);
+        case KMSG_OP_VFS_MOUNT:
+                return vfs_mount_register(str, str2, p2);
+        case KMSG_OP_VFS_UMOUNT:
+                return vfs_mount_unregister(str, p2);
+        case KMSG_OP_VFS_RENAMEAT:
+                return vfs_rename_path(str, str2, (i32)p2);
+        case KMSG_OP_VFS_LINKAT:
+                return vfs_link_path(str, str2, (i32)p2);
         case KMSG_OP_VFS_GETDENTS64:
                 return vfs_getdents64_handle(pid, (u32)p1, p2, p3);
         default:
@@ -75,6 +87,7 @@ static i64 vfs_rpc_handler(u16 opcode, const kmsg_t *km, char **reply_port_out)
         u64 param3 = 0;
         u64 param4 = 0;
         char *str_param = NULL;
+        char *str_param2 = NULL;
         pid_t pid = 0;
 
         if (!km || !reply_port_out) {
@@ -200,6 +213,48 @@ static i64 vfs_rpc_handler(u16 opcode, const kmsg_t *km, char **reply_port_out)
                                                &str_param,
                                                reply_port_out);
                 break;
+        case KMSG_OP_VFS_VALIDATE_DIR:
+                decode_err = ipc_serial_decode(km->payload,
+                                               km->hdr.payload_len,
+                                               VFS_KMSG_FMT_VALIDATE_DIR "t",
+                                               &str_param,
+                                               reply_port_out);
+                break;
+        case KMSG_OP_VFS_MOUNT:
+                decode_err = ipc_serial_decode(km->payload,
+                                               km->hdr.payload_len,
+                                               VFS_KMSG_FMT_MOUNT "t",
+                                               &str_param,
+                                               &str_param2,
+                                               &param2,
+                                               reply_port_out);
+                break;
+        case KMSG_OP_VFS_UMOUNT:
+                decode_err = ipc_serial_decode(km->payload,
+                                               km->hdr.payload_len,
+                                               VFS_KMSG_FMT_UMOUNT "t",
+                                               &str_param,
+                                               &param2,
+                                               reply_port_out);
+                break;
+        case KMSG_OP_VFS_RENAMEAT:
+                decode_err = ipc_serial_decode(km->payload,
+                                               km->hdr.payload_len,
+                                               VFS_KMSG_FMT_RENAMEAT "t",
+                                               &str_param,
+                                               &str_param2,
+                                               &param2,
+                                               reply_port_out);
+                break;
+        case KMSG_OP_VFS_LINKAT:
+                decode_err = ipc_serial_decode(km->payload,
+                                               km->hdr.payload_len,
+                                               VFS_KMSG_FMT_LINKAT "t",
+                                               &str_param,
+                                               &str_param2,
+                                               &param2,
+                                               reply_port_out);
+                break;
         case KMSG_OP_VFS_GETCWD:
                 return -LINUX_ENOSYS;
         default:
@@ -217,8 +272,20 @@ static i64 vfs_rpc_handler(u16 opcode, const kmsg_t *km, char **reply_port_out)
                 return -LINUX_EINVAL;
         }
 
+        {
+                u32 uid = 0;
+                u32 gid = 0;
+
+                if (vfs_perm_task_cred(pid, &uid, &gid)) {
+                        vfs_perm_set_request(uid, gid);
+                } else {
+                        vfs_perm_set_request(0, 0);
+                }
+        }
+
         return vfs_rpc_dispatch(
-                pid, opcode, param1, param2, param3, param4, str_param);
+                pid, opcode, param1, param2, param3, param4, str_param,
+                str_param2);
 }
 
 static void vfs_server_thread_entry(void)

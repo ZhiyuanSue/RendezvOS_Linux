@@ -1,0 +1,19 @@
+#ifndef _VFS_MOUNT_H_
+#define _VFS_MOUNT_H_
+
+#include <common/stdbool.h>
+#include <common/types.h>
+
+#define VFS_MOUNT_MAX 8u
+
+void vfs_mount_reset(void);
+
+i64 vfs_mount_register(const char *target, const char *fstype, u64 flags);
+i64 vfs_mount_unregister(const char *target, u64 flags);
+
+bool vfs_mount_is_mountpoint(const char *path);
+
+/* Hide cpio-only children under @target (P3-2 bootstrap overlay). */
+i64 vfs_mount_apply_cover(const char *target, bool covered);
+
+#endif /* _VFS_MOUNT_H_ */

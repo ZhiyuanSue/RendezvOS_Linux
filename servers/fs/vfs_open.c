@@ -5,11 +5,12 @@
 #include "vfs_open.h"
 
 #include "vfs_handle.h"
-#include "vfs_path.h"
+#include <linux_compat/fs/vfs_path.h>
 #include "vfs_root.h"
 
 #include <common/string.h>
 #include <linux_compat/errno.h>
+#include <linux_compat/fs/vfs_protocol.h>
 #include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/proc_registry.h>
 #include <rendezvos/mm/vmm.h>
@@ -124,11 +125,8 @@ i64 vfs_open_path(const char *path, i32 flags, u32 mode)
                 return -LINUX_EMFILE;
         }
 
-        /*
-         * Bit 31 marks directory opens so compat can set is_dir without an
-         * extra RPC (see sys_openat in linux_layer).
-         */
-        return (i64)handle | (ino.is_dir ? (1LL << 31) : 0);
+        /* Bit 31 marks directory opens so compat can set is_dir without RPC. */
+        return (i64)handle | (ino.is_dir ? VFS_OPEN_RET_IS_DIR_BIT : 0);
 }
 
 i64 vfs_read_handle(pid_t pid, u32 handle, u64 user_buf, u64 count)
@@ -355,6 +353,28 @@ i64 vfs_unlink_path(const char *path, i32 flags)
         }
 
         return vfs_root_unlink(path);
+}
+
+i64 vfs_rename_path(const char *path, const char *newpath, i32 flags)
+{
+        (void)flags;
+
+        if (!path || !newpath) {
+                return -LINUX_EINVAL;
+        }
+
+        return vfs_root_rename(path, newpath);
+}
+
+i64 vfs_link_path(const char *path, const char *newpath, i32 flags)
+{
+        (void)flags;
+
+        if (!path || !newpath) {
+                return -LINUX_EINVAL;
+        }
+
+        return vfs_root_link(path, newpath);
 }
 
 i64 vfs_validate_dir(const char *path)

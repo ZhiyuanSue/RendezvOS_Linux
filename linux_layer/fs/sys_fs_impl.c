@@ -15,29 +15,31 @@
 #include <rendezvos/task/tcb.h>
 #include <syscall.h>
 
+#define LINUX_O_CREAT     0x40
 #define LINUX_O_DIRECTORY 0x10000
+#if defined(_AARCH64_)
+#define LINUX_O_DIRECTORY_AARCH64 0x4000
+#endif
+
+static i32 linux_open_flags_normalize(i32 flags)
+{
+        i32 out = flags;
+
+        if ((out & LINUX_O_CREAT) == 0 && (out & 0x40) != 0) {
+                out |= LINUX_O_CREAT;
+        }
+#if defined(_AARCH64_)
+        if ((out & LINUX_O_DIRECTORY) == 0
+            && (out & LINUX_O_DIRECTORY_AARCH64) != 0) {
+                out |= LINUX_O_DIRECTORY;
+        }
+#endif
+        return out;
+}
 
 static Tcb_Base *sys_fs_current(void)
 {
         return get_cpu_current_task();
-}
-
-static i32 linux_fd_lowest_free(Tcb_Base *task)
-{
-        linux_fs_state_t *fs = linux_fs_state(task);
-        i32 fd;
-
-        if (!fs) {
-                return -1;
-        }
-
-        for (fd = 0; fd < (i32)LINUX_FD_MAX; fd++) {
-                if (fs->fds[fd].kind == LINUX_FD_NONE) {
-                        return fd;
-                }
-        }
-
-        return -1;
 }
 
 i64 sys_getcwd(u64 user_buf, u64 size)
@@ -65,12 +67,12 @@ i64 sys_getcwd(u64 user_buf, u64 size)
                 return -LINUX_EFAULT;
         }
 
-        len = strlen(fs->cwd) + 1;
+        len = strlen(linux_fs_cwd(fs)) + 1;
         if (size < len) {
                 return -LINUX_ERANGE;
         }
 
-        e = linux_mm_store_to_user(vs, user_buf, fs->cwd, (size_t)len);
+        e = linux_mm_store_to_user(vs, user_buf, linux_fs_cwd(fs), (size_t)len);
         if (e != REND_SUCCESS) {
                 return -LINUX_EFAULT;
         }
@@ -124,6 +126,7 @@ i64 sys_openat(i32 dirfd, u64 user_pathname, i32 flags, u64 mode)
         }
 
         pathname[sizeof(pathname) - 1] = '\0';
+        flags = linux_open_flags_normalize(flags);
 
         ret = linux_vfs_resolve_path(
                 current, dirfd, pathname, abs, sizeof(abs));
@@ -133,28 +136,38 @@ i64 sys_openat(i32 dirfd, u64 user_pathname, i32 flags, u64 mode)
 
         handle = vfs_ipc_request_response(
                 KMSG_OP_VFS_OPEN, VFS_KMSG_FMT_OPEN, abs, flags, (u32)mode);
-        if (handle < 0) {
-                return handle;
+        if (handle <= 0) {
+                return handle < 0 ? handle : -LINUX_EMFILE;
         }
 
         memset(&ent, 0, sizeof(ent));
         ent.kind = LINUX_FD_VFS;
-        ent.vfs_handle = (u32)(handle & LINUX_VFS_OPEN_HANDLE_MASK);
-        ent.is_dir = ((handle & LINUX_VFS_OPEN_IS_DIR_BIT) != 0)
-                     || ((flags & LINUX_O_DIRECTORY) != 0);
+        ent.vfs_handle = (u32)(handle & VFS_OPEN_RET_HANDLE_MASK);
+        strncpy(ent.vfs_abs_path, abs, sizeof(ent.vfs_abs_path) - 1);
+        ent.vfs_abs_path[sizeof(ent.vfs_abs_path) - 1] = '\0';
+        if ((handle & VFS_OPEN_RET_IS_DIR_BIT) != 0) {
+                ent.is_dir = true;
+        } else if ((flags & LINUX_O_DIRECTORY) != 0) {
+                ent.is_dir = true;
+        } else if (vfs_ipc_request_response(KMSG_OP_VFS_VALIDATE_DIR,
+                                            VFS_KMSG_FMT_VALIDATE_DIR,
+                                            abs)
+                   == 0) {
+                ent.is_dir = true;
+        }
         fd = linux_fd_alloc(current, &ent);
         if (fd < 0) {
                 (void)vfs_ipc_request_response(
                         KMSG_OP_VFS_CLOSE,
                         VFS_KMSG_FMT_CLOSE,
-                        (u32)(handle & LINUX_VFS_OPEN_HANDLE_MASK));
+                        ent.vfs_handle);
                 return -LINUX_EMFILE;
         }
 
         if (ent.is_dir) {
                 ret = linux_fs_dir_path_assign(
                         linux_fs_state(current), fd, abs);
-                if (ret < 0) {
+                if (ret < 0 && ent.vfs_abs_path[0] == '\0') {
                         (void)linux_fd_close(current, fd);
                         return ret;
                 }
@@ -323,8 +336,7 @@ i64 sys_chdir(u64 user_pathname)
                 return ret;
         }
 
-        strncpy(fs->cwd, abs, sizeof(fs->cwd) - 1);
-        fs->cwd[sizeof(fs->cwd) - 1] = '\0';
+        linux_fs_set_cwd(fs, abs);
         return 0;
 }
 
@@ -337,8 +349,7 @@ i64 sys_mkdir(u64 user_pathname, u32 mode)
 
 i64 sys_unlink(u64 user_pathname)
 {
-        (void)user_pathname;
-        return -LINUX_ENOSYS;
+        return sys_unlinkat(LINUX_AT_FDCWD, user_pathname, 0);
 }
 
 i64 sys_getdents64(i32 fd, u64 user_dirp, u64 count)
@@ -441,7 +452,117 @@ i64 sys_unlinkat(i32 dirfd, u64 user_pathname, i32 flags)
         }
 
         return vfs_ipc_request_response(
-                KMSG_OP_VFS_UNLINKAT, VFS_KMSG_FMT_UNLINKAT, abs, (u32)flags);
+                KMSG_OP_VFS_UNLINKAT, VFS_KMSG_FMT_UNLINKAT, abs, flags);
+}
+
+i64 sys_renameat(i32 olddirfd, u64 user_oldpath, i32 newdirfd,
+                 u64 user_newpath, u32 flags)
+{
+        Tcb_Base *current = sys_fs_current();
+        VSpace *vs;
+        char oldpath[LINUX_VFS_PATH_MAX];
+        char newpath[LINUX_VFS_PATH_MAX];
+        char old_abs[LINUX_VFS_PATH_MAX];
+        char new_abs[LINUX_VFS_PATH_MAX];
+        error_t e;
+        i64 ret;
+
+        if (!current || !current->vs) {
+                return -LINUX_ESRCH;
+        }
+
+        vs = current->vs;
+        if (!linux_vspace_is_user_table(vs)) {
+                return -LINUX_EFAULT;
+        }
+
+        e = linux_mm_load_from_user(
+                vs, user_oldpath, oldpath, sizeof(oldpath));
+        if (e != REND_SUCCESS) {
+                return -LINUX_EFAULT;
+        }
+        oldpath[sizeof(oldpath) - 1] = '\0';
+
+        e = linux_mm_load_from_user(
+                vs, user_newpath, newpath, sizeof(newpath));
+        if (e != REND_SUCCESS) {
+                return -LINUX_EFAULT;
+        }
+        newpath[sizeof(newpath) - 1] = '\0';
+
+        ret = linux_vfs_resolve_path(
+                current, olddirfd, oldpath, old_abs, sizeof(old_abs));
+        if (ret < 0) {
+                return ret;
+        }
+
+        ret = linux_vfs_resolve_path(
+                current, newdirfd, newpath, new_abs, sizeof(new_abs));
+        if (ret < 0) {
+                return ret;
+        }
+
+        return vfs_ipc_request_response(KMSG_OP_VFS_RENAMEAT,
+                                        VFS_KMSG_FMT_RENAMEAT,
+                                        old_abs,
+                                        new_abs,
+                                        flags);
+}
+
+i64 sys_linkat(i32 olddirfd, u64 user_oldpath, i32 newdirfd, u64 user_newpath,
+               i32 flags)
+{
+        Tcb_Base *current = sys_fs_current();
+        VSpace *vs;
+        char oldpath[LINUX_VFS_PATH_MAX];
+        char newpath[LINUX_VFS_PATH_MAX];
+        char old_abs[LINUX_VFS_PATH_MAX];
+        char new_abs[LINUX_VFS_PATH_MAX];
+        error_t e;
+        i64 ret;
+
+        (void)flags;
+
+        if (!current || !current->vs) {
+                return -LINUX_ESRCH;
+        }
+
+        vs = current->vs;
+        if (!linux_vspace_is_user_table(vs)) {
+                return -LINUX_EFAULT;
+        }
+
+        e = linux_mm_load_from_user(
+                vs, user_oldpath, oldpath, sizeof(oldpath));
+        if (e != REND_SUCCESS) {
+                return -LINUX_EFAULT;
+        }
+        oldpath[sizeof(oldpath) - 1] = '\0';
+
+        e = linux_mm_load_from_user(
+                vs, user_newpath, newpath, sizeof(newpath));
+        if (e != REND_SUCCESS) {
+                return -LINUX_EFAULT;
+        }
+        newpath[sizeof(newpath) - 1] = '\0';
+
+        ret = linux_vfs_resolve_path(
+                current, olddirfd, oldpath, old_abs, sizeof(old_abs));
+        if (ret < 0) {
+                return ret;
+        }
+
+        ret = linux_vfs_resolve_path(
+                current, newdirfd, newpath, new_abs, sizeof(new_abs));
+        if (ret < 0) {
+                return ret;
+        }
+
+        return vfs_ipc_request_response(KMSG_OP_VFS_LINKAT,
+                                        VFS_KMSG_FMT_LINKAT,
+                                        old_abs,
+                                        new_abs,
+                                        (u32)flags);
 }
 
 i64 sys_newfstatat(i32 dirfd, u64 user_pathname, u64 user_statbuf, i32 flags)

@@ -2,6 +2,7 @@
 
 #include <common/mm.h>
 #include <common/string.h>
+#include <rendezvos/mm/page_slice_copy.h>
 
 error_t linux_page_slice_copy_from_kva(struct page_slice** slice_out,
                                        struct allocator* alloc, vaddr src,
@@ -52,6 +53,15 @@ error_t linux_page_slice_copy_from_kva(struct page_slice** slice_out,
 fail:
         page_slice_destroy(&slice);
         return err;
+}
+
+error_t linux_page_slice_dup(struct page_slice** dst_out,
+                             struct page_slice* src)
+{
+        if (!dst_out || !src)
+                return -E_IN_PARAM;
+
+        return page_slice_clone(dst_out, src);
 }
 
 vaddr linux_page_slice_file_base(struct page_slice* slice)

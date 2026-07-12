@@ -5,6 +5,7 @@
 #include "vfs_backend_ops.h"
 
 #include "cpio_rofs.h"
+#include "vfs_page_cache.h"
 
 #include <common/string.h>
 #include <linux_compat/errno.h>
@@ -75,7 +76,7 @@ static bool vfs_backend_ramfs_lookup_impl(const char *path, vfs_inode_t *out)
         }
 
         ent = ramfs_lookup(path);
-        if (!ent || (ent->flags & RAMFS_FLAG_WHITEOUT) != 0) {
+        if (!ent) {
                 return false;
         }
 
@@ -108,6 +109,11 @@ static i64 vfs_backend_cpio_read(const vfs_inode_t *ino, u64 offset, void *buf,
         st.size = ino->size;
         st.is_dir = ino->is_dir;
         st.data = ino->u.cpio_data;
+        ret = vfs_page_cache_read_cpio(ino->path, st.data, st.size, offset, buf,
+                                       len);
+        if (ret >= 0) {
+                return ret;
+        }
         ret = cpio_rofs_read(&st, offset, buf, len);
         if (ret < 0) {
                 return vfs_err_inval();
@@ -154,6 +160,7 @@ static i64 vfs_backend_ramfs_write(vfs_inode_t *ino, u64 offset,
                 return vfs_err_nomem();
         }
 
+        vfs_page_cache_drop(ino->path);
         ino->size = ino->u.ram->size;
         return ret;
 }
@@ -174,6 +181,7 @@ static i64 vfs_backend_ramfs_truncate(vfs_inode_t *ino, u64 size)
                 return vfs_err_nomem();
         }
 
+        vfs_page_cache_drop(ino->path);
         ino->size = ino->u.ram->size;
         return 0;
 }

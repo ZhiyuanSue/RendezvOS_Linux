@@ -16,6 +16,7 @@
 #include <linux_compat/ipc/exit_protocol.h>
 #include <linux_compat/proc/clean_ipc.h>
 #include <linux_compat/proc/wait_ipc.h>
+#include <linux_compat/fs/linux_fd_table.h>
 #include <linux_compat/time/linux_time_sleep.h>
 #include <linux_compat/test_sync_ipc.h>
 #include <linux_compat/fault.h>
@@ -27,6 +28,10 @@ void sys_exit(i64 exit_code)
 
         if (!self)
                 goto out;
+
+        if (task) {
+                linux_fs_proc_release_for_exit(task);
+        }
 
         linux_time_sleep_port_teardown(self);
 
@@ -130,11 +135,21 @@ void sys_exit(i64 exit_code)
                 (void)linux_clean_send_task_reap(task->pid);
         }
 
+        /*
+         * Ensure clean_server sees zombie even if schedule() cannot switch
+         * (no other ready thread on this TM). Do not spin in schedule() after
+         * reap — that can run again on a thread struct clean_server is freeing.
+         */
+        if (self && thread_get_status(self) == thread_status_running) {
+                (void)thread_set_status_with_expect(self,
+                                                    thread_status_running,
+                                                    thread_status_zombie);
+        }
+
 out:
         schedule(percpu(core_tm));
-        while (1) {
-                schedule(percpu(core_tm));
-        }
+        for (;;)
+                ;
 }
 
 void linux_fatal_user_fault(i64 exit_code)

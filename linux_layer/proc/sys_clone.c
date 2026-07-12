@@ -161,6 +161,10 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
                         child_pa->ppid = parent->pid;
                         child_pa->pgid = parent_pa->pgid ? parent_pa->pgid :
                                                            parent->pid;
+                        child_pa->uid = parent_pa->uid;
+                        child_pa->gid = parent_pa->gid;
+                        child_pa->euid = parent_pa->euid;
+                        child_pa->egid = parent_pa->egid;
                 }
                 if (linux_task_append_clone(child, parent, flags)
                     != REND_SUCCESS) {

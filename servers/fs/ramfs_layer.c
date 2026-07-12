@@ -1,5 +1,6 @@
 /*
- * ramfs — writable in-memory overlay for initramfs (Phase 4).
+ * ramfs — writable storage backend (kmalloc buffers).
+ * Namespace/path state: vfs_namespace.c.
  */
 
 #include "ramfs_layer.h"
@@ -31,8 +32,24 @@ static bool ramfs_path_equal(const char *a, const char *b)
 static void ramfs_free_entry_data(ramfs_entry_t *ent)
 {
         struct allocator *alloc;
+        u32 refs;
+        u32 i;
 
         if (!ent || !ent->data) {
+                return;
+        }
+
+        refs = 0;
+        for (i = 0; i < ramfs_nentries; i++) {
+                if (ramfs_entries[i].data == ent->data) {
+                        refs++;
+                }
+        }
+
+        if (refs > 1) {
+                ent->data = NULL;
+                ent->size = 0;
+                ent->capacity = 0;
                 return;
         }
 
@@ -112,10 +129,6 @@ static error_t ramfs_ensure_parent_dir(const char *path)
                 return REND_SUCCESS;
         }
 
-        if (ent->flags & RAMFS_FLAG_WHITEOUT) {
-                return -E_IN_PARAM;
-        }
-
         if (ent->flags & RAMFS_FLAG_DIR) {
                 return REND_SUCCESS;
         }
@@ -189,42 +202,9 @@ u32 ramfs_entry_count(void)
         return ramfs_nentries;
 }
 
-const ramfs_entry_t *ramfs_entry_at(u32 index)
-{
-        if (index >= ramfs_nentries) {
-                return NULL;
-        }
-        return &ramfs_entries[index];
-}
-
 const ramfs_entry_t *ramfs_lookup(const char *path)
 {
         return ramfs_find_mutable(path);
-}
-
-bool ramfs_whiteout(const char *path)
-{
-        const ramfs_entry_t *ent = ramfs_lookup(path);
-
-        return ent && (ent->flags & RAMFS_FLAG_WHITEOUT) != 0;
-}
-
-error_t ramfs_add_whiteout(const char *path)
-{
-        ramfs_entry_t *ent;
-        error_t err;
-
-        ent = ramfs_find_mutable(path);
-        if (ent) {
-                ramfs_free_entry_data(ent);
-                ent->flags = RAMFS_FLAG_WHITEOUT;
-                ent->mode = 0;
-                ent->size = 0;
-                return REND_SUCCESS;
-        }
-
-        err = ramfs_insert(path, 0, RAMFS_FLAG_WHITEOUT, &ent);
-        return err;
 }
 
 error_t ramfs_mkdir(const char *path, u32 mode)
@@ -306,15 +286,78 @@ error_t ramfs_unlink(const char *path)
         return REND_SUCCESS;
 }
 
+error_t ramfs_rename(const char *oldpath, const char *newpath)
+{
+        ramfs_entry_t *ent;
+        char norm_old[VFS_PATH_MAX];
+        char norm_new[VFS_PATH_MAX];
+        error_t err;
+
+        if (!oldpath || !newpath) {
+                return -E_IN_PARAM;
+        }
+
+        vfs_path_normalize(oldpath, norm_old, sizeof(norm_old));
+        vfs_path_normalize(newpath, norm_new, sizeof(norm_new));
+
+        ent = ramfs_find_mutable(norm_old);
+        if (!ent) {
+                return -E_IN_PARAM;
+        }
+
+        if (ramfs_lookup(norm_new)) {
+                return -E_RENDEZVOS;
+        }
+
+        err = ramfs_ensure_parent_dir(norm_new);
+        if (err != REND_SUCCESS) {
+                return err;
+        }
+
+        vfs_path_normalize(norm_new, ent->path, sizeof(ent->path));
+        return REND_SUCCESS;
+}
+
+error_t ramfs_link(const char *oldpath, const char *newpath)
+{
+        ramfs_entry_t *src;
+        ramfs_entry_t *dst;
+        error_t err;
+
+        if (!oldpath || !newpath) {
+                return -E_IN_PARAM;
+        }
+
+        src = ramfs_find_mutable(oldpath);
+        if (!src || (src->flags & RAMFS_FLAG_DIR) != 0) {
+                return -E_IN_PARAM;
+        }
+
+        if (ramfs_lookup(newpath)) {
+                return -E_RENDEZVOS;
+        }
+
+        err = ramfs_ensure_parent_dir(newpath);
+        if (err != REND_SUCCESS) {
+                return err;
+        }
+
+        err = ramfs_insert(newpath, src->mode, src->flags, &dst);
+        if (err != REND_SUCCESS) {
+                return err;
+        }
+
+        dst->data = src->data;
+        dst->size = src->size;
+        dst->capacity = src->capacity;
+        return REND_SUCCESS;
+}
+
 i64 ramfs_read(const ramfs_entry_t *ent, u64 offset, void *buf, u64 len)
 {
         u64 avail;
 
-        if (!ent || !buf || (ent->flags & RAMFS_FLAG_WHITEOUT) != 0) {
-                return -E_IN_PARAM;
-        }
-
-        if ((ent->flags & RAMFS_FLAG_DIR) != 0) {
+        if (!ent || !buf || (ent->flags & RAMFS_FLAG_DIR) != 0) {
                 return -E_IN_PARAM;
         }
 
@@ -339,11 +382,7 @@ i64 ramfs_write(ramfs_entry_t *ent, u64 offset, const void *buf, u64 len)
         u64 end;
         error_t err;
 
-        if (!ent || !buf || (ent->flags & RAMFS_FLAG_WHITEOUT) != 0) {
-                return -E_IN_PARAM;
-        }
-
-        if ((ent->flags & RAMFS_FLAG_DIR) != 0) {
+        if (!ent || !buf || (ent->flags & RAMFS_FLAG_DIR) != 0) {
                 return -E_IN_PARAM;
         }
 

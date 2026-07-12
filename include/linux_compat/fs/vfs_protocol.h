@@ -18,6 +18,10 @@
 
 #define VFS_HANDLE_MAX 128u
 
+/* Bit 31 on OPEN response: target is a directory (compat fd metadata). */
+#define VFS_OPEN_RET_IS_DIR_BIT  (1LL << 31)
+#define VFS_OPEN_RET_HANDLE_MASK ((1LL << 31) - 1LL)
+
 #define KMSG_OP_VFS_OPEN          1u
 #define KMSG_OP_VFS_CLOSE         2u
 #define KMSG_OP_VFS_READ          3u
@@ -34,6 +38,11 @@
 #define KMSG_OP_VFS_NEWFSTATAT    14u
 #define KMSG_OP_VFS_GETDENTS64    15u
 #define KMSG_OP_VFS_HANDLE_RETAIN 16u
+#define KMSG_OP_VFS_VALIDATE_DIR  17u
+#define KMSG_OP_VFS_MOUNT         18u
+#define KMSG_OP_VFS_UMOUNT        19u
+#define KMSG_OP_VFS_RENAMEAT      20u
+#define KMSG_OP_VFS_LINKAT        21u
 
 /* Response: single i64 (Linux errno or non-negative syscall result). */
 #define KMSG_OP_VFS_RESP  0u
@@ -56,6 +65,11 @@
 #define VFS_KMSG_FMT_NEWFSTATAT    "spu"
 #define VFS_KMSG_FMT_GETDENTS64    "ipp"
 #define VFS_KMSG_FMT_CHDIR         "s"
+#define VFS_KMSG_FMT_VALIDATE_DIR  "s"
 #define VFS_KMSG_FMT_HANDLE_RETAIN "i"
+#define VFS_KMSG_FMT_MOUNT         "ssu"
+#define VFS_KMSG_FMT_UMOUNT        "su"
+#define VFS_KMSG_FMT_RENAMEAT      "ssu"
+#define VFS_KMSG_FMT_LINKAT        "ssu"
 
 #endif /* _LINUX_COMPAT_FS_VFS_PROTOCOL_H_ */

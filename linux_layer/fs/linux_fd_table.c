@@ -1,6 +1,6 @@
 /*
- * Per-process fd table (linux_layer) — scheme B in
- * doc/linux_compat/FD_TABLE.md.
+ * Per-process fd table (linux_layer) — page_slice-backed, dynamically growable.
+ * See doc/linux_compat/FD_TABLE.md.
  */
 
 #include <linux_compat/fs/linux_fd_table.h>
@@ -10,52 +10,404 @@
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/errno.h>
 
+#include <common/mm.h>
 #include <common/string.h>
 #include <rendezvos/error.h>
 #include <rendezvos/mm/allocator.h>
+#include <rendezvos/mm/page_slice_copy.h>
 #include <rendezvos/smp/percpu.h>
 
-#define LINUX_DIR_PATH_FD_EMPTY ((u8)LINUX_FD_MAX)
+#define LINUX_DIR_PATH_FD_EMPTY ((u8)255)
+#define LINUX_FS_FD_REGION_BASE (2ULL * PAGE_SIZE)
+#define LINUX_FS_SLICE_FD_GROW  64u
+
+typedef struct linux_fs_slice_hdr {
+        char cwd[LINUX_VFS_PATH_MAX];
+        linux_dir_path_slot_t dir_paths[LINUX_DIR_PATH_SLOTS];
+        u32 fd_capacity;
+} linux_fs_slice_hdr_t;
+
+/*
+ * 4372 bytes — must not live on the 8KiB kernel stack. Nested helpers (e.g.
+ * dir_path_store -> fd_capacity) used to allocate two hdr frames and corrupt
+ * unrelated kernel memory (seen as bogus radix rmap pointers in del_vspace).
+ */
+#define LINUX_FS_HDR_FD_CAPACITY_OFF                           \
+        (sizeof(((linux_fs_slice_hdr_t *)0)->cwd)              \
+         + sizeof(((linux_fs_slice_hdr_t *)0)->dir_paths))
+
+DEFINE_PER_CPU(linux_fs_slice_hdr_t, linux_fs_hdr_scratch);
+DEFINE_PER_CPU(linux_fs_slice_hdr_t, linux_fs_hdr_lookup_scratch);
+DEFINE_PER_CPU(linux_fd_entry_t, linux_fd_entry_scratch);
+
+static linux_fs_slice_hdr_t *linux_fs_hdr_buf(void)
+{
+        return &percpu(linux_fs_hdr_scratch);
+}
+
+static linux_fs_slice_hdr_t *linux_fs_hdr_lookup_buf(void)
+{
+        return &percpu(linux_fs_hdr_lookup_scratch);
+}
+
+static u64 linux_fs_fd_byte_off(i32 fd)
+{
+        return LINUX_FS_FD_REGION_BASE
+               + (u64)fd * (u64)sizeof(linux_fd_entry_t);
+}
+
+static u64 linux_fs_table_byte_size(u32 fd_capacity)
+{
+        return linux_fs_fd_byte_off((i32)fd_capacity);
+}
+
+static error_t linux_fs_ensure_pgoff(struct page_slice *table, u64 pgoff)
+{
+        struct allocator *alloc = percpu(kallocator);
+        struct page_slice_entry *entry;
+        vaddr page;
+
+        if (!table || !alloc) {
+                return -E_IN_PARAM;
+        }
+
+        entry = page_slice_lookup(table, pgoff);
+        if (entry) {
+                return REND_SUCCESS;
+        }
+
+        page = (vaddr)alloc->m_alloc(alloc, PAGE_SIZE);
+        if (!page) {
+                return -E_REND_NO_MEM;
+        }
+
+        memset((void *)page, 0, PAGE_SIZE);
+        return page_slice_insert_page(table, pgoff, page, 0);
+}
+
+static error_t linux_fs_ensure_bytes(struct page_slice *table, u64 byte_off,
+                                       size_t len)
+{
+        u64 end;
+        u64 pgoff;
+
+        if (!table || len == 0) {
+                return -E_IN_PARAM;
+        }
+
+        end = byte_off + (u64)len - 1ULL;
+        for (pgoff = PAGE_SLICE_BYTE_TO_PGOFF(byte_off);
+             pgoff <= PAGE_SLICE_BYTE_TO_PGOFF(end);
+             pgoff++) {
+                error_t err = linux_fs_ensure_pgoff(table, pgoff);
+
+                if (err != REND_SUCCESS) {
+                        return err;
+                }
+        }
+        return REND_SUCCESS;
+}
+
+static error_t linux_fs_slice_load(struct page_slice *table, u64 byte_off,
+                                   void *dst, size_t len)
+{
+        if (!table || !dst) {
+                return -E_IN_PARAM;
+        }
+        return page_slice_copy_to_buffer(table, byte_off, dst, len);
+}
+
+static error_t linux_fs_slice_store(struct page_slice *table, u64 byte_off,
+                                    const void *src, size_t len)
+{
+        size_t done = 0;
+        error_t err;
+
+        if (!table || !src) {
+                return -E_IN_PARAM;
+        }
+
+        err = linux_fs_ensure_bytes(table, byte_off, len);
+        if (err != REND_SUCCESS) {
+                return err;
+        }
+
+        while (done < len) {
+                u64 off = byte_off + (u64)done;
+                u64 pgoff = PAGE_SLICE_BYTE_TO_PGOFF(off);
+                u64 in_page = PAGE_SLICE_IN_PAGE_OFF(off);
+                struct page_slice_entry *entry;
+                size_t chunk;
+
+                entry = page_slice_lookup(table, pgoff);
+                if (!entry) {
+                        return -E_RENDEZVOS;
+                }
+
+                chunk = PAGE_SIZE - (size_t)in_page;
+                if (chunk > len - done) {
+                        chunk = len - done;
+                }
+
+                memcpy((void *)(entry->kernel_virtual_address + in_page),
+                       (const u8 *)src + done,
+                       chunk);
+                done += chunk;
+        }
+        return REND_SUCCESS;
+}
+
+static u32 linux_fs_table_fd_capacity(const struct page_slice *table)
+{
+        u32 cap = 0;
+
+        if (!table) {
+                return 0;
+        }
+        if (linux_fs_slice_load((struct page_slice *)table,
+                                LINUX_FS_HDR_FD_CAPACITY_OFF,
+                                &cap,
+                                sizeof(cap))
+            != REND_SUCCESS) {
+                return 0;
+        }
+        return cap;
+}
+
+static error_t linux_fs_hdr_load(const linux_fs_state_t *fs,
+                                 linux_fs_slice_hdr_t *hdr)
+{
+        if (!fs || !fs->table || !hdr) {
+                return -E_IN_PARAM;
+        }
+        return linux_fs_slice_load(fs->table, 0, hdr, sizeof(*hdr));
+}
+
+static error_t linux_fs_hdr_store(linux_fs_state_t *fs,
+                                  const linux_fs_slice_hdr_t *hdr)
+{
+        if (!fs || !fs->table || !hdr) {
+                return -E_IN_PARAM;
+        }
+        return linux_fs_slice_store(fs->table, 0, hdr, sizeof(*hdr));
+}
+
+static error_t linux_fs_entry_load(const linux_fs_state_t *fs, i32 fd,
+                                   linux_fd_entry_t *ent)
+{
+        if (!fs || !fs->table || !ent || fd < 0) {
+                return -E_IN_PARAM;
+        }
+        return linux_fs_slice_load(fs->table,
+                                   linux_fs_fd_byte_off(fd),
+                                   ent,
+                                   sizeof(*ent));
+}
+
+static error_t linux_fs_entry_store(linux_fs_state_t *fs, i32 fd,
+                                    const linux_fd_entry_t *ent)
+{
+        if (!fs || !fs->table || !ent || fd < 0) {
+                return -E_IN_PARAM;
+        }
+        return linux_fs_slice_store(fs->table,
+                                    linux_fs_fd_byte_off(fd),
+                                    ent,
+                                    sizeof(*ent));
+}
+
+static error_t linux_fs_table_create(struct page_slice **table_out,
+                                       u32 fd_capacity)
+{
+        struct page_slice *table;
+        linux_fs_slice_hdr_t *hdr;
+        u64 pgoff;
+        u64 pg_count;
+        error_t err;
+
+        if (!table_out || fd_capacity == 0) {
+                return -E_IN_PARAM;
+        }
+
+        *table_out = NULL;
+        table = page_slice_create(0, linux_fs_table_byte_size(fd_capacity));
+        if (!table) {
+                return -E_REND_NO_MEM;
+        }
+
+        pg_count = PAGE_SLICE_SIZE_TO_PAGE_COUNT(
+                page_slice_get_size(table));
+        for (pgoff = 0; pgoff < pg_count; pgoff++) {
+                err = linux_fs_ensure_pgoff(table, pgoff);
+                if (err != REND_SUCCESS) {
+                        page_slice_destroy(&table);
+                        return err;
+                }
+        }
+
+        hdr = linux_fs_hdr_buf();
+        memset(hdr, 0, sizeof(*hdr));
+        hdr->cwd[0] = '/';
+        hdr->cwd[1] = '\0';
+        hdr->fd_capacity = fd_capacity;
+        for (u32 i = 0; i < LINUX_DIR_PATH_SLOTS; i++) {
+                hdr->dir_paths[i].fd = LINUX_DIR_PATH_FD_EMPTY;
+                hdr->dir_paths[i].path[0] = '\0';
+        }
+
+        err = linux_fs_slice_store(table, 0, hdr, sizeof(*hdr));
+        if (err != REND_SUCCESS) {
+                page_slice_destroy(&table);
+                return err;
+        }
+
+        *table_out = table;
+        return REND_SUCCESS;
+}
+
+static error_t linux_fs_grow_fd_cap(linux_fs_state_t *fs, u32 new_cap)
+{
+        linux_fs_slice_hdr_t *hdr;
+        u64 old_size;
+        u64 new_size;
+        u64 pgoff;
+        u64 old_pages;
+        u64 new_pages;
+        error_t err;
+
+        if (!fs || !fs->table || new_cap == 0) {
+                return -E_IN_PARAM;
+        }
+
+        hdr = linux_fs_hdr_buf();
+        err = linux_fs_hdr_load(fs, hdr);
+        if (err != REND_SUCCESS) {
+                return err;
+        }
+        if (new_cap <= hdr->fd_capacity) {
+                return REND_SUCCESS;
+        }
+
+        old_size = page_slice_get_size(fs->table);
+        new_size = linux_fs_table_byte_size(new_cap);
+        err = page_slice_set_size(&fs->table, new_size);
+        if (err != REND_SUCCESS) {
+                return err;
+        }
+
+        old_pages = PAGE_SLICE_SIZE_TO_PAGE_COUNT(old_size);
+        new_pages = PAGE_SLICE_SIZE_TO_PAGE_COUNT(new_size);
+        for (pgoff = old_pages; pgoff < new_pages; pgoff++) {
+                err = linux_fs_ensure_pgoff(fs->table, pgoff);
+                if (err != REND_SUCCESS) {
+                        return err;
+                }
+        }
+
+        hdr->fd_capacity = new_cap;
+        return linux_fs_hdr_store(fs, hdr);
+}
+
+u32 linux_fs_fd_capacity(const linux_fs_state_t *fs)
+{
+        if (!fs || !fs->table) {
+                return 0;
+        }
+        return linux_fs_table_fd_capacity(fs->table);
+}
+
+const char *linux_fs_cwd(const linux_fs_state_t *fs)
+{
+        linux_fs_slice_hdr_t *hdr;
+
+        if (!fs || !fs->table) {
+                return "/";
+        }
+        hdr = linux_fs_hdr_lookup_buf();
+        if (linux_fs_hdr_load(fs, hdr) != REND_SUCCESS) {
+                return "/";
+        }
+        return hdr->cwd;
+}
+
+void linux_fs_set_cwd(linux_fs_state_t *fs, const char *cwd)
+{
+        linux_fs_slice_hdr_t *hdr;
+
+        if (!fs || !fs->table || !cwd) {
+                return;
+        }
+        hdr = linux_fs_hdr_buf();
+        if (linux_fs_hdr_load(fs, hdr) != REND_SUCCESS) {
+                return;
+        }
+
+        strncpy(hdr->cwd, cwd, sizeof(hdr->cwd) - 1);
+        hdr->cwd[sizeof(hdr->cwd) - 1] = '\0';
+        (void)linux_fs_hdr_store(fs, hdr);
+}
 
 static void linux_fs_dir_paths_clear_all(linux_fs_state_t *fs)
 {
+        linux_fs_slice_hdr_t *hdr;
         u32 i;
 
-        for (i = 0; i < LINUX_DIR_PATH_SLOTS; i++) {
-                fs->dir_paths[i].fd = LINUX_DIR_PATH_FD_EMPTY;
-                fs->dir_paths[i].path[0] = '\0';
+        if (!fs || !fs->table) {
+                return;
         }
+        hdr = linux_fs_hdr_buf();
+        if (linux_fs_hdr_load(fs, hdr) != REND_SUCCESS) {
+                return;
+        }
+
+        for (i = 0; i < LINUX_DIR_PATH_SLOTS; i++) {
+                hdr->dir_paths[i].fd = LINUX_DIR_PATH_FD_EMPTY;
+                hdr->dir_paths[i].path[0] = '\0';
+        }
+        (void)linux_fs_hdr_store(fs, hdr);
 }
 
 static i64 linux_fs_dir_path_store(linux_fs_state_t *fs, i32 fd,
                                    const char *path)
 {
+        linux_fs_slice_hdr_t *hdr;
         u32 i;
 
-        if (!fs || fd < 0 || fd >= (i32)LINUX_FD_MAX || !path) {
+        if (!fs || !fs->table || fd < 0 || !path) {
+                return -LINUX_EINVAL;
+        }
+        if ((u32)fd >= linux_fs_fd_capacity(fs)) {
+                return -LINUX_EINVAL;
+        }
+        hdr = linux_fs_hdr_buf();
+        if (linux_fs_hdr_load(fs, hdr) != REND_SUCCESS) {
                 return -LINUX_EINVAL;
         }
 
         for (i = 0; i < LINUX_DIR_PATH_SLOTS; i++) {
-                if (fs->dir_paths[i].fd == (u8)fd) {
-                        strncpy(fs->dir_paths[i].path,
+                if (hdr->dir_paths[i].fd == (u8)fd) {
+                        strncpy(hdr->dir_paths[i].path,
                                 path,
-                                sizeof(fs->dir_paths[i].path) - 1);
-                        fs->dir_paths[i]
-                                .path[sizeof(fs->dir_paths[i].path) - 1] = '\0';
-                        return 0;
+                                sizeof(hdr->dir_paths[i].path) - 1);
+                        hdr->dir_paths[i]
+                                .path[sizeof(hdr->dir_paths[i].path) - 1] = '\0';
+                        return linux_fs_hdr_store(fs, hdr) == REND_SUCCESS ?
+                                       0 :
+                                       -LINUX_EINVAL;
                 }
         }
 
         for (i = 0; i < LINUX_DIR_PATH_SLOTS; i++) {
-                if (fs->dir_paths[i].fd == LINUX_DIR_PATH_FD_EMPTY) {
-                        fs->dir_paths[i].fd = (u8)fd;
-                        strncpy(fs->dir_paths[i].path,
+                if (hdr->dir_paths[i].fd == LINUX_DIR_PATH_FD_EMPTY) {
+                        hdr->dir_paths[i].fd = (u8)fd;
+                        strncpy(hdr->dir_paths[i].path,
                                 path,
-                                sizeof(fs->dir_paths[i].path) - 1);
-                        fs->dir_paths[i]
-                                .path[sizeof(fs->dir_paths[i].path) - 1] = '\0';
-                        return 0;
+                                sizeof(hdr->dir_paths[i].path) - 1);
+                        hdr->dir_paths[i]
+                                .path[sizeof(hdr->dir_paths[i].path) - 1] = '\0';
+                        return linux_fs_hdr_store(fs, hdr) == REND_SUCCESS ?
+                                       0 :
+                                       -LINUX_EINVAL;
                 }
         }
 
@@ -64,16 +416,22 @@ static i64 linux_fs_dir_path_store(linux_fs_state_t *fs, i32 fd,
 
 static void linux_fs_dir_path_release(linux_fs_state_t *fs, i32 fd)
 {
+        linux_fs_slice_hdr_t *hdr;
         u32 i;
 
-        if (!fs || fd < 0 || fd >= (i32)LINUX_FD_MAX) {
+        if (!fs || !fs->table || fd < 0) {
+                return;
+        }
+        hdr = linux_fs_hdr_buf();
+        if (linux_fs_hdr_load(fs, hdr) != REND_SUCCESS) {
                 return;
         }
 
         for (i = 0; i < LINUX_DIR_PATH_SLOTS; i++) {
-                if (fs->dir_paths[i].fd == (u8)fd) {
-                        fs->dir_paths[i].fd = LINUX_DIR_PATH_FD_EMPTY;
-                        fs->dir_paths[i].path[0] = '\0';
+                if (hdr->dir_paths[i].fd == (u8)fd) {
+                        hdr->dir_paths[i].fd = LINUX_DIR_PATH_FD_EMPTY;
+                        hdr->dir_paths[i].path[0] = '\0';
+                        (void)linux_fs_hdr_store(fs, hdr);
                         return;
                 }
         }
@@ -81,15 +439,20 @@ static void linux_fs_dir_path_release(linux_fs_state_t *fs, i32 fd)
 
 const char *linux_fs_dir_path_lookup(linux_fs_state_t *fs, i32 fd)
 {
+        linux_fs_slice_hdr_t *hdr;
         u32 i;
 
-        if (!fs || fd < 0 || fd >= (i32)LINUX_FD_MAX) {
+        if (!fs || !fs->table || fd < 0) {
+                return NULL;
+        }
+        hdr = linux_fs_hdr_lookup_buf();
+        if (linux_fs_hdr_load(fs, hdr) != REND_SUCCESS) {
                 return NULL;
         }
 
         for (i = 0; i < LINUX_DIR_PATH_SLOTS; i++) {
-                if (fs->dir_paths[i].fd == (u8)fd) {
-                        return fs->dir_paths[i].path;
+                if (hdr->dir_paths[i].fd == (u8)fd) {
+                        return hdr->dir_paths[i].path;
                 }
         }
 
@@ -104,6 +467,7 @@ i64 linux_fs_dir_path_assign(linux_fs_state_t *fs, i32 fd, const char *path)
 void linux_fs_dir_path_dup(linux_fs_state_t *fs, i32 oldfd, i32 newfd)
 {
         const char *path;
+        char path_copy[LINUX_VFS_PATH_MAX];
 
         if (!fs || oldfd == newfd) {
                 return;
@@ -112,8 +476,41 @@ void linux_fs_dir_path_dup(linux_fs_state_t *fs, i32 oldfd, i32 newfd)
         linux_fs_dir_path_release(fs, newfd);
         path = linux_fs_dir_path_lookup(fs, oldfd);
         if (path) {
-                (void)linux_fs_dir_path_store(fs, newfd, path);
+                strncpy(path_copy, path, sizeof(path_copy) - 1);
+                path_copy[sizeof(path_copy) - 1] = '\0';
+                (void)linux_fs_dir_path_store(fs, newfd, path_copy);
         }
+}
+
+void linux_fd_set_vfs_abs_path(linux_fs_state_t *fs, i32 fd, const char *path)
+{
+        linux_fd_entry_t ent;
+
+        if (!fs || fd < 0 || !path || (u32)fd >= linux_fs_fd_capacity(fs)) {
+                return;
+        }
+        if (linux_fs_entry_load(fs, fd, &ent) != REND_SUCCESS) {
+                return;
+        }
+
+        strncpy(ent.vfs_abs_path, path, sizeof(ent.vfs_abs_path) - 1);
+        ent.vfs_abs_path[sizeof(ent.vfs_abs_path) - 1] = '\0';
+        (void)linux_fs_entry_store(fs, fd, &ent);
+}
+
+void linux_fd_set_is_dir(linux_fs_state_t *fs, i32 fd, bool is_dir)
+{
+        linux_fd_entry_t ent;
+
+        if (!fs || fd < 0 || (u32)fd >= linux_fs_fd_capacity(fs)) {
+                return;
+        }
+        if (linux_fs_entry_load(fs, fd, &ent) != REND_SUCCESS) {
+                return;
+        }
+
+        ent.is_dir = is_dir;
+        (void)linux_fs_entry_store(fs, fd, &ent);
 }
 
 linux_fs_state_t *linux_fs_state(Tcb_Base *task)
@@ -142,6 +539,11 @@ static linux_fs_state_t *linux_fs_alloc_state(void)
         }
 
         fs = (linux_fs_state_t *)alloc->m_alloc(alloc, sizeof(*fs));
+        if (!fs) {
+                return NULL;
+        }
+
+        fs->table = NULL;
         return fs;
 }
 
@@ -153,37 +555,55 @@ static void linux_fs_free_state(linux_fs_state_t *fs)
                 return;
         }
 
+        if (fs->table) {
+                page_slice_destroy(&fs->table);
+        }
         alloc->m_free(alloc, fs);
 }
 
-static void linux_fs_init_state(linux_fs_state_t *fs)
+static error_t linux_fs_init_state(linux_fs_state_t *fs)
 {
-        u32 i;
+        linux_fd_entry_t ent;
+        error_t err;
 
         if (!fs) {
-                return;
+                return -E_IN_PARAM;
         }
 
-        fs->cwd[0] = '/';
-        fs->cwd[1] = '\0';
+        if (fs->table) {
+                page_slice_destroy(&fs->table);
+                fs->table = NULL;
+        }
+
+        err = linux_fs_table_create(&fs->table, LINUX_FS_FD_INIT_CAP);
+        if (err != REND_SUCCESS) {
+                return err;
+        }
+
         linux_fs_dir_paths_clear_all(fs);
 
-        for (i = 0; i < LINUX_FD_MAX; i++) {
-                fs->fds[i].kind = LINUX_FD_NONE;
-                fs->fds[i].vfs_handle = 0;
-                fs->fds[i].is_dir = false;
-                fs->fds[i].pipe_read = false;
+        memset(&ent, 0, sizeof(ent));
+        ent.kind = LINUX_FD_CONSOLE_IN;
+        err = linux_fs_entry_store(fs, 0, &ent);
+        if (err != REND_SUCCESS) {
+                return err;
         }
 
-        fs->fds[0].kind = LINUX_FD_CONSOLE_IN;
-        fs->fds[1].kind = LINUX_FD_CONSOLE_OUT;
-        fs->fds[2].kind = LINUX_FD_CONSOLE_ERR;
+        ent.kind = LINUX_FD_CONSOLE_OUT;
+        err = linux_fs_entry_store(fs, 1, &ent);
+        if (err != REND_SUCCESS) {
+                return err;
+        }
+
+        ent.kind = LINUX_FD_CONSOLE_ERR;
+        return linux_fs_entry_store(fs, 2, &ent);
 }
 
 error_t linux_fs_proc_attach(Tcb_Base *task)
 {
         linux_proc_append_t *pa;
         linux_fs_state_t *fs;
+        error_t err;
 
         if (!task) {
                 return -E_IN_PARAM;
@@ -195,8 +615,7 @@ error_t linux_fs_proc_attach(Tcb_Base *task)
         }
 
         if (pa->fs) {
-                linux_fs_init_state(pa->fs);
-                return REND_SUCCESS;
+                return linux_fs_init_state(pa->fs);
         }
 
         fs = linux_fs_alloc_state();
@@ -204,7 +623,12 @@ error_t linux_fs_proc_attach(Tcb_Base *task)
                 return -E_RENDEZVOS;
         }
 
-        linux_fs_init_state(fs);
+        err = linux_fs_init_state(fs);
+        if (err != REND_SUCCESS) {
+                linux_fs_free_state(fs);
+                return err;
+        }
+
         pa->fs = fs;
         return REND_SUCCESS;
 }
@@ -226,31 +650,65 @@ static void linux_fs_retain_vfs_handle(u32 handle)
         }
 }
 
-static void linux_fs_reset_state(linux_fs_state_t *fs)
+static void linux_fs_release_open_resources(linux_fs_state_t *fs)
 {
         u32 seen[VFS_HANDLE_MAX];
+        u32 cap;
         u32 i;
+        linux_fd_entry_t ent;
+
+        if (!fs || !fs->table) {
+                return;
+        }
+
+        memset(seen, 0, sizeof(seen));
+        cap = linux_fs_fd_capacity(fs);
+
+        for (i = 0; i < cap; i++) {
+                if (linux_fs_entry_load(fs, (i32)i, &ent) != REND_SUCCESS) {
+                        continue;
+                }
+                if (ent.kind == LINUX_FD_PIPE) {
+                        linux_pipe_fd_closed(ent.vfs_handle, ent.pipe_read);
+                        continue;
+                }
+                if (ent.kind != LINUX_FD_VFS || ent.vfs_handle == 0) {
+                        continue;
+                }
+                if (ent.is_dir) {
+                        linux_fs_dir_path_release(fs, (i32)i);
+                }
+                if (ent.vfs_handle < VFS_HANDLE_MAX
+                    && !seen[ent.vfs_handle]) {
+                        seen[ent.vfs_handle] = 1;
+                        linux_fs_release_vfs_handle(ent.vfs_handle);
+                }
+        }
+}
+
+static void linux_fs_reset_state(linux_fs_state_t *fs)
+{
+        if (!fs || !fs->table) {
+                return;
+        }
+
+        linux_fs_release_open_resources(fs);
+        (void)linux_fs_init_state(fs);
+}
+
+void linux_fs_proc_release_for_exit(Tcb_Base *task)
+{
+        linux_fs_state_t *fs = linux_fs_state(task);
 
         if (!fs) {
                 return;
         }
 
-        memset(seen, 0, sizeof(seen));
-
-        for (i = 0; i < LINUX_FD_MAX; i++) {
-                linux_fd_entry_t *ent = &fs->fds[i];
-
-                if (ent->kind != LINUX_FD_VFS || ent->vfs_handle == 0) {
-                        continue;
-                }
-                if (ent->vfs_handle < VFS_HANDLE_MAX
-                    && !seen[ent->vfs_handle]) {
-                        seen[ent->vfs_handle] = 1;
-                        linux_fs_release_vfs_handle(ent->vfs_handle);
-                }
-        }
-
-        linux_fs_init_state(fs);
+        /*
+         * sys_exit: drop VFS/pipe references only. Do not rebuild page_slice
+         * here — delete_task append fini will destroy fs after vspace teardown.
+         */
+        linux_fs_release_open_resources(fs);
 }
 
 void linux_fs_proc_reset(Tcb_Base *task)
@@ -280,38 +738,65 @@ void linux_fs_proc_destroy(Tcb_Base *task)
         }
 
         fs = pa->fs;
-        linux_fs_reset_state(fs);
+        linux_fs_release_open_resources(fs);
         linux_fs_free_state(fs);
         pa->fs = NULL;
 }
 
-static void linux_fs_fork_copy_state(linux_fs_state_t *child,
-                                     const linux_fs_state_t *parent)
+static void linux_fs_fork_retain_resources(linux_fs_state_t *fs)
 {
         u32 seen[VFS_HANDLE_MAX];
+        u32 cap;
         u32 i;
+        linux_fd_entry_t ent;
 
-        if (!child || !parent) {
+        if (!fs || !fs->table) {
                 return;
         }
 
-        *child = *parent;
         memset(seen, 0, sizeof(seen));
+        cap = linux_fs_fd_capacity(fs);
 
-        for (i = 0; i < LINUX_FD_MAX; i++) {
-                if (child->fds[i].kind != LINUX_FD_VFS
-                    || child->fds[i].vfs_handle == 0) {
-                        if (child->fds[i].kind == LINUX_FD_PIPE) {
-                                linux_pipe_fork_retain(child->fds[i].vfs_handle);
-                        }
+        for (i = 0; i < cap; i++) {
+                if (linux_fs_entry_load(fs, (i32)i, &ent) != REND_SUCCESS) {
                         continue;
                 }
-                if (child->fds[i].vfs_handle < VFS_HANDLE_MAX
-                    && !seen[child->fds[i].vfs_handle]) {
-                        seen[child->fds[i].vfs_handle] = 1;
-                        linux_fs_retain_vfs_handle(child->fds[i].vfs_handle);
+                if (ent.kind == LINUX_FD_PIPE) {
+                        linux_pipe_fork_retain(ent.vfs_handle);
+                        continue;
+                }
+                if (ent.kind != LINUX_FD_VFS || ent.vfs_handle == 0) {
+                        continue;
+                }
+                if (ent.vfs_handle < VFS_HANDLE_MAX
+                    && !seen[ent.vfs_handle]) {
+                        seen[ent.vfs_handle] = 1;
+                        linux_fs_retain_vfs_handle(ent.vfs_handle);
                 }
         }
+}
+
+static error_t linux_fs_fork_copy_state(linux_fs_state_t *child,
+                                        const linux_fs_state_t *parent)
+{
+        error_t err;
+
+        if (!child || !parent || !parent->table) {
+                return -E_IN_PARAM;
+        }
+
+        if (child->table) {
+                page_slice_destroy(&child->table);
+                child->table = NULL;
+        }
+
+        err = page_slice_clone(&child->table, parent->table);
+        if (err != REND_SUCCESS) {
+                return err;
+        }
+
+        linux_fs_fork_retain_resources(child);
+        return REND_SUCCESS;
 }
 
 error_t linux_fs_proc_fork(Tcb_Base *child, Tcb_Base *parent)
@@ -336,9 +821,15 @@ error_t linux_fs_proc_fork(Tcb_Base *child, Tcb_Base *parent)
         }
 
         if (parent_fs) {
-                linux_fs_fork_copy_state(child_fs, parent_fs);
+                e = linux_fs_fork_copy_state(child_fs, parent_fs);
+                if (e != REND_SUCCESS) {
+                        return e;
+                }
         } else {
-                linux_fs_init_state(child_fs);
+                e = linux_fs_init_state(child_fs);
+                if (e != REND_SUCCESS) {
+                        return e;
+                }
         }
 
         return REND_SUCCESS;
@@ -346,15 +837,20 @@ error_t linux_fs_proc_fork(Tcb_Base *child, Tcb_Base *parent)
 
 bool linux_fs_handle_in_use(const linux_fs_state_t *fs, u32 handle)
 {
+        u32 cap;
         u32 i;
+        linux_fd_entry_t ent;
 
-        if (!fs || handle == 0) {
+        if (!fs || !fs->table || handle == 0) {
                 return false;
         }
 
-        for (i = 0; i < LINUX_FD_MAX; i++) {
-                if (fs->fds[i].kind == LINUX_FD_VFS
-                    && fs->fds[i].vfs_handle == handle) {
+        cap = linux_fs_fd_capacity(fs);
+        for (i = 0; i < cap; i++) {
+                if (linux_fs_entry_load(fs, (i32)i, &ent) != REND_SUCCESS) {
+                        continue;
+                }
+                if (ent.kind == LINUX_FD_VFS && ent.vfs_handle == handle) {
                         return true;
                 }
         }
@@ -364,89 +860,160 @@ bool linux_fs_handle_in_use(const linux_fs_state_t *fs, u32 handle)
 
 linux_fd_entry_t *linux_fd_get(Tcb_Base *task, i32 fd)
 {
+        linux_fd_entry_t *ent;
         linux_fs_state_t *fs;
 
-        if (fd < 0 || fd >= (i32)LINUX_FD_MAX) {
+        if (fd < 0) {
                 return NULL;
         }
 
         fs = linux_fs_state(task);
-        if (!fs) {
+        if (!fs || !fs->table || (u32)fd >= linux_fs_fd_capacity(fs)) {
+                return NULL;
+        }
+        ent = &percpu(linux_fd_entry_scratch);
+        if (linux_fs_entry_load(fs, fd, ent) != REND_SUCCESS) {
+                return NULL;
+        }
+        if (ent->kind == LINUX_FD_NONE) {
                 return NULL;
         }
 
-        if (fs->fds[fd].kind == LINUX_FD_NONE) {
-                return NULL;
-        }
-
-        return &fs->fds[fd];
+        return ent;
 }
 
-i32 linux_fd_alloc(Tcb_Base *task, const linux_fd_entry_t *ent)
+static i32 linux_fd_find_free(linux_fs_state_t *fs)
+{
+        u32 cap;
+        u32 fd;
+        linux_fd_entry_t ent;
+
+        if (!fs || !fs->table) {
+                return -1;
+        }
+
+        cap = linux_fs_fd_capacity(fs);
+        for (fd = 0; fd < cap; fd++) {
+                if (linux_fs_entry_load(fs, (i32)fd, &ent) != REND_SUCCESS) {
+                        continue;
+                }
+                if (ent.kind == LINUX_FD_NONE) {
+                        return (i32)fd;
+                }
+        }
+        return -1;
+}
+
+i32 linux_fd_alloc(Tcb_Base *task, const linux_fd_entry_t *ent_in)
 {
         linux_fs_state_t *fs;
         i32 fd;
+        error_t err;
 
-        if (!task || !ent) {
+        if (!task || !ent_in) {
                 return -1;
         }
 
         fs = linux_fs_state(task);
+        if (!fs || !fs->table) {
+                return -1;
+        }
+
+        fd = linux_fd_find_free(fs);
+        if (fd < 0) {
+                u32 new_cap = linux_fs_fd_capacity(fs) + LINUX_FS_SLICE_FD_GROW;
+
+                err = linux_fs_grow_fd_cap(fs, new_cap);
+                if (err != REND_SUCCESS) {
+                        return -1;
+                }
+                fd = linux_fd_find_free(fs);
+                if (fd < 0) {
+                        return -1;
+                }
+        }
+
+        if (linux_fs_entry_store(fs, fd, ent_in) != REND_SUCCESS) {
+                return -1;
+        }
+
+        return fd;
+}
+
+i32 linux_fd_lowest_free(Tcb_Base *task)
+{
+        linux_fs_state_t *fs = linux_fs_state(task);
+        i32 fd;
+        error_t err;
+
         if (!fs) {
                 return -1;
         }
 
-        for (fd = 0; fd < (i32)LINUX_FD_MAX; fd++) {
-                if (fs->fds[fd].kind == LINUX_FD_NONE) {
-                        fs->fds[fd] = *ent;
-                        return fd;
-                }
+        fd = linux_fd_find_free(fs);
+        if (fd >= 0) {
+                return fd;
         }
 
-        return -1;
+        err = linux_fs_grow_fd_cap(fs,
+                                   linux_fs_fd_capacity(fs)
+                                           + LINUX_FS_SLICE_FD_GROW);
+        if (err != REND_SUCCESS) {
+                return -1;
+        }
+
+        return linux_fd_find_free(fs);
 }
 
 i64 linux_fd_close(Tcb_Base *task, i32 fd)
 {
         linux_fs_state_t *fs;
-        linux_fd_entry_t *ent;
+        linux_fd_entry_t ent;
         u32 handle;
 
-        if (fd < 0 || fd >= (i32)LINUX_FD_MAX) {
+        if (fd < 0) {
                 return -LINUX_EBADF;
         }
 
         fs = linux_fs_state(task);
-        if (!fs) {
+        if (!fs || !fs->table) {
                 return -LINUX_ESRCH;
         }
-
-        ent = &fs->fds[fd];
-        if (ent->kind == LINUX_FD_NONE) {
+        if ((u32)fd >= linux_fs_fd_capacity(fs)) {
+                return -LINUX_EBADF;
+        }
+        if (linux_fs_entry_load(fs, fd, &ent) != REND_SUCCESS) {
+                return -LINUX_EBADF;
+        }
+        if (ent.kind == LINUX_FD_NONE) {
                 return -LINUX_EBADF;
         }
 
-        handle = ent->vfs_handle;
-        if (ent->kind == LINUX_FD_PIPE) {
-                linux_pipe_fd_closed(handle, ent->pipe_read);
-        } else if (ent->kind == LINUX_FD_VFS) {
-                if (ent->is_dir) {
+        handle = ent.vfs_handle;
+        if (ent.kind == LINUX_FD_PIPE) {
+                linux_pipe_fd_closed(handle, ent.pipe_read);
+        } else if (ent.kind == LINUX_FD_VFS) {
+                if (ent.is_dir) {
                         linux_fs_dir_path_release(fs, fd);
                 }
-                ent->kind = LINUX_FD_NONE;
-                ent->vfs_handle = 0;
-                ent->is_dir = false;
-                ent->pipe_read = false;
+                ent.kind = LINUX_FD_NONE;
+                ent.vfs_handle = 0;
+                ent.is_dir = false;
+                ent.pipe_read = false;
+                ent.vfs_abs_path[0] = '\0';
+                (void)linux_fs_entry_store(fs, fd, &ent);
                 if (handle != 0 && !linux_fs_handle_in_use(fs, handle)) {
                         linux_fs_release_vfs_handle(handle);
                 }
                 return 0;
         }
 
-        ent->kind = LINUX_FD_NONE;
-        ent->vfs_handle = 0;
-        ent->is_dir = false;
-        ent->pipe_read = false;
+        ent.kind = LINUX_FD_NONE;
+        ent.vfs_handle = 0;
+        ent.is_dir = false;
+        ent.pipe_read = false;
+        ent.vfs_abs_path[0] = '\0';
+        (void)linux_fs_entry_store(fs, fd, &ent);
 
         return 0;
 }
@@ -454,12 +1021,11 @@ i64 linux_fd_close(Tcb_Base *task, i32 fd)
 i64 linux_fd_dup2(Tcb_Base *task, i32 oldfd, i32 newfd)
 {
         linux_fs_state_t *fs;
-        linux_fd_entry_t *oldent;
-        linux_fd_entry_t *newent;
+        linux_fd_entry_t oldent;
+        linux_fd_entry_t newent;
         u32 replaced_handle;
 
-        if (oldfd < 0 || oldfd >= (i32)LINUX_FD_MAX || newfd < 0
-            || newfd >= (i32)LINUX_FD_MAX) {
+        if (oldfd < 0 || newfd < 0) {
                 return -LINUX_EBADF;
         }
 
@@ -471,33 +1037,47 @@ i64 linux_fd_dup2(Tcb_Base *task, i32 oldfd, i32 newfd)
         }
 
         fs = linux_fs_state(task);
-        if (!fs) {
+        if (!fs || !fs->table) {
                 return -LINUX_ESRCH;
         }
+        if ((u32)newfd >= linux_fs_fd_capacity(fs)) {
+                error_t grow_err = linux_fs_grow_fd_cap(fs, (u32)newfd + 1u);
 
-        oldent = linux_fd_get(task, oldfd);
-        if (!oldent) {
+                if (grow_err != REND_SUCCESS) {
+                        return -LINUX_EBADF;
+                }
+        }
+        if ((u32)oldfd >= linux_fs_fd_capacity(fs)) {
+                return -LINUX_EBADF;
+        }
+        if (linux_fs_entry_load(fs, oldfd, &oldent) != REND_SUCCESS
+            || oldent.kind == LINUX_FD_NONE) {
+                return -LINUX_EBADF;
+        }
+        if (linux_fs_entry_load(fs, newfd, &newent) != REND_SUCCESS) {
                 return -LINUX_EBADF;
         }
 
-        newent = &fs->fds[newfd];
         replaced_handle = 0;
-        if (newent->kind == LINUX_FD_VFS) {
-                replaced_handle = newent->vfs_handle;
+        if (newent.kind == LINUX_FD_VFS) {
+                replaced_handle = newent.vfs_handle;
         }
 
-        *newent = *oldent;
+        if (linux_fs_entry_store(fs, newfd, &oldent) != REND_SUCCESS) {
+                return -LINUX_EBADF;
+        }
+        newent = oldent;
 
-        if (newent->is_dir) {
+        if (newent.is_dir) {
                 linux_fs_dir_path_dup(fs, oldfd, newfd);
         } else {
                 linux_fs_dir_path_release(fs, newfd);
         }
 
-        if (newent->kind == LINUX_FD_VFS && newent->vfs_handle != 0) {
-                linux_fs_retain_vfs_handle(newent->vfs_handle);
-        } else if (newent->kind == LINUX_FD_PIPE) {
-                linux_pipe_fork_retain(newent->vfs_handle);
+        if (newent.kind == LINUX_FD_VFS && newent.vfs_handle != 0) {
+                linux_fs_retain_vfs_handle(newent.vfs_handle);
+        } else if (newent.kind == LINUX_FD_PIPE) {
+                linux_pipe_fork_retain(newent.vfs_handle);
         }
 
         if (replaced_handle != 0

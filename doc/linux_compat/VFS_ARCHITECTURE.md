@@ -21,9 +21,9 @@
 ┌───────────────────────────────▼─────────────────────────────┐
 │ 中端 Middle — namespace + storage                           │
 │  • lookup / mkdir / create / unlink / readdir               │
-│  • inode_read / write / truncate（buffer；将来 page 粒度）    │
-│  • overlay / 后端路由 / whiteout                             │
-│  位置: servers/fs/vfs_root.c（→ 将来 vfs_namespace/storage）│
+│  • inode_read / write / truncate；cpio page cache           │
+│  • **vfs_namespace** 树 + cpio deleted 标记 + ramfs 字节      │
+│  位置: servers/fs/vfs_namespace.c, vfs_root.c（薄 facade）  │
 └───────────────┬─────────────────────┬───────────────────────┘
                 │                     │
          cpio_rofs (只读)        ramfs_layer (可写)     disk (将来)
@@ -63,9 +63,9 @@
 
 | Linux | 本项目 bootstrap | 何时补 |
 |-------|------------------|--------|
-| `struct inode` + icache | `vfs_object_t` / entry 表 | 硬链接、设备节点 |
-| dentry 哈希树 | 路径规范化 + 线性 scan | 条目 >>128 |
-| page cache + address_space | ramfs `kmalloc` buffer；cpio 零拷贝指针 | 文件 mmap (#13)、大文件 |
+| `struct inode` + icache | `vfs_ns_node_t` 树 + `vfs_inode_t` 句柄 | 硬链接、设备节点 |
+| dentry 哈希树 | 路径规范化 + 树 walk + sibling 链表 | 大规模目录 |
+| page cache + address_space | cpio：`vfs_page_cache`；ramfs：kmalloc | 大文件 / mmap |
 | writeback 线程 | 无（ramfs 无盘） | virtio-blk |
 | `mount` / `pivot_root` | 硬编码 `/` = overlay | Phase 4.1+ |
 | 权限 uid/gid 检查 | 可全当 root | 安全测例 |
@@ -80,11 +80,11 @@ Linux 文档说明：ramfs 把 **page cache + dentry** 当存储，**无 backing
 
 | Linux 概念 | RendezvOS Phase 4 对应 |
 |------------|------------------------|
-| dentry + path walk | `vfs_path_*` + `vfs_root_lookup` |
+| dentry + path walk | `vfs_path_*` + `vfs_namespace` 树 walk |
 | inode 元数据 | `vfs_inode_t`（`vfs_backend_ops.h`） |
-| page cache 数据 | cpio: 指向 incbin；ramfs: kmalloc |
-| `struct file` | 前端 fd 表（offset、flags） |
-| file_system_type / mount | `vfs_root_init` + 隐含根 |
+| page cache 数据 | cpio: `vfs_page_cache` + incbin；ramfs: kmalloc |
+| `struct file` | compat fd 表 + server `vfs_handle_t` |
+| file_system_type / mount | `vfs_mount.c` 登记 + `vfs_root_init` |
 
 ---
 
@@ -94,11 +94,12 @@ Linux 文档说明：ramfs 把 **page cache + dentry** 当存储，**无 backing
 
 | 层 | 文件 | 状态 |
 |----|------|------|
-| 后端 cpio | `cpio_rofs.c` | ✅ lookup/read/`visit`（`visit` 仅 `vfs_root` readdir） |
-| 后端 ramfs | `ramfs_layer.c` | ✅ mkdir/create/write/whiteout |
-| 中端 | `vfs_root.c`, `vfs_path.c`, `vfs_backend_ops.c`, `vfs_kstat.c` | ✅ overlay + stat/readdir |
-| 前端 server | `vfs_open.c`, `vfs_fd.c`, `vfs_rpc.c`, `vfs_server.c` | ✅ open/read/write/close/fstat/lseek/statat/mkdir/unlink RPC |
-| 前端 compat | `sys_fs_impl.c`, `fs_ipc.c` | ✅ 上表 syscall 已 IPC；write fd≥3 分流 |
+| 后端 cpio | `cpio_rofs.c` | ✅ lookup/read/`visit` |
+| 后端 ramfs | `ramfs_layer.c` | ✅ 纯存储（无路径语义） |
+| 中端 namespace | `vfs_namespace.c`, `vfs_path.c`, `vfs_perm.c`, `vfs_page_cache.c`, `vfs_mount.c` | ✅ 树 + overlay 语义 |
+| 中端 I/O | `vfs_root.c`, `vfs_backend_ops.c`, `vfs_kstat.c` | ✅ facade + read/write |
+| 前端 server | `vfs_open.c`, `vfs_handle.c`, `vfs_rpc.c`, `vfs_server.c` | ✅ RPC |
+| 前端 compat | `sys_fs_impl.c`, `linux_vfs_path.c`, `fs_ipc.c` | ✅ scheme B fd→handle |
 | IPC | `vfs_protocol.h` | ✅ |
 
 **SMP**：`NR_CPU>1` 时 vfs_server **CPU 1**；单核 BSP。

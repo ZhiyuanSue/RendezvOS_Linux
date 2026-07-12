@@ -12,6 +12,7 @@
 #include <linux_compat/fs/vfs_root_bootstrap.h>
 #include <linux_compat/initcall.h>
 #include <linux_compat/proc_compat.h>
+#include <linux_compat/proc_registry.h>
 #include <linux_compat/test_manifest.h>
 #include <linux_compat/test_runner.h>
 #include <modules/test/test.h>
@@ -109,8 +110,29 @@ static error_t linux_spawn_and_wait_test_path(const char *path, u32 test_index)
         slot->cookie = 0;
         slot->in_use = true;
 
-        while (slot->cookie != cookie) {
-                schedule(percpu(core_tm));
+        {
+                pid_t test_pid = 0;
+                Tcb_Base *test_task = thr->belong_tcb;
+
+                if (test_task) {
+                        test_pid = test_task->pid;
+                }
+
+                while (slot->cookie != cookie) {
+                        schedule(percpu(core_tm));
+                }
+
+                /*
+                 * Cookie is set at THREAD_REAP (before delete_thread /
+                 * TASK_REAP). Wait until the task shell is gone so the next
+                 * spawn does not run page_slice_insert_page concurrently with
+                 * del_vspace on the previous test.
+                 */
+                if (test_pid > 0) {
+                        while (find_task_by_pid(test_pid) != NULL) {
+                                schedule(percpu(core_tm));
+                        }
+                }
         }
 
         slot->in_use = false;

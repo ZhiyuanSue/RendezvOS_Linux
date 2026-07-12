@@ -5,18 +5,17 @@
 #include <common/types.h>
 #include <rendezvos/error.h>
 
-#include "vfs_path.h"
+#include <linux_compat/fs/vfs_path.h>
 
 /*
- * In-memory writable layer for initramfs (Phase 4 overlay).
- * Flat path table + kmalloc file buffers — no inode tree or page cache.
+ * In-memory writable storage backend (kmalloc buffers).
+ * Path existence / delete state: vfs_namespace.c — not here.
  */
 
 #define RAMFS_MAX_ENTRIES   128
 #define RAMFS_MAX_FILE_SIZE (256u * 1024u)
 
 #define RAMFS_FLAG_DIR      0x01u
-#define RAMFS_FLAG_WHITEOUT 0x02u
 
 #define RAMFS_S_IFMT  0170000u
 #define RAMFS_S_IFDIR 0040000u
@@ -34,17 +33,14 @@ typedef struct ramfs_entry {
 void ramfs_init(void);
 
 u32 ramfs_entry_count(void);
-const ramfs_entry_t *ramfs_entry_at(u32 index);
 
 const ramfs_entry_t *ramfs_lookup(const char *path);
-bool ramfs_whiteout(const char *path);
 
 error_t ramfs_mkdir(const char *path, u32 mode);
 error_t ramfs_create_file(const char *path, u32 mode);
 error_t ramfs_unlink(const char *path);
-
-/* Hide a cpio-only path without storing file data. */
-error_t ramfs_add_whiteout(const char *path);
+error_t ramfs_rename(const char *oldpath, const char *newpath);
+error_t ramfs_link(const char *oldpath, const char *newpath);
 
 i64 ramfs_read(const ramfs_entry_t *ent, u64 offset, void *buf, u64 len);
 i64 ramfs_write(ramfs_entry_t *ent, u64 offset, const void *buf, u64 len);

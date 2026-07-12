@@ -3,6 +3,7 @@
 #include <rendezvos/task/tcb.h>
 #include <rendezvos/trap/trap.h>
 #include <linux_compat/errno.h>
+#include <linux_compat/fs/linux_fd_table.h>
 #include <linux_compat/signal/signal_deliver.h>
 #include <syscall.h>
 #include <syscall_entry.h>
@@ -226,6 +227,27 @@ void syscall(struct trap_frame *syscall_ctx)
                                    (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
                                    (i32)syscall_ctx->ARCH_SYSCALL_ARG_3);
                 break;
+        case __NR_renameat:
+                ret = sys_renameat((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                   (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                   (i32)syscall_ctx->ARCH_SYSCALL_ARG_3,
+                                   (u64)syscall_ctx->ARCH_SYSCALL_ARG_4,
+                                   0u);
+                break;
+        case __NR_renameat2:
+                ret = sys_renameat((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                   (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                   (i32)syscall_ctx->ARCH_SYSCALL_ARG_3,
+                                   (u64)syscall_ctx->ARCH_SYSCALL_ARG_4,
+                                   (u32)syscall_ctx->ARCH_SYSCALL_ARG_5);
+                break;
+        case __NR_linkat:
+                ret = sys_linkat((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                 (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                 (i32)syscall_ctx->ARCH_SYSCALL_ARG_3,
+                                 (u64)syscall_ctx->ARCH_SYSCALL_ARG_4,
+                                 (i32)syscall_ctx->ARCH_SYSCALL_ARG_5);
+                break;
         case __NR_getdents64:
                 ret = sys_getdents64((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
                                      (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
@@ -280,6 +302,14 @@ void syscall(struct trap_frame *syscall_ctx)
                                  (i32)syscall_ctx->ARCH_SYSCALL_ARG_3,
                                  (u64)syscall_ctx->ARCH_SYSCALL_ARG_4);
                 break;
+#if defined(_X86_64_)
+        case __NR_open:
+                ret = sys_openat(LINUX_AT_FDCWD,
+                                 (u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                 (i32)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                 (u64)syscall_ctx->ARCH_SYSCALL_ARG_3);
+                break;
+#endif
 #if defined(_X86_64_)
         case __NR_mount:
                 ret = sys_mount((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,

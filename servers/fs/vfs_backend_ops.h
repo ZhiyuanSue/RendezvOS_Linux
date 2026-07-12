@@ -5,11 +5,12 @@
 #include <common/types.h>
 
 #include "ramfs_layer.h"
-#include "vfs_path.h"
+#include <linux_compat/fs/vfs_path.h>
 
 /*
- * Middle-layer inode handle + per-backend I/O dispatch (Step 1).
- * Overlay path resolution stays in vfs_root.c; backends only touch their layer.
+ * Middle-layer inode handle + per-backend I/O dispatch.
+ * Path resolution lives in vfs_namespace.c; backends hold read-only cpio bytes
+ * or writable ramfs storage only.
  */
 
 typedef enum vfs_backend {
@@ -31,9 +32,6 @@ typedef struct vfs_inode {
         bool is_dir;
         bool writable;
 } vfs_inode_t;
-
-/* Legacy name used in architecture docs; same layout. */
-typedef vfs_inode_t vfs_object_t;
 
 bool vfs_backend_cpio_lookup(const char *path, vfs_inode_t *out);
 bool vfs_backend_ramfs_lookup(const char *path, vfs_inode_t *out);

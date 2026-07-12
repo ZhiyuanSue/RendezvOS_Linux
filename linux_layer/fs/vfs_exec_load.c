@@ -82,11 +82,11 @@ static i64 linux_vfs_open_readonly(const char *path, u32 *out_handle)
                                           path,
                                           (i32)LINUX_O_RDONLY,
                                           (u32)0);
-        if (handle < 0) {
-                return handle;
+        if (handle <= 0) {
+                return handle < 0 ? handle : -LINUX_EMFILE;
         }
 
-        *out_handle = (u32)handle;
+        *out_handle = (u32)(handle & VFS_OPEN_RET_HANDLE_MASK);
         return 0;
 }
 

@@ -8,8 +8,8 @@
 /*
  * Read-only newc cpio backend (initramfs image embedded via .incbin).
  *
- * Upward consumer: vfs_root.c only. Do not include from linux_layer or RPC
- * front. Parsed entry types and dump helpers are private to cpio_rofs.c.
+ * Upward consumer: vfs_namespace.c / vfs_root.c only. Do not include from
+ * linux_layer or RPC front. Parsed entry types are private to cpio_rofs.c.
  */
 
 #define CPIO_ROFS_PATH_MAX 256

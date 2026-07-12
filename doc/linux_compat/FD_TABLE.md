@@ -28,7 +28,7 @@ Bootstrap（Step 3–4）为了快，把 **fd 编号表放在 `vfs_server`**，c
 | `struct file`（offset、flags、→inode） | **`vfs_open_handle_t`**（server 全局表，带 refcnt） |
 | `files_struct->fd[]`（fd → struct file*） | **`linux_fs_state_t` in `linux_proc_append_t`** |
 | `dup` / `dup2` | 改 compat fd 槽；VFS 条目 **共享 handle** + server `refcnt++` |
-| `fork` | 复制 fd 表；每个 VFS handle **retain**（后续 Step；当前 fork 文档已声明未复制 fd） |
+| `fork` | 复制 fd 表；每个 VFS handle **RETAIN**（共享 server `vfs_open_handle_t`）；**不** copy page_slice |
 | `execve` | 重置 fd 表为 0/1/2 console；关闭旧 VFS handle（release） |
 
 **Per-process vs per-thread**：与 Linux 一致 — **fd 表 per-process**（`Tcb_Base` / 线程组）。同 pid 的线程共享 `linux_proc_append_t.fs`。不用 tid 索引 fd。
@@ -168,10 +168,10 @@ openat:
 
 从 server 迁出 `vfs_resolve_path` 逻辑到 `linux_layer/fs/linux_vfs_path.c`：
 
-- 绝对路径 → normalize
+- 绝对路径 → `vfs_path_normalize`（`include/linux_compat/fs/vfs_path.h`，实现在 `linux_layer/fs/vfs_path.c`）
 - `AT_FDCWD` → `fs.cwd`
 - 其它 dirfd → 本地 fd 表项须为 **目录** VFS 条目，用 `entry.path` 作 base
-- `vfs_path_join` 可复用 server 侧 `servers/fs/vfs_path.c` 的算法；compat 侧实现一份或共享头文件（**不** RPC）
+- `vfs_path_join` 等与 server 共用 **`linux_layer/fs/vfs_path.c`**（**不** RPC）
 
 **chdir**：compat 展开路径 → RPC 校验目录存在 → 写 `fs.cwd`  
 **getcwd**：直接读 `fs.cwd` 写入 user（**删除** GETCWD RPC）
@@ -242,7 +242,21 @@ openat:
 | console 是否全 RPC | ❌ 仅 `LINUX_FD_VFS` 走 IPC；未重定向的 1/2 仍 UART |
 | cwd 在哪 | ✅ `linux_fs_state_t.cwd`；GETCWD 无 RPC |
 | server 是否还存 fd 编号 | ❌ 已删 `vfs_fd.c`；仅 handle 表 |
-| fork/exec | ✅ `linux_fs_fork_copy` / `linux_fs_reset_proc` |
+| `fork` | `linux_fs_proc_fork` → `linux_fs_fork_copy_state` + **HANDLE_RETAIN** per unique handle |
 | open `is_dir` 元数据 | bootstrap：由 `O_DIRECTORY` 标志推断；足够 getdents 测例 |
 
 改 fd 表 / handle / OPEN RPC 时：**先更新本文 + VFS_IMPLEMENTATION_STATUS + DECISIONS**。
+
+---
+
+## 13. page_slice 与 fd 表（设计 vs 现状）
+
+**曾设想**：fd 可指向 **core `page_slice`** 表示文件内容；fork 时对 slice 调用 core `page_slice_copy_to_slice` 做副本。
+
+**现状（方案 B）**：
+
+- fd 表项 **不含** `page_slice`；VFS 文件用 **server handle** + compat 侧 `vfs_abs_path`。
+- fork：`linux_fs_fork_copy_state` 复制 fd 槽 + 对唯一 handle 发 **HANDLE_RETAIN**（共享同一 server 打开文件状态/offset）。
+- **page_slice** 仅用于 **内核 ingest**（execve、harness manifest/ELF），见 [`FILE_LOADING.md`](FILE_LOADING.md)；与用户态 `open/read` **无交叉**。
+
+**待决**（见 [`VFS_EVOLUTION.md`](VFS_EVOLUTION.md) §FdSlice F1–F4）：是否在 mmap/大文件阶段把 slice 接回 fd，或保持 handle 模型至 block 后端出现。

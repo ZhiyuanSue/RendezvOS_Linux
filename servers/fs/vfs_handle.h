@@ -30,4 +30,6 @@ i64 vfs_handle_close(u32 handle);
 
 vfs_open_handle_t *vfs_handle_get(u32 handle);
 
+bool vfs_handle_busy_under_path(const char *path);
+
 #endif /* _VFS_HANDLE_H_ */

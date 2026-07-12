@@ -18,6 +18,17 @@
 
 manifest 是 CPIO 上的普通文件 `/tests/manifest`，与 ELF 一样由 `vfs_kern_read_file_slice` 加载（见 [`FILE_LOADING.md`](FILE_LOADING.md)）。
 
+**不要混淆的路径：**
+
+| 你看到的 | 实际含义 |
+|----------|----------|
+| 仓库 `rootfs/text.txt` | cpio 源文件 → 启动后 VFS 路径 `/text.txt` |
+| 仓库 `rootfs/tests/*` | `make user` 生成 → cpio `/tests/*` |
+| 仓库根 `tests/`（错误） | 历史/误生成目录，**不应存在**；已在 `.gitignore` 忽略 |
+| VFS `/text.txt` | initramfs 内文件，不是仓库根目录文件 |
+
+演进待办见 [`VFS_EVOLUTION.md`](VFS_EVOLUTION.md)。
+
 ---
 
 ## .gitignore 建议
