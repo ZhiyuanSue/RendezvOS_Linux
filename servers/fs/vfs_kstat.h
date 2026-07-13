@@ -3,6 +3,8 @@
 
 #include <common/types.h>
 
+#include <linux_compat/fs/linux_user_stat.h>
+
 #include "vfs_backend_ops.h"
 
 /*
@@ -46,6 +48,7 @@ typedef struct vfs_dirent {
 } vfs_dirent_t;
 
 void vfs_kstat_from_inode(const vfs_inode_t *ino, vfs_kstat_t *out);
+void linux_user_stat_from_kstat(const vfs_kstat_t *in, linux_user_stat_t *out);
 u64 vfs_path_to_ino(const char *path);
 
 #endif /* _VFS_KSTAT_H_ */

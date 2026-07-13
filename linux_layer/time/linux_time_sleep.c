@@ -9,6 +9,7 @@
 
 #include <common/string.h>
 #include <linux_compat/errno.h>
+#include <linux_compat/ipc/block_wake.h>
 #include <linux_compat/ipc/rpc.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/proc_registry.h>
@@ -301,6 +302,12 @@ i64 linux_time_sleep_until_count(tick_t deadline_count,
 
                 err = recv_msg(port);
 
+                if (err == -E_REND_PORT_CLOSED) {
+                        linux_time_sleep_disarm(event);
+                        return linux_time_sleep_return_eintr(
+                                event, deadline_count, rem_out);
+                }
+
                 if (err != REND_SUCCESS) {
                         linux_time_sleep_disarm(event);
                         schedule(percpu(core_tm));
@@ -332,6 +339,13 @@ i64 linux_time_sleep_until_count(tick_t deadline_count,
                 if (linux_time_sleep_parse_kmsg(
                             msg, port, KMSG_OP_SYSTEM_TIMER_CANCEL, token)) {
                         ref_put(&msg->ms_queue_node.refcount, free_message_ref);
+                        return linux_time_sleep_return_eintr(
+                                event, deadline_count, rem_out);
+                }
+
+                if (linux_ipc_kmsg_is_port_closed(port, msg)) {
+                        ref_put(&msg->ms_queue_node.refcount, free_message_ref);
+                        linux_time_sleep_disarm(event);
                         return linux_time_sleep_return_eintr(
                                 event, deadline_count, rem_out);
                 }

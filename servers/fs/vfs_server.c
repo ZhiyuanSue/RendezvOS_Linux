@@ -58,7 +58,7 @@ static i64 vfs_rpc_dispatch(pid_t pid, u16 opcode, u64 p1, u64 p2, u64 p3,
         case KMSG_OP_VFS_LSEEK:
                 return vfs_lseek_handle((u32)p1, (i64)p2, (i32)p3);
         case KMSG_OP_VFS_NEWFSTATAT:
-                return vfs_stat_path(pid, str, p2, (i32)p3);
+                return vfs_stat_path(pid, str, p1, (i32)p2);
         case KMSG_OP_VFS_MKDIRAT:
                 return vfs_mkdir_path(str, (u32)p1);
         case KMSG_OP_VFS_UNLINKAT:

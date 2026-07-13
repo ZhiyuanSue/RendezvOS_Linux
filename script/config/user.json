@@ -1,4 +1,5 @@
 {
 	"filesystem": true,
+	"busybox": true,
 	"git": "git@github.com:ZhiyuanSue/user_basic.git"
 }

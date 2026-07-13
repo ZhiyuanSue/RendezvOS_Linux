@@ -146,6 +146,36 @@ error_t linux_mm_load_from_user(VSpace* vs, u64 user_va, void* dst, size_t len)
         return map_handler_user_kernel_copy(vs, user_va, dst, len, false);
 }
 
+error_t linux_mm_load_cstring_from_user(VSpace* vs, u64 user_va, char* dst,
+                                        size_t cap)
+{
+        size_t i;
+
+        if (!dst || cap < 2) {
+                return -E_IN_PARAM;
+        }
+        if (!linux_mm_user_vspace_ok(vs)) {
+                return -E_IN_PARAM;
+        }
+
+        for (i = 0; i < cap - 1; i++) {
+                char c;
+                error_t e =
+                        linux_mm_load_from_user(vs, user_va + (u64)i, &c, 1);
+
+                if (e != REND_SUCCESS) {
+                        return e;
+                }
+                dst[i] = c;
+                if (c == '\0') {
+                        return REND_SUCCESS;
+                }
+        }
+
+        dst[cap - 1] = '\0';
+        return -E_IN_PARAM;
+}
+
 error_t linux_mm_copy_user_range(VSpace* vs, u64 dst_user_va, u64 src_user_va,
                                  size_t len)
 {

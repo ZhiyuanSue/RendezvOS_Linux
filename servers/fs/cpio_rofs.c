@@ -13,7 +13,6 @@
 
 #define CPIO_NEWC_MAGIC       "070701"
 #define CPIO_NEWC_HDR_LEN     110
-#define CPIO_NEWC_MAX_ENTRIES 64
 
 #define CPIO_S_IFMT  0170000u
 #define CPIO_S_IFDIR 0040000u
@@ -63,7 +62,7 @@ static bool cpio_header_magic_ok(const cpio_newc_header_t *hdr)
         return true;
 }
 
-static cpio_rofs_entry_t cpio_entries[CPIO_NEWC_MAX_ENTRIES];
+static cpio_rofs_entry_t cpio_entries[CPIO_ROFS_MAX_ENTRIES];
 static u32 cpio_entry_count;
 static const u8 *cpio_image;
 static u64 cpio_image_len;
@@ -162,9 +161,9 @@ static error_t cpio_rofs_add_entry(const char *name, u32 mode, u32 nlink,
                 return REND_SUCCESS;
         }
 
-        if (cpio_entry_count >= CPIO_NEWC_MAX_ENTRIES) {
+        if (cpio_entry_count >= CPIO_ROFS_MAX_ENTRIES) {
                 pr_error("[VFS][cpio] entry table full (max %u)\n",
-                         CPIO_NEWC_MAX_ENTRIES);
+                         CPIO_ROFS_MAX_ENTRIES);
                 return -E_RENDEZVOS;
         }
 
@@ -383,7 +382,7 @@ static bool cpio_readdir_insert_name(char names[][64], u32 *count, const char *n
                 }
         }
 
-        if (*count >= CPIO_NEWC_MAX_ENTRIES) {
+        if (*count >= CPIO_ROFS_MAX_ENTRIES) {
                 return false;
         }
 
@@ -430,7 +429,7 @@ i64 cpio_rofs_readdir(const char *dirpath, u64 index, vfs_dirent_t *out)
 {
         char norm[VFS_PATH_MAX];
         char child_path[VFS_PATH_MAX];
-        char names[CPIO_NEWC_MAX_ENTRIES][64];
+        static char names[CPIO_ROFS_MAX_ENTRIES][64];
         u32 name_count = 0;
         u32 i;
 

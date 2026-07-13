@@ -18,11 +18,11 @@ Layout:
   mnt/                  openat directory tests
   tests/                generated — ELF binaries + manifest (gitignored)
   tests/manifest        one absolute path per line, e.g. /tests/test_echo
-  bin/busybox           optional (build_busybox.sh)
+  bin/busybox           optional (make user with "busybox": true, or build_busybox.sh)
 
 Commands:
 
-  make user ARCH=x86_64          # build ELFs, pack rootfs/tests/, stub link_app.o
+  make user ARCH=x86_64          # build ELFs, pack rootfs/tests/, optional busybox → rootfs/bin/
   make rootfs ARCH=x86_64        # refresh build/rootfs.cpio
   make ARCH=x86_64 build run
 

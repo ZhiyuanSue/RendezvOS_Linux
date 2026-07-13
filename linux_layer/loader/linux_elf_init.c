@@ -1,5 +1,6 @@
 #include <linux_compat/append_hooks.h>
 #include <linux_compat/clone_flags.h>
+#include <linux_compat/proc/linux_exec_stack.h>
 
 #include <common/align.h>
 #include <common/stddef.h>
@@ -134,7 +135,8 @@ error_t linux_thread_append_copy(Thread_Base *dst, Thread_Base *src)
                 return REND_SUCCESS;
         }
 
-        /* Fork/clone policy: child must not inherit runner cookie or clear_tid. */
+        /* Fork/clone policy: child must not inherit runner cookie or clear_tid.
+         */
         dst_ta->test_cookie = 0;
         dst_ta->clear_tid = 0;
 
@@ -194,6 +196,15 @@ error_t linux_thread_append_init(Thread_Base *thread,
                         tcb->pid);
         } else {
                 ref_put(&wait_port->refcount, free_message_port_ref);
+        }
+
+        error_t stack_e =
+                linux_exec_bootstrap_elf_spawn_stack(thr, tcb->vs, info);
+        if (stack_e != REND_SUCCESS) {
+                pr_error(
+                        "[LINUX_ELF_INIT] elf spawn stack failed pid=%d e=%d\n",
+                        tcb->pid,
+                        (int)stack_e);
         }
 
         /*

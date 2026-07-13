@@ -28,8 +28,12 @@ i64 vfs_kern_read_file_slice(const char *path, struct allocator *alloc,
 
         *out_slice = NULL;
 
-        if (vfs_root_lookup(path, &ino) < 0) {
-                return -LINUX_ENOENT;
+        {
+                i64 lookup_ret = vfs_root_lookup(path, &ino);
+
+                if (lookup_ret < 0) {
+                        return lookup_ret;
+                }
         }
         if (ino.is_dir) {
                 return -LINUX_EISDIR;

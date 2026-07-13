@@ -6,8 +6,24 @@
 #include <linux_compat/signal/signal_deliver.h>
 #include <rendezvos/ipc/ipc.h>
 #include <rendezvos/ipc/kmsg.h>
+#include <rendezvos/ipc/kmsg_system.h>
 #include <rendezvos/ipc/message.h>
 #include <rendezvos/task/tcb.h>
+
+bool linux_ipc_kmsg_is_port_closed(Message_Port_t *port, const Message_t *msg)
+{
+        const kmsg_t *km;
+
+        if (!port || !msg) {
+                return false;
+        }
+
+        km = kmsg_from_msg(msg);
+        if (!km || km->hdr.module != port->service_id) {
+                return false;
+        }
+        return km->hdr.opcode == KMSG_OP_SYSTEM_PORT_CLOSED;
+}
 
 bool linux_ipc_post_recv_interrupt(Message_Port_t *port)
 {

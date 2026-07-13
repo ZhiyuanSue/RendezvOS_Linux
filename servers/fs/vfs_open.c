@@ -100,13 +100,16 @@ static Tcb_Base *vfs_task_for_pid(pid_t pid)
 static i64 vfs_store_kstat(Tcb_Base *task, u64 user_statbuf,
                            const vfs_kstat_t *st)
 {
+        linux_user_stat_t ustat;
         error_t e;
 
         if (!task || !st) {
                 return -LINUX_EINVAL;
         }
 
-        e = linux_mm_store_to_user(task->vs, user_statbuf, st, sizeof(*st));
+        linux_user_stat_from_kstat(st, &ustat);
+        e = linux_mm_store_to_user(
+                task->vs, user_statbuf, &ustat, sizeof(ustat));
         if (e != REND_SUCCESS) {
                 return -LINUX_EFAULT;
         }

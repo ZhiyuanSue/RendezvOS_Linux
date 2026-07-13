@@ -316,6 +316,11 @@ i64 ipc_rpc_call_va(Message_Port_t* server_port, Message_Port_t* reply_port,
                 return -LINUX_EINTR;
         }
 
+        if (linux_ipc_kmsg_is_port_closed(reply_port, msg)) {
+                ref_put(&msg->ms_queue_node.refcount, free_message_ref);
+                return -LINUX_EIO;
+        }
+
         if (linux_signal_has_deliverable_pending()) {
                 ref_put(&msg->ms_queue_node.refcount, free_message_ref);
                 return -LINUX_EINTR;
@@ -532,6 +537,21 @@ void ipc_rpc_server_loop(const char* listen_port_name, u16 service_id,
                                 continue;
                         }
 
+                        if (linux_ipc_kmsg_is_port_closed(port, msg)) {
+                                ref_put(&msg->ms_queue_node.refcount,
+                                        free_message_ref);
+                                ref_put(&port->refcount, free_message_port_ref);
+                                port = NULL;
+                                while (!port) {
+                                        port = thread_lookup_port(
+                                                listen_port_name);
+                                        if (!port) {
+                                                schedule(percpu(core_tm));
+                                        }
+                                }
+                                break;
+                        }
+
                         result = handler(km->hdr.opcode, km, &reply_port);
                         ipc_rpc_reply_best_effort(km,
                                                   reply_port,
@@ -579,6 +599,20 @@ void ipc_server_recv_loop(const char* listen_port_name,
                 while (1) {
                         Message_t* msg = dequeue_recv_msg();
                         if (!msg) {
+                                break;
+                        }
+                        if (linux_ipc_kmsg_is_port_closed(port, msg)) {
+                                ref_put(&msg->ms_queue_node.refcount,
+                                        free_message_ref);
+                                ref_put(&port->refcount, free_message_port_ref);
+                                port = NULL;
+                                while (!port) {
+                                        port = thread_lookup_port(
+                                                listen_port_name);
+                                        if (!port) {
+                                                schedule(percpu(core_tm));
+                                        }
+                                }
                                 break;
                         }
                         on_message(msg, service_id);

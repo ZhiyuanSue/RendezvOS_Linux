@@ -6,6 +6,7 @@
 #include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/mm/linux_page_slice_file.h>
 #include <linux_compat/proc/linux_exec_proc.h>
+#include <linux_compat/proc/linux_exec_stack.h>
 #include <linux_compat/signal/signal_init.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/signal/signal_types.h>
@@ -112,77 +113,6 @@ linux_exec_copy_argv_from_user(VSpace *vs, u64 user_argv, char *arg_storage,
 
         kargv[argc] = NULL;
         return argc;
-}
-
-static error_t exec_store_u64(VSpace *vs, vaddr user_va, u64 value)
-{
-        return linux_mm_store_to_user(vs, (u64)user_va, &value, sizeof(value));
-}
-
-static vaddr build_initial_stack(VSpace *vs, vaddr stack_top, i64 argc,
-                                 const char *kargv[], vaddr *argv_user_out)
-{
-        vaddr sp = stack_top;
-        u64 strings_size = 0;
-        vaddr strings_base;
-        vaddr argv_ptr_area;
-        vaddr string_va;
-        error_t e;
-        i64 i;
-
-        if (argv_user_out) {
-                *argv_user_out = 0;
-        }
-
-        for (i = 0; i < argc; i++) {
-                strings_size += (u64)strlen(kargv[i]) + 1;
-        }
-
-        sp -= strings_size;
-        sp &= ~((vaddr)0xF);
-        strings_base = sp;
-
-        string_va = strings_base;
-        for (i = 0; i < argc; i++) {
-                size_t len = strlen(kargv[i]) + 1;
-
-                e = linux_mm_store_to_user(vs, string_va, kargv[i], len);
-                if (e != REND_SUCCESS) {
-                        return 0;
-                }
-                string_va += (vaddr)len;
-        }
-
-        sp -= (u64)(argc + 1) * sizeof(u64);
-        sp &= ~((vaddr)0xF);
-        argv_ptr_area = sp;
-
-        string_va = strings_base;
-        for (i = 0; i < argc; i++) {
-                e = exec_store_u64(vs,
-                                   argv_ptr_area + (u64)i * sizeof(u64),
-                                   (u64)string_va);
-                if (e != REND_SUCCESS) {
-                        return 0;
-                }
-                string_va += (vaddr)(strlen(kargv[i]) + 1);
-        }
-
-        e = exec_store_u64(vs, argv_ptr_area + (u64)argc * sizeof(u64), 0);
-        if (e != REND_SUCCESS) {
-                return 0;
-        }
-
-        sp -= sizeof(u64);
-        e = exec_store_u64(vs, sp, (u64)argc);
-        if (e != REND_SUCCESS) {
-                return 0;
-        }
-
-        if (argv_user_out) {
-                *argv_user_out = argv_ptr_area;
-        }
-        return sp;
 }
 
 /*
@@ -331,6 +261,7 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
         }
 
         vaddr elf_base = linux_page_slice_file_base(elf_slice);
+        linux_exec_elf_auxv_t elf_auxv;
 
         if (!elf_base) {
                 linux_exec_abort_unrecoverable(alloc,
@@ -340,6 +271,9 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
                                                -E_RENDEZVOS);
         }
         entry_addr = ELF64_HEADER(elf_base)->e_entry;
+        if (!linux_exec_elf_auxv_from_kva(elf_base, &elf_auxv)) {
+                elf_auxv.have_elf = false;
+        }
 
         page_slice_destroy(&elf_slice);
         elf_slice = NULL;
@@ -353,8 +287,8 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
                                                -E_RENDEZVOS);
         }
 
-        initial_stack_sp =
-                build_initial_stack(vs, user_sp, argc, kargv, &argv_user);
+        initial_stack_sp = linux_exec_build_initial_stack(
+                vs, user_sp, argc, kargv, &elf_auxv, &argv_user);
         alloc->m_free(alloc, arg_storage);
         arg_storage = NULL;
         if (initial_stack_sp == 0) {

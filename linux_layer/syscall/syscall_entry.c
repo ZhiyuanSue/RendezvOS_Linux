@@ -11,6 +11,14 @@
 void syscall(struct trap_frame *syscall_ctx)
 {
         const u64 syscall_id = (u64)syscall_ctx->ARCH_SYSCALL_ID;
+        // pr_info("[SYSCALL] syscall id=%lu arg1=%lu arg2=%lu arg3=%lu0 arg4=%lu arg5=%lu arg6=%lu\n",
+        //         (u64)syscall_id,
+        //         (u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
+        //         (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+        //         (u64)syscall_ctx->ARCH_SYSCALL_ARG_3,
+        //         (u64)syscall_ctx->ARCH_SYSCALL_ARG_4,
+        //         (u64)syscall_ctx->ARCH_SYSCALL_ARG_5,
+        //         (u64)syscall_ctx->ARCH_SYSCALL_ARG_6);
         /* Linux compat: user-visible errors must be Linux errno (negative). */
         i64 ret = -LINUX_ENOSYS;
         bool skip_syscall_ret_assign = false;
@@ -68,6 +76,18 @@ void syscall(struct trap_frame *syscall_ctx)
                 break;
         case __NR_getppid:
                 ret = sys_getppid();
+                break;
+        case __NR_getuid:
+                ret = sys_getuid();
+                break;
+        case __NR_getgid:
+                ret = sys_getgid();
+                break;
+        case __NR_setuid:
+                ret = sys_setuid((u32)syscall_ctx->ARCH_SYSCALL_ARG_1);
+                break;
+        case __NR_setgid:
+                ret = sys_setgid((u32)syscall_ctx->ARCH_SYSCALL_ARG_1);
                 break;
         case __NR_kill:
                 ret = sys_kill((i64)syscall_ctx->ARCH_SYSCALL_ARG_1,
@@ -141,6 +161,11 @@ void syscall(struct trap_frame *syscall_ctx)
         case __NR_times:
                 ret = sys_times((u64)syscall_ctx->ARCH_SYSCALL_ARG_1);
                 break;
+#if defined(_X86_64_)
+        case __NR_time:
+                ret = sys_time((u64)syscall_ctx->ARCH_SYSCALL_ARG_1);
+                break;
+#endif
         case __NR_uname:
                 ret = sys_uname((u64)syscall_ctx->ARCH_SYSCALL_ARG_1);
                 break;
@@ -163,6 +188,11 @@ void syscall(struct trap_frame *syscall_ctx)
                 break;
         case __NR_close:
                 ret = sys_close((i32)syscall_ctx->ARCH_SYSCALL_ARG_1);
+                break;
+        case __NR_ioctl:
+                ret = sys_ioctl((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                (u32)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_3);
                 break;
         case __NR_dup:
                 ret = sys_dup((i32)syscall_ctx->ARCH_SYSCALL_ARG_1);
@@ -353,6 +383,23 @@ void syscall(struct trap_frame *syscall_ctx)
                                      (u64)syscall_ctx->ARCH_SYSCALL_ARG_2);
                 break;
 #endif
+        case __NR_getrandom:
+                ret = sys_getrandom((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                    (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                    (u32)syscall_ctx->ARCH_SYSCALL_ARG_3);
+                break;
+        case __NR_prlimit64:
+                ret = sys_prlimit64((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                    (u32)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                    (u64)syscall_ctx->ARCH_SYSCALL_ARG_3,
+                                    (u64)syscall_ctx->ARCH_SYSCALL_ARG_4);
+                break;
+        case __NR_rseq:
+                ret = sys_rseq((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                               (u32)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                               (i32)syscall_ctx->ARCH_SYSCALL_ARG_3,
+                               (u32)syscall_ctx->ARCH_SYSCALL_ARG_4);
+                break;
         default:
                 pr_debug("[SYSCALL] unimplemented id=%lu\n", (u64)syscall_id);
                 break;
@@ -360,6 +407,7 @@ void syscall(struct trap_frame *syscall_ctx)
 
         if (!skip_syscall_ret_assign) {
                 syscall_ctx->ARCH_SYSCALL_RET = (u64)ret;
+                // pr_info("[SYSCALL] syscall ret %ld\n",ret);
         }
 
         /* Deliver after syscall return value is set (handler uses rdi/x0, not

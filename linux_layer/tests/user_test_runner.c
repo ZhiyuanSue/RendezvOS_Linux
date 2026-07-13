@@ -16,7 +16,6 @@
 #include <linux_compat/test_manifest.h>
 #include <linux_compat/test_runner.h>
 #include <modules/test/test.h>
-#include <modules/elf/elf.h>
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/mm/page_slice.h>
 #include <rendezvos/system/powerd.h>
@@ -221,10 +220,15 @@ static void *linux_user_test_thread(void *arg)
 
         linux_run_user_tests();
 
-        pr_info("[ Linux compat ] Trying initramfs /bin/ls demo\n");
-        if (linux_spawn_and_wait_test_path("/bin/ls", 9999u) != REND_SUCCESS) {
-                (void)linux_spawn_and_wait_test_path("/bin/busybox", 9998u);
+        // pr_info("[ Linux compat ] Trying initramfs /bin/ls demo\n");
+
+        pr_info("[ Linux compat ] Trying initramfs /bin/busybox demo\n");
+        if (linux_spawn_and_wait_test_path("/bin/busybox", 9998u)
+            != REND_SUCCESS) {
+                pr_error("[ Linux compat ] /bin/busybox demo spawn failed\n");
         }
+
+        pr_info("[ Linux compat ] end trying\n");
 
         pr_info("[ Linux compat ] All tests completed\n");
 

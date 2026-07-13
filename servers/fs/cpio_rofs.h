@@ -16,6 +16,12 @@
 
 #define CPIO_ROFS_PATH_MAX VFS_PATH_MAX
 
+/*
+ * Flat catalog size for embedded initramfs. Must cover full rootfs cpio
+ * (busybox --list applets + tests + fixtures); 64 was bootstrap-only.
+ */
+#define CPIO_ROFS_MAX_ENTRIES 2048u
+
 typedef struct cpio_rofs_stat {
         u32 mode;
         u64 size;

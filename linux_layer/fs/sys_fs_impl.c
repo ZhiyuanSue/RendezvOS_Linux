@@ -15,6 +15,21 @@
 #include <rendezvos/task/tcb.h>
 #include <syscall.h>
 
+static i64 sys_fs_load_pathname(VSpace *vs, u64 user_pathname, char *pathname,
+                                size_t cap)
+{
+        error_t e;
+
+        e = linux_mm_load_cstring_from_user(vs, user_pathname, pathname, cap);
+        if (e == REND_SUCCESS) {
+                return 0;
+        }
+        if (e == -E_IN_PARAM) {
+                return -LINUX_EINVAL;
+        }
+        return -LINUX_EFAULT;
+}
+
 #define LINUX_O_CREAT     0x40
 #define LINUX_O_DIRECTORY 0x10000
 #if defined(_AARCH64_)
@@ -110,7 +125,6 @@ i64 sys_openat(i32 dirfd, u64 user_pathname, i32 flags, u64 mode)
         linux_fd_entry_t ent;
         i64 handle;
         i32 fd;
-        error_t e;
         i64 ret;
 
         if (!current || !current->vs) {
@@ -122,13 +136,11 @@ i64 sys_openat(i32 dirfd, u64 user_pathname, i32 flags, u64 mode)
                 return -LINUX_EFAULT;
         }
 
-        e = linux_mm_load_from_user(
-                vs, user_pathname, pathname, sizeof(pathname));
-        if (e != REND_SUCCESS) {
-                return -LINUX_EFAULT;
+        ret = sys_fs_load_pathname(vs, user_pathname, pathname, sizeof(pathname));
+        if (ret < 0) {
+                return ret;
         }
 
-        pathname[sizeof(pathname) - 1] = '\0';
         flags = linux_open_flags_normalize(flags);
 
         ret = linux_vfs_resolve_path(
@@ -148,14 +160,8 @@ i64 sys_openat(i32 dirfd, u64 user_pathname, i32 flags, u64 mode)
         ent.vfs_handle = (u32)(handle & VFS_OPEN_RET_HANDLE_MASK);
         strncpy(ent.vfs_abs_path, abs, sizeof(ent.vfs_abs_path) - 1);
         ent.vfs_abs_path[sizeof(ent.vfs_abs_path) - 1] = '\0';
-        if ((handle & VFS_OPEN_RET_IS_DIR_BIT) != 0) {
-                ent.is_dir = true;
-        } else if ((flags & LINUX_O_DIRECTORY) != 0) {
-                ent.is_dir = true;
-        } else if (vfs_ipc_request_response(KMSG_OP_VFS_VALIDATE_DIR,
-                                            VFS_KMSG_FMT_VALIDATE_DIR,
-                                            abs)
-                   == 0) {
+        if ((handle & VFS_OPEN_RET_IS_DIR_BIT) != 0
+            || (flags & LINUX_O_DIRECTORY) != 0) {
                 ent.is_dir = true;
         }
         fd = linux_fd_alloc(current, &ent);
@@ -293,7 +299,6 @@ i64 sys_chdir(u64 user_pathname)
         VSpace *vs;
         char pathname[LINUX_VFS_PATH_MAX];
         char abs[LINUX_VFS_PATH_MAX];
-        error_t e;
         i64 ret;
 
         if (!current || !current->vs) {
@@ -310,13 +315,10 @@ i64 sys_chdir(u64 user_pathname)
                 return -LINUX_EFAULT;
         }
 
-        e = linux_mm_load_from_user(
-                vs, user_pathname, pathname, sizeof(pathname));
-        if (e != REND_SUCCESS) {
-                return -LINUX_EFAULT;
+        ret = sys_fs_load_pathname(vs, user_pathname, pathname, sizeof(pathname));
+        if (ret < 0) {
+                return ret;
         }
-
-        pathname[sizeof(pathname) - 1] = '\0';
 
         ret = linux_vfs_resolve_path(
                 current, LINUX_AT_FDCWD, pathname, abs, sizeof(abs));
@@ -383,7 +385,6 @@ i64 sys_mkdirat(i32 dirfd, u64 user_pathname, u32 mode)
         VSpace *vs;
         char pathname[LINUX_VFS_PATH_MAX];
         char abs[LINUX_VFS_PATH_MAX];
-        error_t e;
         i64 ret;
 
         if (!current || !current->vs) {
@@ -395,13 +396,10 @@ i64 sys_mkdirat(i32 dirfd, u64 user_pathname, u32 mode)
                 return -LINUX_EFAULT;
         }
 
-        e = linux_mm_load_from_user(
-                vs, user_pathname, pathname, sizeof(pathname));
-        if (e != REND_SUCCESS) {
-                return -LINUX_EFAULT;
+        ret = sys_fs_load_pathname(vs, user_pathname, pathname, sizeof(pathname));
+        if (ret < 0) {
+                return ret;
         }
-
-        pathname[sizeof(pathname) - 1] = '\0';
 
         ret = linux_vfs_resolve_path(
                 current, dirfd, pathname, abs, sizeof(abs));
@@ -419,7 +417,6 @@ i64 sys_unlinkat(i32 dirfd, u64 user_pathname, i32 flags)
         VSpace *vs;
         char pathname[LINUX_VFS_PATH_MAX];
         char abs[LINUX_VFS_PATH_MAX];
-        error_t e;
         i64 ret;
 
         if (!current || !current->vs) {
@@ -431,13 +428,10 @@ i64 sys_unlinkat(i32 dirfd, u64 user_pathname, i32 flags)
                 return -LINUX_EFAULT;
         }
 
-        e = linux_mm_load_from_user(
-                vs, user_pathname, pathname, sizeof(pathname));
-        if (e != REND_SUCCESS) {
-                return -LINUX_EFAULT;
+        ret = sys_fs_load_pathname(vs, user_pathname, pathname, sizeof(pathname));
+        if (ret < 0) {
+                return ret;
         }
-
-        pathname[sizeof(pathname) - 1] = '\0';
 
         ret = linux_vfs_resolve_path(
                 current, dirfd, pathname, abs, sizeof(abs));
@@ -458,7 +452,6 @@ i64 sys_renameat(i32 olddirfd, u64 user_oldpath, i32 newdirfd,
         char newpath[LINUX_VFS_PATH_MAX];
         char old_abs[LINUX_VFS_PATH_MAX];
         char new_abs[LINUX_VFS_PATH_MAX];
-        error_t e;
         i64 ret;
 
         if (!current || !current->vs) {
@@ -470,19 +463,15 @@ i64 sys_renameat(i32 olddirfd, u64 user_oldpath, i32 newdirfd,
                 return -LINUX_EFAULT;
         }
 
-        e = linux_mm_load_from_user(
-                vs, user_oldpath, oldpath, sizeof(oldpath));
-        if (e != REND_SUCCESS) {
-                return -LINUX_EFAULT;
+        ret = sys_fs_load_pathname(vs, user_oldpath, oldpath, sizeof(oldpath));
+        if (ret < 0) {
+                return ret;
         }
-        oldpath[sizeof(oldpath) - 1] = '\0';
 
-        e = linux_mm_load_from_user(
-                vs, user_newpath, newpath, sizeof(newpath));
-        if (e != REND_SUCCESS) {
-                return -LINUX_EFAULT;
+        ret = sys_fs_load_pathname(vs, user_newpath, newpath, sizeof(newpath));
+        if (ret < 0) {
+                return ret;
         }
-        newpath[sizeof(newpath) - 1] = '\0';
 
         ret = linux_vfs_resolve_path(
                 current, olddirfd, oldpath, old_abs, sizeof(old_abs));
@@ -512,7 +501,6 @@ i64 sys_linkat(i32 olddirfd, u64 user_oldpath, i32 newdirfd, u64 user_newpath,
         char newpath[LINUX_VFS_PATH_MAX];
         char old_abs[LINUX_VFS_PATH_MAX];
         char new_abs[LINUX_VFS_PATH_MAX];
-        error_t e;
         i64 ret;
 
         (void)flags;
@@ -526,19 +514,15 @@ i64 sys_linkat(i32 olddirfd, u64 user_oldpath, i32 newdirfd, u64 user_newpath,
                 return -LINUX_EFAULT;
         }
 
-        e = linux_mm_load_from_user(
-                vs, user_oldpath, oldpath, sizeof(oldpath));
-        if (e != REND_SUCCESS) {
-                return -LINUX_EFAULT;
+        ret = sys_fs_load_pathname(vs, user_oldpath, oldpath, sizeof(oldpath));
+        if (ret < 0) {
+                return ret;
         }
-        oldpath[sizeof(oldpath) - 1] = '\0';
 
-        e = linux_mm_load_from_user(
-                vs, user_newpath, newpath, sizeof(newpath));
-        if (e != REND_SUCCESS) {
-                return -LINUX_EFAULT;
+        ret = sys_fs_load_pathname(vs, user_newpath, newpath, sizeof(newpath));
+        if (ret < 0) {
+                return ret;
         }
-        newpath[sizeof(newpath) - 1] = '\0';
 
         ret = linux_vfs_resolve_path(
                 current, olddirfd, oldpath, old_abs, sizeof(old_abs));
@@ -565,7 +549,6 @@ i64 sys_newfstatat(i32 dirfd, u64 user_pathname, u64 user_statbuf, i32 flags)
         VSpace *vs;
         char pathname[LINUX_VFS_PATH_MAX];
         char abs[LINUX_VFS_PATH_MAX];
-        error_t e;
         i64 ret;
 
         if (!current || !current->vs) {
@@ -577,13 +560,10 @@ i64 sys_newfstatat(i32 dirfd, u64 user_pathname, u64 user_statbuf, i32 flags)
                 return -LINUX_EFAULT;
         }
 
-        e = linux_mm_load_from_user(
-                vs, user_pathname, pathname, sizeof(pathname));
-        if (e != REND_SUCCESS) {
-                return -LINUX_EFAULT;
+        ret = sys_fs_load_pathname(vs, user_pathname, pathname, sizeof(pathname));
+        if (ret < 0) {
+                return ret;
         }
-
-        pathname[sizeof(pathname) - 1] = '\0';
 
         ret = linux_vfs_resolve_path(
                 current, dirfd, pathname, abs, sizeof(abs));
@@ -604,7 +584,6 @@ i64 sys_readlinkat(i32 dirfd, u64 user_pathname, u64 user_buf, u64 bufsiz)
         VSpace *vs;
         char pathname[LINUX_VFS_PATH_MAX];
         char abs[LINUX_VFS_PATH_MAX];
-        error_t e;
         i64 ret;
 
         if (!current || !current->vs) {
@@ -616,12 +595,10 @@ i64 sys_readlinkat(i32 dirfd, u64 user_pathname, u64 user_buf, u64 bufsiz)
                 return -LINUX_EFAULT;
         }
 
-        e = linux_mm_load_from_user(
-                vs, user_pathname, pathname, sizeof(pathname));
-        if (e != REND_SUCCESS) {
-                return -LINUX_EFAULT;
+        ret = sys_fs_load_pathname(vs, user_pathname, pathname, sizeof(pathname));
+        if (ret < 0) {
+                return ret;
         }
-        pathname[sizeof(pathname) - 1] = '\0';
 
         ret = linux_vfs_resolve_path(
                 current, dirfd, pathname, abs, sizeof(abs));
@@ -642,7 +619,6 @@ i64 sys_faccessat(i32 dirfd, u64 user_pathname, i32 mode, i32 flags)
         VSpace *vs;
         char pathname[LINUX_VFS_PATH_MAX];
         char abs[LINUX_VFS_PATH_MAX];
-        error_t e;
         i64 ret;
 
         if (!current || !current->vs) {
@@ -654,12 +630,10 @@ i64 sys_faccessat(i32 dirfd, u64 user_pathname, i32 mode, i32 flags)
                 return -LINUX_EFAULT;
         }
 
-        e = linux_mm_load_from_user(
-                vs, user_pathname, pathname, sizeof(pathname));
-        if (e != REND_SUCCESS) {
-                return -LINUX_EFAULT;
+        ret = sys_fs_load_pathname(vs, user_pathname, pathname, sizeof(pathname));
+        if (ret < 0) {
+                return ret;
         }
-        pathname[sizeof(pathname) - 1] = '\0';
 
         ret = linux_vfs_resolve_path(
                 current, dirfd, pathname, abs, sizeof(abs));

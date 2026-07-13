@@ -12,6 +12,7 @@
 
 #include <common/string.h>
 #include <linux_compat/errno.h>
+#include <modules/log/log.h>
 #include <rendezvos/error.h>
 
 static vfs_ns_node_t vfs_ns_nodes[VFS_NS_MAX_NODES];
@@ -341,6 +342,9 @@ static bool vfs_ns_populate_cb(const char *path, const cpio_rofs_stat_t *st,
 
         node = vfs_ns_ensure_path_nodes(path, st->is_dir);
         if (!node) {
+                pr_error("[VFS][namespace] populate failed (node cap %u): %s\n",
+                         VFS_NS_MAX_NODES,
+                         path);
                 vfs_ns_populate_failed = true;
                 return false;
         }

@@ -1,4 +1,5 @@
 #include <linux_compat/errno.h>
+#include <linux_compat/ipc/block_wake.h>
 #include <linux_compat/ipc/exit_protocol.h>
 #include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/proc/clean_ipc.h>
@@ -213,6 +214,10 @@ static i64 wait4_block_on_port(Tcb_Base* parent, linux_proc_append_t* parent_pa,
                 }
 
                 error_t recv_e = recv_msg(wait_port);
+                if (recv_e == -E_REND_PORT_CLOSED) {
+                        ref_put(&wait_port->refcount, free_message_port_ref);
+                        return -LINUX_EINTR;
+                }
                 if (recv_e != REND_SUCCESS) {
                         reap_ret = wait4_reap_zombie_or(
                                 parent, parent_pa, pid, user_wstatus, 0);
@@ -247,6 +252,12 @@ static i64 wait4_block_on_port(Tcb_Base* parent, linux_proc_append_t* parent_pa,
                                 return -LINUX_EINTR;
                         }
                         continue;
+                }
+
+                if (linux_ipc_kmsg_is_port_closed(wait_port, msg)) {
+                        ref_put(&msg->ms_queue_node.refcount, free_message_ref);
+                        ref_put(&wait_port->refcount, free_message_port_ref);
+                        return -LINUX_EINTR;
                 }
 
                 if (self && linux_signal_wait4_should_return_eintr(self)) {

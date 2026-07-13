@@ -29,11 +29,15 @@ error_t vfs_root_init(const void *cpio_image, u64 cpio_len)
 
         err = cpio_rofs_init(cpio_image, cpio_len);
         if (err != REND_SUCCESS) {
+                pr_error("[VFS] cpio_rofs_init failed: %d\n", (int)err);
                 return err;
         }
 
         err = vfs_namespace_init();
         if (err != REND_SUCCESS) {
+                pr_error("[VFS] vfs_namespace_init failed: %d (cpio %u entries)\n",
+                         (int)err,
+                         cpio_rofs_parsed_count());
                 return err;
         }
 

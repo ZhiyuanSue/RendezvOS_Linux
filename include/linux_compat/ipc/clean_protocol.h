@@ -2,6 +2,7 @@
 #define _LINUX_COMPAT_IPC_CLEAN_PROTOCOL_H_
 
 #include <common/types.h>
+#include <rendezvos/ipc/kmsg_system.h>
 
 /*
  * clean_server IPC (linux compat):
@@ -12,8 +13,10 @@
 
 #define CLEAN_SERVER_PORT_NAME "clean_server_port"
 
-#define KMSG_OP_CLEAN_THREAD_REAP  1u
-#define KMSG_OP_CLEAN_TASK_REAP    2u
+#define KMSG_OP_CLEAN_FIRST (KMSG_OP_SYSTEM_END + 1u)
+
+#define KMSG_OP_CLEAN_THREAD_REAP  (KMSG_OP_CLEAN_FIRST + 0u)
+#define KMSG_OP_CLEAN_TASK_REAP    (KMSG_OP_CLEAN_FIRST + 1u)
 #define LINUX_KMSG_FMT_THREAD_REAP "p q"
 #define LINUX_KMSG_FMT_TASK_REAP   "i"
 

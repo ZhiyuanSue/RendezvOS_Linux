@@ -37,6 +37,13 @@ error_t linux_mm_store_to_user(VSpace* vs, u64 user_va, const void* src,
  * only). */
 error_t linux_mm_load_from_user(VSpace* vs, u64 user_va, void* dst, size_t len);
 
+/**
+ * Copy a NUL-terminated string from user VA (byte-at-a-time; safe near stack
+ * top where a bulk @p cap read could cross an unmapped guard page).
+ */
+error_t linux_mm_load_cstring_from_user(VSpace* vs, u64 user_va, char* dst,
+                                        size_t cap);
+
 /** Copy between two user VAs (mapped leaf pages only). */
 error_t linux_mm_copy_user_range(VSpace* vs, u64 dst_user_va, u64 src_user_va,
                                  size_t len);

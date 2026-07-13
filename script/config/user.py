@@ -111,6 +111,32 @@ def resolve_user_inner_build_dir(user_dir: str, user_json: dict) -> Optional[str
     return None
 
 
+def build_busybox_for_rootfs(
+    root_dir: str, arch: str, cross_prefix: str, user_json: dict
+) -> None:
+    """Install static busybox applets into rootfs/bin/ (optional, see user.json)."""
+    if not user_json.get("busybox", False):
+        return
+
+    bb_script = os.path.join(root_dir, "script", "rootfs", "build_busybox.sh")
+    if not os.path.isfile(bb_script):
+        print(f"ERROR: busybox build script missing: {bb_script}")
+        sys.exit(2)
+
+    user_cc = cross_prefix + "gcc"
+    env = (
+        f'ARCH="{arch}" '
+        f'CROSS_PREFIX="{cross_prefix}" '
+        f'CC="{user_cc}" '
+        f'BUSYBOX_AUTO_FETCH=1'
+    )
+    print(f"INFO: building busybox for {arch} → rootfs/bin/ ...")
+    status = os.system(f'{env} bash "{bb_script}"')
+    if status != 0:
+        print("ERROR: build_busybox.sh failed")
+        sys.exit(2)
+
+
 if __name__ == "__main__":
     arch = sys.argv[1]
     root_dir = sys.argv[2]
@@ -237,6 +263,8 @@ if __name__ == "__main__":
                 print("ERROR: pack_user_rootfs.py failed")
                 sys.exit(2)
 
+            build_busybox_for_rootfs(root_dir, arch, cross_prefix, user_json)
+
             link_app_obj = os.path.join(user_dir, "link_app.o")
             if not os.path.isfile(link_app_obj):
                 print("ERROR: filesystem mode expected stub link_app.o")
@@ -248,9 +276,12 @@ if __name__ == "__main__":
             with open(os.path.join(build_dir, "link_app.arch"), "w") as f:
                 f.write(arch + "\n")
             os.chdir(pwd)
+            bb_note = ""
+            if user_json.get("busybox", False):
+                bb_note = ", busybox in rootfs/bin/"
             print(
                 f"User payload (cpio mode): {len(os.listdir(os.path.join(root_dir, 'rootfs', 'tests')))} "
-                f"file(s) under rootfs/tests/"
+                f"file(s) under rootfs/tests/{bb_note}"
             )
         else:
             if not user_user_dir:

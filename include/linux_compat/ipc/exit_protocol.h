@@ -2,6 +2,7 @@
 #define _LINUX_COMPAT_IPC_EXIT_PROTOCOL_H_
 
 #include <common/types.h>
+#include <rendezvos/ipc/kmsg_system.h>
 
 /*
  * Zombie wakeup after THREAD_REAP (thread_number==0):
@@ -10,8 +11,10 @@
  * kmsg_hdr.module = target port service_id; payload is a wakeup hint only.
  */
 
-#define KMSG_OP_PROC_EXIT_NOTIFY      1u
-#define KMSG_OP_PROC_WAIT_INTERRUPT   2u
+#define KMSG_OP_PROC_FIRST (KMSG_OP_SYSTEM_END + 1u)
+
+#define KMSG_OP_PROC_EXIT_NOTIFY      (KMSG_OP_PROC_FIRST + 0u)
+#define KMSG_OP_PROC_WAIT_INTERRUPT   (KMSG_OP_PROC_FIRST + 1u)
 #define LINUX_KMSG_FMT_EXIT_NOTIFY    "qi"
 #define LINUX_KMSG_FMT_WAIT_INTERRUPT "q"
 

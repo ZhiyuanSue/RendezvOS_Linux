@@ -4,24 +4,27 @@
 #include <common/types.h>
 #include <linux_compat/ipc/rpc.h>
 #include <rendezvos/ipc/kmsg.h>
+#include <rendezvos/ipc/kmsg_system.h>
 #include <rendezvos/task/tcb.h>
 
 #include "vfs_backend.h"
 
 #define VFS_BACKEND_IPC_CALLER_PORT "vfs_backend_caller"
 
-#define VFS_BACKEND_IPC_OPC_LOOKUP   1u
-#define VFS_BACKEND_IPC_OPC_READ      2u
-#define VFS_BACKEND_IPC_OPC_WRITE     3u
-#define VFS_BACKEND_IPC_OPC_TRUNCATE  4u
-#define VFS_BACKEND_IPC_OPC_FLUSH     5u
-#define VFS_BACKEND_IPC_OPC_READDIR   6u
-#define VFS_BACKEND_IPC_OPC_READLINK  7u
-#define VFS_BACKEND_IPC_OPC_MKDIR       8u
-#define VFS_BACKEND_IPC_OPC_CREATE      9u
-#define VFS_BACKEND_IPC_OPC_UNLINK      10u
-#define VFS_BACKEND_IPC_OPC_RENAME      11u
-#define VFS_BACKEND_IPC_OPC_LINK        12u
+#define VFS_BACKEND_IPC_OPC_FIRST (KMSG_OP_SYSTEM_END + 1u)
+
+#define VFS_BACKEND_IPC_OPC_LOOKUP    (VFS_BACKEND_IPC_OPC_FIRST + 0u)
+#define VFS_BACKEND_IPC_OPC_READ      (VFS_BACKEND_IPC_OPC_FIRST + 1u)
+#define VFS_BACKEND_IPC_OPC_WRITE     (VFS_BACKEND_IPC_OPC_FIRST + 2u)
+#define VFS_BACKEND_IPC_OPC_TRUNCATE  (VFS_BACKEND_IPC_OPC_FIRST + 3u)
+#define VFS_BACKEND_IPC_OPC_FLUSH     (VFS_BACKEND_IPC_OPC_FIRST + 4u)
+#define VFS_BACKEND_IPC_OPC_READDIR   (VFS_BACKEND_IPC_OPC_FIRST + 5u)
+#define VFS_BACKEND_IPC_OPC_READLINK  (VFS_BACKEND_IPC_OPC_FIRST + 6u)
+#define VFS_BACKEND_IPC_OPC_MKDIR       (VFS_BACKEND_IPC_OPC_FIRST + 7u)
+#define VFS_BACKEND_IPC_OPC_CREATE      (VFS_BACKEND_IPC_OPC_FIRST + 8u)
+#define VFS_BACKEND_IPC_OPC_UNLINK      (VFS_BACKEND_IPC_OPC_FIRST + 9u)
+#define VFS_BACKEND_IPC_OPC_RENAME      (VFS_BACKEND_IPC_OPC_FIRST + 10u)
+#define VFS_BACKEND_IPC_OPC_LINK        (VFS_BACKEND_IPC_OPC_FIRST + 11u)
 
 typedef i64 (*vfs_backend_service_fn)(vfs_backend_req_t *req);
 

@@ -39,8 +39,14 @@ fi
 mv -f "$TMP_CPIO" "$OUT_CPIO"
 
 echo "Wrote $OUT_CPIO ($(wc -c <"$OUT_CPIO" | tr -d ' ') bytes)"
+
+# List sample paths without `cmd | head` (pipefail + SIGPIPE → false failure).
+listing_file="$(mktemp "${TMPDIR:-/tmp}/rootfs_cpio_list.XXXXXX")"
+cpio -t <"$OUT_CPIO" 2>/dev/null >"$listing_file"
+path_count="$(wc -l <"$listing_file" | tr -d ' ')"
 echo "Contents (first 32 paths):"
-cpio -t <"$OUT_CPIO" 2>/dev/null | head -32
-if [[ $(cpio -t <"$OUT_CPIO" 2>/dev/null | wc -l | tr -d ' ') -gt 32 ]]; then
-	echo "... (truncated)"
+head -32 "$listing_file"
+if [[ "$path_count" -gt 32 ]]; then
+	echo "... (truncated, $path_count entries total)"
 fi
+rm -f "$listing_file"

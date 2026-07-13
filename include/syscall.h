@@ -10,6 +10,10 @@ void sys_exit_group(i64 exit_code);
 i64 sys_getpid(void);
 i64 sys_gettid(void);
 i64 sys_getppid(void);
+i64 sys_getuid(void);
+i64 sys_getgid(void);
+i64 sys_setuid(u32 uid);
+i64 sys_setgid(u32 gid);
 u64 sys_brk(u64 new_brk);
 
 i64 sys_write_impl(i32 fd, u64 user_buf, u64 count);
@@ -47,6 +51,7 @@ i64 sys_openat(i32 dirfd, u64 user_pathname, i32 flags, u64 mode);
 i64 sys_close(i32 fd);
 i64 sys_read(i32 fd, u64 user_buf, u64 count);
 i64 sys_write(i32 fd, u64 user_buf, u64 count);
+i64 sys_ioctl(i32 fd, u32 request, u64 user_arg);
 i64 sys_fstat(i32 fd, u64 user_statbuf);
 i64 sys_stat(u64 user_pathname, u64 user_statbuf);
 i64 sys_newfstatat(i32 dirfd, u64 user_pathname, u64 user_statbuf, i32 flags);
@@ -75,6 +80,11 @@ i64 sys_times(u64 user_buf);
 i64 sys_nanosleep(u64 user_req, u64 user_rem);
 i64 sys_clock_nanosleep(i32 clockid, i32 flags, u64 user_req, u64 user_rem);
 i64 sys_clock_gettime(i32 clockid, u64 user_tp);
+i64 sys_time(u64 user_tloc);
 i64 sys_uname(u64 user_buf);
+
+i64 sys_getrandom(u64 user_buf, u64 count, u32 flags);
+i64 sys_prlimit64(i32 pid, u32 resource, u64 user_new_rlim, u64 user_old_rlim);
+i64 sys_rseq(u64 user_rseq, u32 rseq_len, i32 flags, u32 sig);
 
 #endif

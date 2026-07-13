@@ -14,7 +14,7 @@
  * hold bytes only.
  */
 
-#define VFS_NS_MAX_NODES 256
+#define VFS_NS_MAX_NODES 2048
 
 typedef struct vfs_ns_node {
         char path[VFS_PATH_MAX];

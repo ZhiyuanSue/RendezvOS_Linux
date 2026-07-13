@@ -38,6 +38,7 @@
 | [`DIRECTORY_PHASE.md`](DIRECTORY_PHASE.md) | **下一目标：chdir / openat / getdents（无新 inode 层）** |
 | [`FILE_LOADING.md`](FILE_LOADING.md) | page_slice 统一文件加载（CPIO / IPC / embedded） |
 | [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) | cpio initramfs 方案 |
+| [`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md) | **busybox demo 临时妥协与待修项（cpio 上限、初始栈等）** |
 | [`ROOTFS.md`](ROOTFS.md) | **rootfs/ 目录、Git 策略、fixtures vs generated** |
 | [`RAMFS_AND_VFS_STORAGE.md`](RAMFS_AND_VFS_STORAGE.md) | ramfs/存储后端笔记 |
 | [`USER_TESTS.md`](USER_TESTS.md) | 用户态测例 |
