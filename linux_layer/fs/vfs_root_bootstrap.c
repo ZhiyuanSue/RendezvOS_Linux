@@ -10,7 +10,7 @@
 
 extern char rootfs_cpio_start[];
 extern char rootfs_cpio_end[];
-extern enum cpu_status CPU_STATE;
+extern volatile u64 CPU_STATE;
 
 error_t linux_vfs_root_ensure_init(void)
 {
