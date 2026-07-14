@@ -176,13 +176,86 @@ demo 的 **`argv[0]="ls"`** 是 busybox **多调用名**；进程镜像是 `/bin
 
 ---
 
-## P3 — 测试 harness
+## P3 — 测试 harness（现状）
 
-- Demo 仍在 `user_test_runner` 末尾调用 `linux_spawn_and_wait_test_path("/bin/busybox", 9998u)`  
-- **不再**在 runner 注入 argv；栈仅在 **`linux_thread_append_init`**  
+`linux_layer/tests/user_test_runner.c`（`LINUX_COMPAT_TEST`）当前是 **BSP 内核编排器**，不是用户态 init：
+
+| 步骤 | 机制 |
+|------|------|
+| 读清单 | 内核 `vfs_kern_read_file_slice("/tests/manifest")`（**不走**用户 `open/read`） |
+| 逐个测例 | `vfs_kern_read_file_slice(path)` → **`gen_task_from_elf`**（**不是 execve**） |
+| 等待结束 | `test_cookie` + `clean_server` → `linux_user_test_notify_exit` |
+| 判定 | harness 只判 spawn/等待是否成功；**不解析** stdout 里 `[PASS]`/`[FAIL]` |
+
+末尾 demo：仍 `linux_spawn_and_wait_test_path("/bin/busybox", …)`，argv 在 **`linux_thread_append_init`** 写死为 `ls /bin`。
+
 - 打印 **`exit_code`**；`RENDEZVOS_ROOT_AUTO_POWEROFF` 后 shutdown  
+- **待修**：独立 demo / `execve`；busybox 失败时不 auto poweroff（可配置）
 
-**待修**: 独立 demo / `execve`；busybox 失败时不 auto poweroff（可配置）。
+**相关**：[`USER_TESTS.md`](USER_TESTS.md) · `script/config/pack_user_rootfs.py`（生成 `rootfs/tests/manifest`）
+
+---
+
+## P3 — 测例编排：迁到 busybox 脚本（待做）
+
+> **方向**：busybox `ls /bin` 已通，下一步用 **`busybox sh /tests/run_all.sh`** 替代 C 里写死的 manifest 循环，贴近真实 initramfs。
+
+### 为何可以迁
+
+| 保留 | 替换 |
+|------|------|
+| `make user` → `rootfs/tests/*` + `manifest` | 不再在 `user_test_runner.c` 里 `for` 每个路径 |
+| `pack_user_rootfs.py` / `manifest.order` | 额外生成 **`/tests/run_all.sh`** 打进 cpio |
+| cpio / VFS 布局 | 内核 bootstrap **只启动一次** shell 脚本 |
+
+### 为何不能立刻删掉 `user_test_runner.c`
+
+当前 busybox 成功路径 ≠ shell 跑脚本：
+
+| 能力 | 脚本是否需要 | 现状 |
+|------|-------------|------|
+| 启动 busybox | 必须 | 仍 **`gen_task_from_elf`** + Path B 栈，非用户态 `execve` |
+| `fork` + `wait4` | shell 子进程 | Phase 1 已有 |
+| `execve` 各测例 ELF | 必须 | FS execve 有；**经 shell 链式 exec 未验证** |
+| `open/read` 脚本与 manifest | 必须 | 依赖文件 syscall 成熟度 |
+| shebang `#!/bin/sh` | 可选 | execve **未做** shebang（可显式 `busybox sh script`） |
+| glibc auxv / 栈 | busybox + 部分测例 | Path B 仅在 kernel spawn hook |
+
+### 目标脚本形态（示例）
+
+```sh
+#!/bin/busybox sh
+set -e
+while read -r t; do
+  case "$t" in ''|\#*) continue ;; esac
+  echo "=== $t ==="
+  "$t" || exit 1
+done < /tests/manifest
+```
+
+成败以 **进程 exit code**（及 stdout 文案）为准；不再需要 `test_cookie` / `linux_user_test_notify_exit` 做 harness 同步。
+
+### 分阶段迁移
+
+| 阶段 | 内容 | 涉及 |
+|------|------|------|
+| **A** | 保留 manifest 构建；runner **只启动一次** `busybox sh /tests/run_all.sh`（`gen_task_from_elf` 或 `execve`）；脚本内顺序跑 manifest | `rootfs/tests/run_all.sh`、`pack_user_rootfs.py`、`user_test_runner.c` |
+| **B** | 内核仅做 VFS/early init，然后 **`execve("/bin/busybox", ["sh", "/tests/run_all.sh"], …)`** 或 `/init`；缩掉 `linux_user_test_thread` 大循环 | `sys_execve.c`、`linux_exec_stack.c` |
+| **C** | 去掉 harness 专用 `test_cookie` / notify_exit；SMP 压测若仍需 per-CPU case，另保留内核 smp 模式或脚本并行策略 | `append_hooks`、`clean_server` |
+
+### 迁移前需验证
+
+1. **musl 测例**经 **用户态 `execve`**（非 `gen_task_from_elf`）栈/auxv 是否正常（`PT_NOTE`=1 路径）。
+2. **busybox ash** 读脚本、`fork`、`wait`、对 manifest 每项 `exec` 测例 ELF。
+3. **`elf_read_test`**：保留为内核自检，或改为脚本内用户态读文件。
+4. **SMP 语义**：[`USER_TESTS.md`](USER_TESTS.md) 的 per-CPU barrier 与纯 shell 单进程顺序默认不一致，需单独决策。
+
+### 建议落地顺序（相对 P0 execve）
+
+1. 在 `rootfs/tests/` 增加 `run_all.sh`；构建时由 `pack_user_rootfs.py` 生成或拷贝模板。  
+2. runner 末尾（或替换 manifest 循环）改为 spawn/exec **`/bin/busybox` + `sh` + `/tests/run_all.sh`**。  
+3. demo 与测例编排统一为 execve 路径后，删除 `linux_exec_spawn_default_argv` 里写死的 `ls /bin`（demo 改由脚本调用 `ls`）。  
+4. 阶段 B：eval 是否以 `/init` 替代 `linux_user_test_init`。
 
 ---
 
@@ -214,9 +287,11 @@ demo 的 **`argv[0]="ls"`** 是 busybox **多调用名**；进程镜像是 `/bin
 
 1. ~~调试 **`ls /bin` EFAULT**~~ ✅（pathname cstring load + VFS stat）  
 2. **Demo 改用 execve**（或 core 统一 Path B，去掉 fake return）  
-3. 正规化 **用户字符串拷贝**（替代逐字节 bring-up）  
-4. auxv 长尾（`AT_HWCAP`、`AT_EXECFN`、真随机 / `getrandom` 增强）  
-5. 收紧 cpio/namespace 或 lazy 策略  
+3. **阶段 A**：`run_all.sh` + runner 单次 `busybox sh`（见 §P3 测例编排）  
+4. 正规化 **用户字符串拷贝**（替代逐字节 bring-up）  
+5. auxv 长尾（`AT_HWCAP`、`AT_EXECFN`、真随机 / `getrandom` 增强）  
+6. **阶段 B**：`/init` 或 execve 替代 `linux_user_test_thread` 循环  
+7. 收紧 cpio/namespace 或 lazy 策略  
 
 ---
 
@@ -224,6 +299,7 @@ demo 的 **`argv[0]="ls"`** 是 busybox **多调用名**；进程镜像是 `/bin
 
 | 日期 | 变更 |
 |------|------|
+| 2026-07-13 | §P3：补充 **测例编排迁到 busybox 脚本**（`run_all.sh`、阶段 A/B/C、前置条件）；更新建议修复顺序 |
 | 2026-07-13 | **里程碑**：`ls /bin` **exit_code=0**，列出 `/bin` applet；根因 pathname bulk 读越过栈顶 guard → `linux_mm_load_cstring_from_user` |
 | 2026-07-13 | 修复 `NEWFSTATAT` RPC p1/p2 + `linux_user_stat_t`（VFS stat 写回） |
 | 2026-07-13 | busybox 进用户；曾 exit 1 + `Bad address`（已由 cstring path load 修复） |

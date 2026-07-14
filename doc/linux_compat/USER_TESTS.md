@@ -15,6 +15,8 @@ integrated harness（`filesystem:true`）下：
 
 测例**数据文件**（`./text.txt`、`./mnt/`）是 `rootfs/` 里的 fixtures，由用户态 `open/read` 经 VFS 访问，不走上述 slice 路径。
 
+**演进**：计划用 initramfs 内 **`busybox sh /tests/run_all.sh`** 替代内核 `user_test_runner.c` 的 manifest 循环；阶段划分与前置条件见 [`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md) §P3 测例编排。
+
 ## 为什么需要 single / smp 分层
 
 - **single**：优先验证“功能点是否工作”（如 `getpid`/`brk`），减少并发噪声，降低 bring-up 调试成本。
