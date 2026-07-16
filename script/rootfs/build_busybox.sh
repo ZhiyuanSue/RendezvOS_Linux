@@ -7,6 +7,12 @@
 #   disable CONFIG_TC (Linux 6.8+ kernel headers dropped CBQ UAPI; tc.c won't build)
 #   make O=$BB_BUILD CROSS_COMPILE=... CC=...   (silentoldconfig runs during build)
 #
+# Caching (busybox is stable; avoid rebuild after make config / clean):
+#   Out-of-tree objects live under .cache/busybox-$ARCH/ (not wiped by make clean).
+#   A stamp records ARCH / toolchain / config knobs. Matching stamp + binary →
+#   skip compile and only refresh rootfs/bin/ applets.
+#   Force a full rebuild: FORCE_BUSYBOX=1 (or BUSYBOX_REBUILD=1).
+#
 # Prerequisites (host): busybox source tree, cross gcc for ARCH.
 #
 # Usage:
@@ -23,6 +29,10 @@ ROOTFS_DIR="${ROOTFS_DIR:-$ROOT_DIR/rootfs}"
 BUSYBOX_SRC="${BUSYBOX_SRC:-$ROOT_DIR/third_party/busybox}"
 BUSYBOX_VERSION="${BUSYBOX_VERSION:-1.36.1}"
 BUSYBOX_AUTO_FETCH="${BUSYBOX_AUTO_FETCH:-0}"
+BUSYBOX_FULL="${BUSYBOX_FULL:-0}"
+FORCE_BUSYBOX="${FORCE_BUSYBOX:-${BUSYBOX_REBUILD:-0}}"
+# Stamp schema; bump when install/config policy changes in a way that must rebuild.
+BUSYBOX_STAMP_REV="1"
 
 fetch_busybox_source() {
 	local tarball="/tmp/busybox-${BUSYBOX_VERSION}.tar.bz2"
@@ -105,49 +115,111 @@ apply_busybox_config_tweaks() {
 	fi
 }
 
+busybox_stamp_text() {
+	local cc_id="missing"
+	if command -v "${CC}" >/dev/null 2>&1; then
+		# One line; enough to invalidate cache when the cross gcc changes.
+		cc_id="$("${CC}" --version 2>/dev/null | head -n1 || echo unknown)"
+	fi
+	cat <<EOF
+stamp_rev=${BUSYBOX_STAMP_REV}
+arch=${ARCH}
+cross_prefix=${CROSS_PREFIX}
+cc=${CC}
+cc_id=${cc_id}
+busybox_src=${BUSYBOX_SRC}
+busybox_version=${BUSYBOX_VERSION}
+busybox_full=${BUSYBOX_FULL}
+config_static=y
+config_tc=n
+EOF
+}
+
+install_busybox_applets() {
+	local bb_bin="$1"
+
+	mkdir -p "$ROOTFS_DIR/bin"
+	install -m 755 "$bb_bin" "$ROOTFS_DIR/bin/busybox"
+	(
+		cd "$ROOTFS_DIR/bin"
+		# Drop stale symlinks from a prior full --install run.
+		for f in *; do
+			if [[ "$f" != "busybox" ]]; then
+				rm -f "$f"
+			fi
+		done
+
+		# Demo default: a small applet set (ls demo + shell). Set BUSYBOX_FULL=1 for all applets.
+		if [[ "${BUSYBOX_FULL}" == "1" ]]; then
+			for applet in $(./busybox --list); do
+				if [[ "$applet" == "busybox" ]]; then
+					continue
+				fi
+				ln -sf busybox "$applet"
+			done
+		else
+			for applet in ls sh ash cat echo pwd true false test mkdir mount umount \
+				readlink stat ln cp mv rm clear uname env sleep; do
+				ln -sf busybox "$applet"
+			done
+		fi
+	)
+
+	echo "Installed busybox to $ROOTFS_DIR/bin/"
+	echo "  $(find "$ROOTFS_DIR/bin" -maxdepth 1 | wc -l | tr -d ' ') entries (busybox + applets)"
+}
+
 if ! command -v "${CC}" >/dev/null 2>&1; then
 	echo "ERROR: cross compiler not found: $CC" >&2
 	exit 1
 fi
 
-mkdir -p "$ROOTFS_DIR/bin"
-BB_BUILD="$ROOT_DIR/build/busybox-$ARCH"
+# Survive `make clean` / `make config` (they wipe build/). Old path was build/busybox-$ARCH.
+BB_BUILD="${BUSYBOX_BUILD_DIR:-$ROOT_DIR/.cache/busybox-$ARCH}"
+BB_STAMP="$BB_BUILD/.rendezvos_busybox.stamp"
+BB_BIN="$BB_BUILD/busybox"
 mkdir -p "$BB_BUILD"
 
-echo "Configuring busybox (static, no tc) for $ARCH ..."
-make -C "$BUSYBOX_SRC" O="$BB_BUILD" distclean 2>/dev/null || true
-make -C "$BUSYBOX_SRC" O="$BB_BUILD" defconfig
-apply_busybox_config_tweaks "$BB_BUILD/.config"
-# busybox 1.36 kconfig has no olddefconfig; `make` below runs silentoldconfig.
+EXPECTED_STAMP="$(busybox_stamp_text)"
+NEED_BUILD=1
+STAMP_TMP="$(mktemp)"
+printf '%s\n' "$EXPECTED_STAMP" >"$STAMP_TMP"
+trap 'rm -f "$STAMP_TMP"' EXIT
 
-make -C "$BUSYBOX_SRC" O="$BB_BUILD" -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)" \
-	CROSS_COMPILE="$CROSS_PREFIX" CC="$CC"
-
-install -m 755 "$BB_BUILD/busybox" "$ROOTFS_DIR/bin/busybox"
-(
-	cd "$ROOTFS_DIR/bin"
-	# Drop stale symlinks from a prior full --install run.
-	for f in *; do
-		if [[ "$f" != "busybox" ]]; then
-			rm -f "$f"
-		fi
-	done
-
-	# Demo default: a small applet set (ls demo + shell). Set BUSYBOX_FULL=1 for all applets.
-	if [[ "${BUSYBOX_FULL:-0}" == "1" ]]; then
-		for applet in $(./busybox --list); do
-			if [[ "$applet" == "busybox" ]]; then
-				continue
-			fi
-			ln -sf busybox "$applet"
-		done
+if [[ "$FORCE_BUSYBOX" == "1" ]]; then
+	echo "FORCE_BUSYBOX=1: rebuilding busybox for $ARCH ..."
+	make -C "$BUSYBOX_SRC" O="$BB_BUILD" distclean 2>/dev/null || true
+elif [[ -x "$BB_BIN" && -f "$BB_STAMP" ]] && cmp -s "$STAMP_TMP" "$BB_STAMP"; then
+	echo "INFO: reusing cached busybox ($BB_BIN); skip compile"
+	NEED_BUILD=0
+else
+	if [[ -x "$BB_BIN" ]]; then
+		echo "INFO: busybox cache stale or incomplete; rebuilding for $ARCH ..."
 	else
-		for applet in ls sh ash cat echo pwd true false test mkdir mount umount \
-			readlink stat ln cp mv rm clear uname env sleep; do
-			ln -sf busybox "$applet"
-		done
+		echo "INFO: no cached busybox binary; building for $ARCH ..."
 	fi
-)
+fi
 
-echo "Installed busybox to $ROOTFS_DIR/bin/"
-echo "  $(find "$ROOTFS_DIR/bin" -maxdepth 1 | wc -l | tr -d ' ') entries (busybox + applets)"
+if [[ "$NEED_BUILD" == "1" ]]; then
+	if [[ ! -f "$BB_BUILD/.config" ]]; then
+		echo "Configuring busybox (static, no tc) for $ARCH ..."
+		make -C "$BUSYBOX_SRC" O="$BB_BUILD" defconfig
+		apply_busybox_config_tweaks "$BB_BUILD/.config"
+	else
+		# Keep existing .config; re-apply required tweaks (idempotent).
+		apply_busybox_config_tweaks "$BB_BUILD/.config"
+	fi
+
+	# busybox 1.36 kconfig has no olddefconfig; `make` below runs silentoldconfig.
+	make -C "$BUSYBOX_SRC" O="$BB_BUILD" -j"$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)" \
+		CROSS_COMPILE="$CROSS_PREFIX" CC="$CC"
+
+	cp "$STAMP_TMP" "$BB_STAMP"
+fi
+
+if [[ ! -x "$BB_BIN" ]]; then
+	echo "ERROR: busybox binary missing after build: $BB_BIN" >&2
+	exit 1
+fi
+
+install_busybox_applets "$BB_BIN"

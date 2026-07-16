@@ -7,6 +7,7 @@ MODULES_DIR ?= $(ROOT_DIR)/modules
 SCRIPT_DIR ?= $(ROOT_DIR)/script
 SCRIPT_CONFIG_DIR ?= $(SCRIPT_DIR)/config
 SCRIPT_MAKE_DIR ?= $(SCRIPT_DIR)/make
+CACHE_DIR ?= $(ROOT_DIR)/.cache
 ROOT_QEMU_LOG ?= $(ROOT_DIR)/qemu.log
 ROOT_OBJDUMP_LOG ?= $(ROOT_DIR)/objdump.log
 
@@ -61,7 +62,7 @@ all: build
 root_dirs:
 	@mkdir -p $(ROOT_BUILD_DIR) $(ROOT_OBJ_DIR)
 
-config: mrproper root_dirs
+config: clean root_dirs
 	@if [ -z "$(ARCH)" ]; then echo "ARCH is required, for example: make ARCH=x86_64 config"; exit 1; fi
 	@$(MAKE) -C $(CORE_DIR) config ARCH=$(ARCH) SMP=$(SMP) MEM_SIZE=$(MEM_SIZE) DBG=$(DBG)
 	@python3 $(SCRIPT_CONFIG_DIR)/configure_root.py $(ROOT_DIR) $(ARCH)
@@ -155,6 +156,7 @@ clean:
 mrproper:
 	@$(MAKE) -C $(CORE_DIR) mrproper
 	@-rm -rf $(ROOT_BUILD_DIR)
+	@-rm -rf $(CACHE_DIR)
 
 $(ROOT_OBJ_DIR)/%.o: $(ROOT_DIR)/%.c
 	@mkdir -p $(dir $@)

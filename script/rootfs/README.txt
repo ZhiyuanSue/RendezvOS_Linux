@@ -26,5 +26,10 @@ Commands:
   make rootfs ARCH=x86_64        # refresh build/rootfs.cpio
   make ARCH=x86_64 build run
 
+Busybox (optional, user.json "busybox": true):
+  Objects cached under .cache/busybox-$ARCH/ so make clean / config do not force
+  a full recompile. make user only reinstalls applets into rootfs/bin/ when the
+  cache stamp matches. Force rebuild: FORCE_BUSYBOX=1 make user ARCH=...
+
 See doc/linux_compat/INITRAMFS_PLAN.md
 See doc/linux_compat/ROOTFS.md for Git tracking (fixtures vs generated tests/)

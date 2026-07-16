@@ -14,7 +14,7 @@
 |------|----------|------|-----|
 | **测例数据（fixtures）** | `text.txt`、`cpio_probe.txt`、`mnt/` | 仓库维护、手改 | **应提交** |
 | **测例程序（generated）** | `tests/*` ELF、`tests/manifest` | `make user` 生成 | **不提交** |
-| **可选 busybox** | `bin/busybox` | `build_busybox.sh` 本地构建 | **不提交**（可选） |
+| **可选 busybox** | `bin/busybox` | `build_busybox.sh` 本地构建（产物缓存 `.cache/busybox-$ARCH/`，`clean`/`config` 不强制重编；`FORCE_BUSYBOX=1` 全量重建） | **不提交**（可选） |
 
 manifest 是 CPIO 上的普通文件 `/tests/manifest`，与 ELF 一样由 `vfs_kern_read_file_slice` 加载（见 [`FILE_LOADING.md`](FILE_LOADING.md)）。
 
