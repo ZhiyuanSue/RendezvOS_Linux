@@ -295,6 +295,14 @@ done < /tests/manifest
 
 ---
 
+目前我们没有考虑smp=1的情形，让fs server 和后端等内容放在了core1，但是开smp=1会有bug
+
+目前仍然有残留的app num以及对应的incbin相关的残余，这个需要和启动使用busybox一样进行清理。
+
+需要统一aarch64的对daif的处理，甚至可能需要跟x86 64一起做个统一抽象。
+
+---
+
 ## Changelog
 
 | 日期 | 变更 |
