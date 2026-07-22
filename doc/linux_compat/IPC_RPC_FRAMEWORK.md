@@ -11,7 +11,17 @@ core 仍只提供 `send_msg` / `recv_msg` / `kmsg_create` / `ipc_serial`；**不
 | 模式 | API | 示例 |
 |------|-----|------|
 | **Request–reply** | `ipc_rpc_server_loop` + handler 返回 `i64` | `vfs_server` |
-| **One-way** | `ipc_server_recv_loop` + 自行处理 | `clean_server`（可逐步迁入） |
+| **One-way** | `ipc_server_recv_loop` + 自行处理 | （同步 handler） |
+| **One-way + per-msg worker** | `ipc_server_recv_loop_per_msg_worker` | `clean_server` |
+| **Request–reply + per-msg worker** | `ipc_rpc_server_loop_per_msg_worker` | （VFS 可迁） |
+
+### Per-message worker（过渡方案）
+
+Dispatcher 只 `recv_msg` 并 `gen_thread_from_func` 拉起 worker；handler（含阻塞 `send_msg`，如 `EXIT_NOTIFY`）在 worker 上跑。worker 结束后 `THREAD_FLAG_EXIT_REQUESTED` → `schedule` 变 zombie，由 **dispatcher 直接 `delete_thread`** 回收（不走 clean IPC，避免递归）。
+
+**Name 生命周期**：`gen_thread_from_func` 不拷贝 name，而 `del_thread_structure` 会对 `thread->name` 做 `m_free`。worker 名必须是堆分配，禁止传静态字符串（否则回收时堆损坏）。
+
+后续可换成线程池 / 有栈协程，API 保持 listen loop 形态。
 
 ---
 
@@ -70,16 +80,16 @@ DEFINE_INIT(my_init);
 
 ---
 
-## 服务端模板（one-way）
+## 服务端模板（one-way + per-msg worker）
 
 ```c
 static void on_msg(Message_t* msg, u16 service_id) {
         (void)service_id;
-        /* decode kmsg, no reply */
+        /* may block on send_msg; listen loop stays free */
 }
 
 void clean_server_thread(void) {
-        ipc_server_recv_loop(CLEAN_SERVER_PORT_NAME, on_msg);
+        ipc_server_recv_loop_per_msg_worker(CLEAN_SERVER_PORT_NAME, on_msg);
 }
 ```
 

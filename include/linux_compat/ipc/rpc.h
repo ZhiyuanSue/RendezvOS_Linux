@@ -82,11 +82,31 @@ void ipc_rpc_server_loop(const char* listen_port_name, u16 service_id,
 
 /*
  * One-way server loop (clean_server pattern): recv and invoke callback per
- * message; no automatic reply.
+ * message; no automatic reply. Runs the handler on the dispatcher thread
+ * (blocks the listen loop if the handler blocks).
  */
 typedef void (*ipc_server_message_fn_t)(Message_t* msg, u16 service_id);
 
 void ipc_server_recv_loop(const char* listen_port_name,
                           ipc_server_message_fn_t on_message);
+
+/*
+ * One-way listen loop with a fresh kernel worker thread per message.
+ * Dispatcher only recv + spawn + reap finished workers (direct delete_thread
+ * when zombie). Workers may block on send_msg (e.g. EXIT_NOTIFY) without
+ * stalling the listen port. Placeholder for a future pool / stackful
+ * coroutine model; VFS can migrate to the RPC worker variant below.
+ */
+void ipc_server_recv_loop_per_msg_worker(const char* listen_port_name,
+                                         ipc_server_message_fn_t on_message);
+
+/*
+ * Request–reply listen loop with the same per-message worker model as
+ * ipc_server_recv_loop_per_msg_worker.
+ */
+void ipc_rpc_server_loop_per_msg_worker(const char* listen_port_name,
+                                        u16 service_id, u16 resp_opcode,
+                                        const char* resp_fmt,
+                                        ipc_rpc_server_handler_t handler);
 
 #endif /* _LINUX_COMPAT_IPC_RPC_H_ */

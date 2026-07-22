@@ -144,6 +144,7 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
         linux_proc_append_t *child_pa = linux_proc_append(child);
         if (child_pa) {
                 memset(child_pa, 0, sizeof(*child_pa));
+                INIT_LIST_HEAD(&child_pa->pending_exits);
                 if (parent_pa) {
                         if (flags & CLONE_VM) {
                                 /* Shared address space: share brk and mmap_hint

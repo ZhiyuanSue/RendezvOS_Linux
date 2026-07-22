@@ -105,27 +105,25 @@ static void clean_handle_thread_reap(const kmsg_t *km)
                 unlock_cas(&task->thread_list_lock);
 
                 /*
-                 * Approach 2: notify when task shell is empty and child is a
-                 * waitable zombie. Route to parent wait_port or kernel_port.
+                 * Last thread gone and still a waitable zombie: notify the
+                 * reaper. Parent wait4 must recv this before TASK_REAP.
                  */
                 if (threads_left == 0 && pa && pa->exit_state == 1
                     && task_pid > 0) {
                         Tcb_Base *parent = NULL;
 
-                        if (pa->ppid > 0) {
+                        if (pa->ppid > 0)
                                 parent = find_task_by_pid(pa->ppid);
-                        }
 
-                        if (parent) {
+                        if (parent)
                                 (void)linux_proc_post_exit_notify(
                                         pa->ppid,
                                         task_pid,
                                         pa->exit_code);
-                        } else {
+                        else
                                 (void)linux_proc_post_kernel_exit_notify(
                                         task_pid,
                                         pa->exit_code);
-                        }
                 }
         }
 }
@@ -240,7 +238,8 @@ static void clean_server_on_message(Message_t *msg, u16 service_id)
 
 void clean_server_thread(void)
 {
-        ipc_server_recv_loop(CLEAN_SERVER_PORT_NAME, clean_server_on_message);
+        ipc_server_recv_loop_per_msg_worker(CLEAN_SERVER_PORT_NAME,
+                                            clean_server_on_message);
 }
 
 static void clean_server_init(void)

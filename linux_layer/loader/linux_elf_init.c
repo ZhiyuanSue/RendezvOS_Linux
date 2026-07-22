@@ -10,8 +10,10 @@
 #include <linux_compat/fs/linux_fd_table.h>
 #include <linux_compat/fs/vfs_protocol.h>
 #include <linux_compat/ipc/rpc.h>
+#include <linux_compat/proc/wait_ipc.h>
 #include <linux_compat/proc_registry.h>
 #include <linux_compat/signal/signal_state.h>
+#include <common/dsa/list.h>
 #include <linux_compat/time/linux_time_sleep.h>
 #include <linux_compat/initcall.h>
 #include <modules/log/log.h>
@@ -39,11 +41,15 @@ const thread_append_hooks_t linux_thread_append_hooks = {
 void linux_task_append_fini(Tcb_Base *tcb)
 {
         Tcb_Base *task = tcb;
+        linux_proc_append_t *pa;
         pid_t pid;
 
-        if (!task) {
+        if (!task)
                 return;
-        }
+
+        pa = linux_proc_append(task);
+        if (pa)
+                linux_proc_wait_pending_drain(pa);
 
         pid = task->pid;
         proc_reparent_children(pid, LINUX_INIT_REAP_PPID);
@@ -166,6 +172,7 @@ error_t linux_thread_append_init(Thread_Base *thread,
                 return -E_IN_PARAM;
         }
 
+        INIT_LIST_HEAD(&pa->pending_exits);
         linux_proc_set_heap_from_elf_load(tcb, info->max_load_end);
         if (linux_signal_proc_attach(tcb) != REND_SUCCESS) {
                 pr_emer("[LINUX_ELF_INIT] ERROR: signal attach failed for pid=%d\n",

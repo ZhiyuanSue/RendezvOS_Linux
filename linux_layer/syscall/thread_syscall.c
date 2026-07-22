@@ -70,8 +70,10 @@ void sys_exit(i64 exit_code)
         }
 
         /*
-         * Approach 2: child sends THREAD_REAP only; clean_server posts
-         * EXIT_NOTIFY to the parent after thread_number reaches zero.
+         * Model: set zombie flag, then THREAD_REAP. clean_server checks
+         * exit_state after delete_thread and posts EXIT_NOTIFY; parent wait4
+         * recv then TASK_REAP. Flag must be set before the reap message so
+         * clean_server never races a missing zombie mark.
          */
         bool reaper_exists = false;
         if (task && task->pid > 0) {

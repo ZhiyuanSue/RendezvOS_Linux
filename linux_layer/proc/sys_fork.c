@@ -79,8 +79,7 @@ i64 sys_fork(void)
         child->vs = child_vs;
         child->pid = get_new_id(&pid_manager);
 
-        /* Initialize child proc append (do not memcpy wait_queue / exit state).
-         */
+        /* Initialize child proc append (do not memcpy pending_exits / exit). */
         linux_proc_append_t *parent_pa = linux_proc_append(parent);
         linux_proc_append_t *child_pa = linux_proc_append(child);
         if (child_pa) {
@@ -88,7 +87,7 @@ i64 sys_fork(void)
                 child_pa->ppid = parent->pid;
                 child_pa->exit_code = 0;
                 child_pa->exit_state = 0;
-                INIT_LIST_HEAD(&child_pa->wait_queue);
+                INIT_LIST_HEAD(&child_pa->pending_exits);
                 if (parent_pa) {
                         child_pa->start_brk = parent_pa->brk;
                         child_pa->brk = parent_pa->brk;

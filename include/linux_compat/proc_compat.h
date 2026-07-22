@@ -38,7 +38,8 @@ typedef struct linux_proc_append {
         pid_t pgid; /* Process group ID (for wait4 pid==0, pid<-1) */
         i32 exit_code; /* Exit code for wait() */
         i32 exit_state; /* Exit state: 0=running, 1=zombie, 2=reaped */
-        struct list_entry wait_queue; /* Parent processes waiting */
+        /* EXIT_NOTIFY not yet consumed by wait4 (wait(pid) mismatch). */
+        struct list_entry pending_exits;
 
         /*
          * Phase 2B / Phase 4: heap-backed Linux state (append = pointer only).

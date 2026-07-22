@@ -3,6 +3,7 @@
  */
 
 #include <common/string.h>
+#include <common/dsa/list.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/ipc/block_wake.h>
 #include <linux_compat/ipc/rpc.h>
@@ -17,6 +18,7 @@
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread_loader.h>
 
 extern struct Port_Table* global_port_table;
 
@@ -619,4 +621,290 @@ void ipc_server_recv_loop(const char* listen_port_name,
                         ref_put(&msg->ms_queue_node.refcount, free_message_ref);
                 }
         }
+}
+
+/*
+ * Per-message worker: dispatcher stays in recv; handler may block on send.
+ * Temporary model before a thread pool / stackful coroutine.
+ */
+typedef struct ipc_server_worker_job {
+        struct list_entry node;
+        Thread_Base* thread;
+        Message_t* msg;
+        u16 service_id;
+        ipc_server_message_fn_t on_message;
+        ipc_rpc_server_handler_t rpc_handler;
+        u16 resp_opcode;
+        const char* resp_fmt;
+        volatile bool finished;
+} ipc_server_worker_job_t;
+
+static char ipc_server_worker_name[] = "ipc_srv_worker";
+
+static void ipc_server_worker_jobs_reap(struct list_entry* active)
+{
+        struct list_entry* pos;
+        struct list_entry* n;
+        struct allocator* alloc = percpu(kallocator);
+
+        if (!active || !list_node_is_valid(active))
+                return;
+
+        list_for_each_safe(pos, n, active) {
+                ipc_server_worker_job_t* job =
+                        list_entry(pos, ipc_server_worker_job_t, node);
+
+                if (!job->finished || !job->thread)
+                        continue;
+                if (thread_get_status(job->thread) != thread_status_zombie) {
+                        schedule(percpu(core_tm));
+                        if (!job->thread
+                            || thread_get_status(job->thread)
+                                       != thread_status_zombie)
+                                continue;
+                }
+
+                list_del_init(&job->node);
+                /*
+                 * Reap locally: never THREAD_REAP these workers through
+                 * clean_server (would recurse into the same listen path).
+                 * thread->name must be heap-owned — del_thread_structure
+                 * always m_free(name).
+                 */
+                if (delete_thread(job->thread) != REND_SUCCESS) {
+                        pr_error(
+                                "[IPC-RPC] worker delete_thread failed thr=%p\n",
+                                (void*)job->thread);
+                }
+                job->thread = NULL;
+                if (alloc && alloc->m_free)
+                        alloc->m_free(alloc, job);
+        }
+}
+
+static void* ipc_server_worker_entry(void* arg)
+{
+        ipc_server_worker_job_t* job = (ipc_server_worker_job_t*)arg;
+        Thread_Base* self = get_cpu_current_thread();
+
+        if (!job) {
+                for (;;)
+                        schedule(percpu(core_tm));
+        }
+
+        if (job->rpc_handler) {
+                const kmsg_t* km = job->msg ? kmsg_from_msg(job->msg) : NULL;
+                char* reply_port = NULL;
+                i64 result;
+
+                if (!km || km->hdr.module != job->service_id) {
+                        ipc_rpc_reply_best_effort(km,
+                                                  NULL,
+                                                  job->service_id,
+                                                  job->resp_opcode,
+                                                  job->resp_fmt,
+                                                  -LINUX_EIO);
+                } else {
+                        result = job->rpc_handler(km->hdr.opcode, km,
+                                                  &reply_port);
+                        ipc_rpc_reply_best_effort(km,
+                                                  reply_port,
+                                                  job->service_id,
+                                                  job->resp_opcode,
+                                                  job->resp_fmt,
+                                                  result);
+                }
+        } else if (job->on_message && job->msg) {
+                job->on_message(job->msg, job->service_id);
+        }
+
+        if (job->msg) {
+                ref_put(&job->msg->ms_queue_node.refcount, free_message_ref);
+                job->msg = NULL;
+        }
+
+        /*
+         * Handler done: dispatcher may delete_thread only after schedule()
+         * turns EXIT_REQUESTED into zombie on switch-away.
+         */
+        job->finished = true;
+        if (self)
+                thread_or_flags(self, THREAD_FLAG_EXIT_REQUESTED);
+        for (;;)
+                schedule(percpu(core_tm));
+        return NULL;
+}
+
+static error_t ipc_server_worker_spawn(struct list_entry* active, Message_t* msg,
+                                       u16 service_id,
+                                       ipc_server_message_fn_t on_message,
+                                       ipc_rpc_server_handler_t rpc_handler,
+                                       u16 resp_opcode, const char* resp_fmt)
+{
+        struct allocator* alloc = percpu(kallocator);
+        ipc_server_worker_job_t* job;
+        Thread_Base* thr = NULL;
+        char* name;
+        error_t e;
+
+        if (!active || !msg || !alloc || !alloc->m_alloc)
+                return -E_IN_PARAM;
+
+        job = (ipc_server_worker_job_t*)alloc->m_alloc(alloc, sizeof(*job));
+        if (!job)
+                return -E_RENDEZVOS;
+
+        /*
+         * gen_thread_from_func does not copy the name; del_thread_structure
+         * always m_free(thread->name). A static string here corrupts the heap
+         * when the worker is reaped (seen as wild faults after test exit).
+         */
+        name = (char*)alloc->m_alloc(alloc, sizeof(ipc_server_worker_name));
+        if (!name) {
+                if (alloc->m_free)
+                        alloc->m_free(alloc, job);
+                return -E_RENDEZVOS;
+        }
+        memcpy(name, ipc_server_worker_name, sizeof(ipc_server_worker_name));
+
+        INIT_LIST_HEAD(&job->node);
+        job->thread = NULL;
+        job->msg = msg;
+        job->service_id = service_id;
+        job->on_message = on_message;
+        job->rpc_handler = rpc_handler;
+        job->resp_opcode = resp_opcode;
+        job->resp_fmt = resp_fmt;
+        job->finished = false;
+
+        /* On list before the thread becomes runnable (reap-safe). */
+        list_add_tail(&job->node, active);
+
+        e = gen_thread_from_func(&thr,
+                                 ipc_server_worker_entry,
+                                 name,
+                                 percpu(core_tm),
+                                 job);
+        if (e != REND_SUCCESS || !thr) {
+                list_del_init(&job->node);
+                if (alloc->m_free) {
+                        alloc->m_free(alloc, name);
+                        alloc->m_free(alloc, job);
+                }
+                return e != REND_SUCCESS ? e : -E_RENDEZVOS;
+        }
+
+        job->thread = thr;
+        return REND_SUCCESS;
+}
+
+static void ipc_server_listen_dispatch(const char* listen_port_name,
+                                       ipc_server_message_fn_t on_message,
+                                       ipc_rpc_server_handler_t rpc_handler,
+                                       u16 service_id_hint, u16 resp_opcode,
+                                       const char* resp_fmt)
+{
+        Message_Port_t* port = NULL;
+        struct list_entry active;
+
+        if (!listen_port_name || (!on_message && !rpc_handler))
+                return;
+
+        INIT_LIST_HEAD(&active);
+
+        while (!port) {
+                port = thread_lookup_port(listen_port_name);
+                if (!port)
+                        schedule(percpu(core_tm));
+        }
+
+        pr_info("[IPC-RPC] per-msg worker loop on '%s'\n", listen_port_name);
+
+        while (1) {
+                error_t ret;
+                u16 service_id;
+
+                ipc_server_worker_jobs_reap(&active);
+
+                ret = recv_msg(port);
+                service_id = rpc_handler ? service_id_hint : port->service_id;
+
+                if (ret != REND_SUCCESS) {
+                        ref_put(&port->refcount, free_message_port_ref);
+                        port = NULL;
+                        while (!port) {
+                                port = thread_lookup_port(listen_port_name);
+                                if (!port)
+                                        schedule(percpu(core_tm));
+                        }
+                        continue;
+                }
+
+                while (1) {
+                        Message_t* msg = dequeue_recv_msg();
+
+                        if (!msg)
+                                break;
+
+                        if (linux_ipc_kmsg_is_port_closed(port, msg)) {
+                                ref_put(&msg->ms_queue_node.refcount,
+                                        free_message_ref);
+                                ref_put(&port->refcount, free_message_port_ref);
+                                port = NULL;
+                                while (!port) {
+                                        port = thread_lookup_port(
+                                                listen_port_name);
+                                        if (!port)
+                                                schedule(percpu(core_tm));
+                                }
+                                break;
+                        }
+
+                        ipc_server_worker_jobs_reap(&active);
+
+                        if (ipc_server_worker_spawn(&active,
+                                                    msg,
+                                                    service_id,
+                                                    on_message,
+                                                    rpc_handler,
+                                                    resp_opcode,
+                                                    resp_fmt)
+                            != REND_SUCCESS) {
+                                pr_error(
+                                        "[IPC-RPC] worker spawn failed; drop msg\n");
+                                if (rpc_handler) {
+                                        const kmsg_t* km = kmsg_from_msg(msg);
+
+                                        ipc_rpc_reply_best_effort(
+                                                km,
+                                                NULL,
+                                                service_id,
+                                                resp_opcode,
+                                                resp_fmt,
+                                                -LINUX_EAGAIN);
+                                }
+                                ref_put(&msg->ms_queue_node.refcount,
+                                        free_message_ref);
+                        }
+                        /* else: ownership of msg transferred to worker */
+                }
+        }
+}
+
+void ipc_server_recv_loop_per_msg_worker(const char* listen_port_name,
+                                         ipc_server_message_fn_t on_message)
+{
+        ipc_server_listen_dispatch(listen_port_name, on_message, NULL, 0, 0,
+                                   NULL);
+}
+
+void ipc_rpc_server_loop_per_msg_worker(const char* listen_port_name,
+                                        u16 service_id, u16 resp_opcode,
+                                        const char* resp_fmt,
+                                        ipc_rpc_server_handler_t handler)
+{
+        if (!resp_fmt)
+                resp_fmt = IPC_RPC_RESP_FMT_DEFAULT;
+        ipc_server_listen_dispatch(listen_port_name, NULL, handler, service_id,
+                                   resp_opcode, resp_fmt);
 }
