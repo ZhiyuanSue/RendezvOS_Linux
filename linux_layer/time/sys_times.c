@@ -6,8 +6,6 @@
 #include <rendezvos/time.h>
 #include <syscall.h>
 
-extern volatile i64 jeffies;
-
 i64 sys_times(u64 user_buf)
 {
         Tcb_Base *task = get_cpu_current_task();
@@ -35,5 +33,5 @@ i64 sys_times(u64 user_buf)
                 }
         }
 
-        return (i64)jeffies;
+        return jeffies_get();
 }

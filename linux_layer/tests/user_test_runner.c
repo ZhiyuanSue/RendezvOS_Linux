@@ -19,10 +19,10 @@
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/mm/page_slice.h>
 #include <rendezvos/system/powerd.h>
+#include <rendezvos/time.h>
 
 #ifdef LINUX_COMPAT_TEST
 
-extern volatile i64 jeffies;
 extern volatile bool is_print_sche_info;
 
 extern int elf_read_test(void);
@@ -99,7 +99,7 @@ static error_t linux_spawn_and_wait_test_path(const char *path, u32 test_index)
 
         test_slot_t *slot = get_test_slot();
         cpu_id_t cpu = percpu(cpu_number);
-        u64 cookie = ((u64)cpu << 56) ^ ((u64)jeffies << 8)
+        u64 cookie = ((u64)cpu << 56) ^ ((u64)jeffies_get() << 8)
                      ^ ((u64)test_index + 1);
         if (cookie == 0) {
                 cookie = 1;
