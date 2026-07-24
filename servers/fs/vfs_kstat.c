@@ -55,14 +55,14 @@ void linux_user_stat_from_kstat(const vfs_kstat_t *in, linux_user_stat_t *out)
         memset(out, 0, sizeof(*out));
         out->st_dev = in->st_dev;
         out->st_ino = in->st_ino;
-        out->st_nlink = in->st_nlink;
         out->st_mode = in->st_mode;
+        out->st_nlink = in->st_nlink;
         out->st_uid = in->st_uid;
         out->st_gid = in->st_gid;
         out->st_rdev = in->st_rdev;
         out->st_size = in->st_size;
-        out->st_blksize = (i32)in->st_blksize;
-        out->st_blocks = (i64)in->st_blocks;
+        out->st_blksize = in->st_blksize;
+        out->st_blocks = in->st_blocks;
         out->st_atime_sec = in->st_atime_sec;
         out->st_atime_nsec = in->st_atime_nsec;
         out->st_mtime_sec = in->st_mtime_sec;

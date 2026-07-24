@@ -268,8 +268,42 @@ vaddr linux_exec_build_initial_stack(VSpace *vs, vaddr stack_top, i64 argc,
 
         pair_count = linux_exec_auxv_fill_pairs(
                 elf_auxv, random_va, pairs, LINUX_EXEC_AUXV_MAX_PAIRS);
+
+        /*
+         * Contiguous low→high: [argc|argv…|NULL|envp NULL|auxv…|AT_NULL].
+         * Align the final entry SP (argc address) per arch ABI by inserting
+         * padding *above* auxv (between random/strings and auxv) — never
+         * between envp and auxv, or glibc treats pad zeros as AT_NULL and
+         * skips PHDR/ENTRY (user NULL deref at 0x0 on aarch64 busybox).
+         *
+         *   aarch64: entry SP % 16 == 0
+         *   x86_64:  entry SP % 16 == 8  (as if _start were CALL'd)
+         */
+        {
+                u64 auxv_bytes = (u64)pair_count * 2U * sizeof(u64);
+                u64 vector_bytes = sizeof(u64) /* envp NULL */
+                                   + (u64)(argc + 1) * sizeof(u64) /* argv */
+                                   + sizeof(u64); /* argc */
+                u64 total = auxv_bytes + vector_bytes;
+                vaddr entry_sp = sp - total;
+                vaddr aligned;
+
+#if defined(_AARCH64_)
+                aligned = entry_sp & ~((vaddr)0xF);
+#elif defined(_X86_64_)
+                aligned = (entry_sp & ~((vaddr)0xF)) | (vaddr)0x8;
+                if (aligned > entry_sp) {
+                        aligned -= (vaddr)0x10;
+                }
+#else
+                aligned = entry_sp & ~((vaddr)0xF);
+#endif
+                if (aligned < entry_sp) {
+                        sp -= (entry_sp - aligned);
+                }
+        }
+
         sp -= (u64)pair_count * 2U * sizeof(u64);
-        sp &= ~((vaddr)0xF);
 
         for (u32 j = 0; j < pair_count; j++) {
                 e = exec_store_u64(vs, sp + (u64)j * 2U * sizeof(u64), pairs[j].tag);
@@ -291,7 +325,6 @@ vaddr linux_exec_build_initial_stack(VSpace *vs, vaddr stack_top, i64 argc,
         }
 
         sp -= (u64)(argc + 1) * sizeof(u64);
-        sp &= ~((vaddr)0xF);
         argv_ptr_area = sp;
 
         {

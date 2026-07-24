@@ -278,6 +278,7 @@ done < /tests/manifest
 | **exit 139** | Path B SP 未 commit；或栈未 bootstrap（查 `PT_NOTE` 检测、hook 是否跑） |
 | 有 syscall 无输出 | auxv / `getrandom` |
 | **`ls: … Bad address`** | pathname **bulk 256B** 越过栈顶 guard；查 `linux_mm_load_cstring_from_user` |
+| **aarch64：`ls /bin` 只打印 `/bin` 不列目录** | `struct stat` 布局：a64 为 `mode` 在 `nlink` 前；曾误用 x86 布局 → `S_ISDIR` 失败。查 `linux_user_stat.h` |
 | **exit 0** + `/bin` 列表 | ✅ demo 目标达成 |
 | **exit 1** 且有 stderr 文案 | 用户态已跑通，属功能/compat 缺口非 spawn 失败 |
 
@@ -307,6 +308,8 @@ done < /tests/manifest
 
 | 日期 | 变更 |
 |------|------|
+| 2026-07-24 | **aarch64 `ls /bin` 只打印路径**：`linux_user_stat` 按 arch 分布局（a64: mode 在 nlink 前） |
+| 2026-07-24 | **aarch64 busybox**：入口 SP 按 arch 对齐；padding 只能在 auxv 之上（曾误插 envp↔auxv → 假 AT_NULL → 用户态访问 0x0） |
 | 2026-07-13 | §P3：补充 **测例编排迁到 busybox 脚本**（`run_all.sh`、阶段 A/B/C、前置条件）；更新建议修复顺序 |
 | 2026-07-13 | **里程碑**：`ls /bin` **exit_code=0**，列出 `/bin` applet；根因 pathname bulk 读越过栈顶 guard → `linux_mm_load_cstring_from_user` |
 | 2026-07-13 | 修复 `NEWFSTATAT` RPC p1/p2 + `linux_user_stat_t`（VFS stat 写回） |
