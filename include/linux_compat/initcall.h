@@ -30,7 +30,11 @@ static inline void linux_init_bsp_mark_done(bool *done)
 }
 
 /* VFS server + storage backend IPC threads (see servers/fs/). */
+#if defined(NR_CPUS) && (NR_CPUS > 1)
+#define VFS_SERVICE_CPU_ID 1u
+#else
 #define VFS_SERVICE_CPU_ID 0u
+#endif
 
 static inline bool linux_init_on_vfs_service_cpu(void)
 {
