@@ -3,6 +3,7 @@
 
 #include <common/stdarg.h>
 #include <common/types.h>
+#include <linux_compat/ipc/port_naming.h>
 #include <rendezvos/ipc/kmsg.h>
 #include <rendezvos/ipc/message.h>
 #include <rendezvos/ipc/port.h>
@@ -13,6 +14,8 @@
  * services). Built on core send_msg/recv_msg + kmsg TLV (reply port = 't').
  *
  * One-way servers (e.g. clean_server) use ipc_server_recv_loop() only.
+ * Long-running work (EXIT_NOTIFY) is spawned by the service itself — there is
+ * no generic per-message worker pool in this framework.
  */
 
 #define IPC_RPC_RESP_OPCODE_DEFAULT 0u
@@ -44,10 +47,21 @@ void ipc_rpc_unregister_port_by_pid(const char* prefix, pid_t pid);
 /*
  * Blocking RPC: variadic args match @req_fmt; reply port TLV 't' appended.
  * Response uses @resp_opcode + @resp_fmt (VFS passes KMSG_OP_VFS_RESP / "q").
+ * Interruptible: pending signals / IPC_RECV_INTERRUPT → -EINTR (VFS).
  */
 i64 ipc_rpc_call_va(Message_Port_t* server_port, Message_Port_t* reply_port,
                     u16 req_opcode, const char* req_fmt, u16 resp_opcode,
                     const char* resp_fmt, va_list ap);
+
+/*
+ * Same as ipc_rpc_call_va but ignores deliverable signals and interrupt
+ * kmsgs — for kernel-internal completion RPCs (e.g. TASK_REAP_SYNC) that
+ * must not abandon the reply port while the server still holds work.
+ */
+i64 ipc_rpc_call_va_uninterruptible(Message_Port_t* server_port,
+                                    Message_Port_t* reply_port, u16 req_opcode,
+                                    const char* req_fmt, u16 resp_opcode,
+                                    const char* resp_fmt, va_list ap);
 
 /* Convenience: response opcode 0, format "q". */
 i64 ipc_rpc_call(Message_Port_t* server_port, Message_Port_t* reply_port,
@@ -61,12 +75,17 @@ i64 ipc_rpc_call_named_va(const char* server_port_name,
 i64 ipc_rpc_call_named(const char* server_port_name, Message_Port_t* reply_port,
                        u16 req_opcode, const char* req_fmt, ...);
 
+i64 ipc_rpc_call_named_uninterruptible(const char* server_port_name,
+                                       Message_Port_t* reply_port,
+                                       u16 req_opcode, const char* req_fmt,
+                                       ...);
+
+/* Blocking rendezvous reply (default for all live request–reply servers). */
 bool ipc_rpc_send_reply(u16 module, u16 resp_opcode, const char* resp_fmt,
                         const char* reply_port_name, i64 result);
 
-void ipc_rpc_reply_best_effort(const kmsg_t* km, const char* reply_port_name,
-                               u16 module, u16 resp_opcode,
-                               const char* resp_fmt, i64 result);
+void ipc_rpc_reply(const kmsg_t* km, const char* reply_port_name, u16 module,
+                   u16 resp_opcode, const char* resp_fmt, i64 result);
 
 /*
  * Handler for request–reply servers. Decode request, set *reply_port_out from
@@ -75,38 +94,18 @@ void ipc_rpc_reply_best_effort(const kmsg_t* km, const char* reply_port_name,
 typedef i64 (*ipc_rpc_server_handler_t)(u16 opcode, const kmsg_t* req,
                                         char** reply_port_out);
 
-/* Block forever: recv on listen port, dispatch, always best-effort reply. */
+/* Block forever: recv on listen port, dispatch, blocking reply. */
 void ipc_rpc_server_loop(const char* listen_port_name, u16 service_id,
                          u16 resp_opcode, const char* resp_fmt,
                          ipc_rpc_server_handler_t handler);
 
 /*
- * One-way server loop (clean_server pattern): recv and invoke callback per
- * message; no automatic reply. Runs the handler on the dispatcher thread
- * (blocks the listen loop if the handler blocks).
+ * One-way server loop: recv and invoke callback per message; no automatic
+ * reply. Handler runs on the listen thread (blocks the loop if it blocks).
  */
 typedef void (*ipc_server_message_fn_t)(Message_t* msg, u16 service_id);
 
 void ipc_server_recv_loop(const char* listen_port_name,
                           ipc_server_message_fn_t on_message);
-
-/*
- * One-way listen loop with a fresh kernel worker thread per message.
- * Dispatcher only recv + spawn + reap finished workers (direct delete_thread
- * when zombie). Workers may block on send_msg (e.g. EXIT_NOTIFY) without
- * stalling the listen port. Placeholder for a future pool / stackful
- * coroutine model; VFS can migrate to the RPC worker variant below.
- */
-void ipc_server_recv_loop_per_msg_worker(const char* listen_port_name,
-                                         ipc_server_message_fn_t on_message);
-
-/*
- * Request–reply listen loop with the same per-message worker model as
- * ipc_server_recv_loop_per_msg_worker.
- */
-void ipc_rpc_server_loop_per_msg_worker(const char* listen_port_name,
-                                        u16 service_id, u16 resp_opcode,
-                                        const char* resp_fmt,
-                                        ipc_rpc_server_handler_t handler);
 
 #endif /* _LINUX_COMPAT_IPC_RPC_H_ */

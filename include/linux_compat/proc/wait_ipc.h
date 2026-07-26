@@ -26,9 +26,19 @@ bool linux_proc_post_exit_notify(pid_t parent_pid, pid_t child_pid,
 bool linux_proc_post_kernel_exit_notify(pid_t child_pid, i32 exit_code);
 
 /*
- * Mark exit_state reaped and queue TASK_REAP (init orphan path).
+ * Mark exit_state REAPED and TASK_REAP_SYNC (init orphan path).
+ * Must not run inside kernel_port EXIT_NOTIFY handler — see
+ * linux_proc_schedule_init_reap().
  */
 bool linux_proc_reap_zombie_by_pid(pid_t child_pid);
+
+/*
+ * Queue @p child_pid for init reap on a dedicated thread. The kernel_port
+ * EXIT_NOTIFY handler must return quickly so clean workers blocked in
+ * send_msg(kernel_port) can complete; doing TASK_REAP_SYNC in that handler
+ * deadlocks a per-CPU worker pool (protocols/EXIT_CLEAN.md).
+ */
+void linux_proc_schedule_init_reap(pid_t child_pid);
 
 /*
  * EXIT_NOTIFY that does not match the current wait(pid) filter is queued

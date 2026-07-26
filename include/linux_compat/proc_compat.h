@@ -31,13 +31,20 @@ typedef struct linux_proc_append {
         u32 euid;
         u32 egid;
         /*
-         * Parent PID. LINUX_INIT_REAP_PPID (0) means kernel init reaps via
-         * kernel_port after parent exit (reparent in task append fini hook).
+         * Parent PID. LINUX_INIT_REAP_PPID (0) means init-adopted / orphan:
+         * exit uses protocol link B (REAPED + THREAD_REAP-only; listen
+         * finishes delete_task), not EXIT_NOTIFY to kernel_port.
+         * Live parent (ppid>0) uses link A.
          */
         pid_t ppid;
         pid_t pgid; /* Process group ID (for wait4 pid==0, pid<-1) */
         i32 exit_code; /* Exit code for wait() */
-        i32 exit_state; /* Exit state: 0=running, 1=zombie, 2=reaped */
+        /*
+         * Exit / clean protocol (see doc/linux_compat/protocols/EXIT_CLEAN.md):
+         *   0 RUNNING, 1 ZOMBIE, 2 REAPED, 3 TASK_CLAIMED
+         */
+        i32 exit_state;
+        u8 exit_notify_sent; /* EXIT_NOTIFY posted at most once */
         /* EXIT_NOTIFY not yet consumed by wait4 (wait(pid) mismatch). */
         struct list_entry pending_exits;
 
@@ -50,6 +57,11 @@ typedef struct linux_proc_append {
 
 /** ppid after reparent-to-init (kernel init thread / kernel_port reap). */
 #define LINUX_INIT_REAP_PPID 0
+
+#define LINUX_EXIT_RUNNING      0
+#define LINUX_EXIT_ZOMBIE       1
+#define LINUX_EXIT_REAPED       2
+#define LINUX_EXIT_TASK_CLAIMED 3
 
 typedef struct linux_thread_append {
         /*

@@ -86,7 +86,7 @@ i64 sys_fork(void)
                 memset(child_pa, 0, sizeof(*child_pa));
                 child_pa->ppid = parent->pid;
                 child_pa->exit_code = 0;
-                child_pa->exit_state = 0;
+                child_pa->exit_state = LINUX_EXIT_RUNNING;
                 INIT_LIST_HEAD(&child_pa->pending_exits);
                 if (parent_pa) {
                         child_pa->start_brk = parent_pa->brk;

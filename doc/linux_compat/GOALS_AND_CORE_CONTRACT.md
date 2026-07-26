@@ -89,7 +89,7 @@ flowchart TB
 
 | 规则 | 说明 |
 |------|------|
-| **RPC** | Server **必须** reply（[`IPC_RPC_FRAMEWORK.md`](IPC_RPC_FRAMEWORK.md)）；client 端口在进程 exit 时注销。 |
+| **RPC** | Server **必须** reply（[`IPC_RPC_FRAMEWORK.md`](protocols/IPC_RPC_FRAMEWORK.md)）；client 端口在进程 exit 时注销。 |
 | **wait4** | 可阻塞在 port；依赖对端 exit 路径发消息。 |
 | **无 cancel_ipc** | **已拒绝实现**；可中断等待用专用 port + `ipc_try_send_msg`（CANCEL 等协议消息）。exit 时 matcher 丢弃 stale `Ipc_Request`。 |
 

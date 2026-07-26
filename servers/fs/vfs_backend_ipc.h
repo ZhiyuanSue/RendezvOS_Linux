@@ -9,7 +9,12 @@
 
 #include "vfs_backend.h"
 
-#define VFS_BACKEND_IPC_CALLER_PORT "vfs_backend_caller"
+/*
+ * Reply ports follow PORT_NAMING: vfs_cli_k_<tag>
+ *   vfs_cli_k_srv          — VFS listen thread → backend (serialized)
+ *   vfs_cli_k_reg_<fstype> — backend register → VFS (one per backend thread)
+ * Do not share a single "vfs_backend_caller" across concurrent callers.
+ */
 
 #define VFS_BACKEND_IPC_OPC_FIRST (KMSG_OP_SYSTEM_END + 1u)
 

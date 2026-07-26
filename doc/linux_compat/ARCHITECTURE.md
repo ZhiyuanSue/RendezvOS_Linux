@@ -48,6 +48,7 @@ flowchart LR
 - **机制与调用顺序**（锁序、IPC 步骤、exec/fork 原语）：见 [`core/docs/USING_CORE.md`](../../core/docs/USING_CORE.md) 与 [`core/docs/memory.md`](../../core/docs/memory.md) §0 — **不在此重复**。
 - **本层策略**：哪些 syscall 走直接 core、哪些走 server，见下文 §3 与 [`SYSCALLS.md`](SYSCALLS.md)。
 - **何时用 IPC**：全局单序列策略（pid、父子表、wait 的可选集中化）、或避免锁序爆炸；处理线程不得是发起者自身。
+- **Port 如何命名**：全局表字符串必须按 [`PORT_NAMING.md`](protocols/PORT_NAMING.md) 编码 `(service, cpu, local_id)` / client id；禁止无结构撞名。
 
 ## 3. IPC 串行化 vs 显式锁
 

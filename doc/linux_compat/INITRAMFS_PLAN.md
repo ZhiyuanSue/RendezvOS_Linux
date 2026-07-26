@@ -1,7 +1,7 @@
 # Initramfs 方案（Phase 4 bootstrap）
 
 > **Status**: 方案定稿（2026-06-13）  
-> **Index**: [`PROGRESS.md`](PROGRESS.md) · [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md)  
+> **Index**: [`PROGRESS.md`](PROGRESS.md) · [`VFS_SERVER_IPC.md`](protocols/VFS_SERVER_IPC.md)  
 > **Audience**: maintainer + AI 实施 compat/server 前必读
 
 ---

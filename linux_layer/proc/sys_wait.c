@@ -23,11 +23,10 @@
 #define LINUX_WCONTINUED 0x00000008
 
 /*
- * wait4 model (notify-only):
- *   child: exit_state=1, then THREAD_REAP
- *   clean worker: delete_thread; if last && zombie → blocking EXIT_NOTIFY
- *   parent: pending / recv EXIT_NOTIFY → exit_state=2 → TASK_REAP
- * clean_server listen loop uses per-message workers so EXIT_NOTIFY can block.
+ * wait4 model — see doc/linux_compat/protocols/EXIT_CLEAN.md
+ *   child: ZOMBIE + THREAD_REAP
+ *   clean: delete_thread; last thread → EXIT_NOTIFY
+ *   parent: recv → REAPED + TASK_REAP_SYNC (RPC until delete_task done)
  */
 
 static error_t proc_put_wstatus_helper(Tcb_Base *task, u64 user_wstatus,
@@ -76,8 +75,7 @@ static bool wait4_pid_matches(i32 want_pid, pid_t child_pid, Tcb_Base *parent,
 }
 
 /*
- * After EXIT_NOTIFY: mark reaped and ask clean_server to delete_task.
- * Lookup is by the pid carried in the notify, not a zombie registry scan.
+ * After EXIT_NOTIFY: mark REAPED and TASK_REAP_SYNC (waits for delete_task).
  */
 static i64 wait4_finish_reap(Tcb_Base *parent, u64 user_wstatus,
                              pid_t child_pid, i32 exit_code)
@@ -86,13 +84,14 @@ static i64 wait4_finish_reap(Tcb_Base *parent, u64 user_wstatus,
         linux_proc_append_t *child_pa;
         i32 encoded_status;
         bool task_empty;
+        i64 sync_ret;
 
         child = find_task_by_pid(child_pid);
         if (!child)
                 return -LINUX_ECHILD;
         child_pa = linux_proc_append(child);
         if (!child_pa || child_pa->ppid != parent->pid
-            || child_pa->exit_state != 1)
+            || child_pa->exit_state != LINUX_EXIT_ZOMBIE)
                 return -LINUX_ECHILD;
 
         lock_cas(&child->thread_list_lock);
@@ -102,17 +101,31 @@ static i64 wait4_finish_reap(Tcb_Base *parent, u64 user_wstatus,
                 return 0;
         }
         child_pa->exit_code = exit_code;
-        child_pa->exit_state = 2;
+        child_pa->exit_state = LINUX_EXIT_REAPED;
         unlock_cas(&child->thread_list_lock);
 
         encoded_status = wait4_encode_status(exit_code);
         if (proc_put_wstatus_helper(parent, user_wstatus, encoded_status)
             != REND_SUCCESS) {
-                child_pa->exit_state = 1;
+                child_pa->exit_state = LINUX_EXIT_ZOMBIE;
                 return -LINUX_EFAULT;
         }
 
-        (void)linux_clean_send_task_reap(child_pid);
+        sync_ret = linux_clean_task_reap_sync(parent->pid, child_pid);
+        pr_info("[xc] wait4_finish_reap pid=%lu sync_ret=%ld\n",
+                (u64)child_pid,
+                (long)sync_ret);
+        if (sync_ret < 0) {
+                /*
+                 * If the task already vanished, treat as success; otherwise
+                 * restore ZOMBIE so a later wait can retry.
+                 */
+                if (find_task_by_pid(child_pid) != NULL) {
+                        child_pa->exit_state = LINUX_EXIT_ZOMBIE;
+                        return sync_ret;
+                }
+        }
+
         return (i64)child_pid;
 }
 
@@ -127,7 +140,7 @@ static bool wait4_has_live_child(i32 pid, Tcb_Base *parent,
                         return false;
                 child_pa = linux_proc_append(child);
                 return child_pa && child_pa->ppid == parent->pid
-                       && child_pa->exit_state != 2;
+                       && child_pa->exit_state < LINUX_EXIT_REAPED;
         }
         if (pid == -1)
                 return proc_parent_has_unreaped_child(parent->pid, 0, false);
@@ -221,6 +234,8 @@ static i64 wait4_handle_port_msg(Tcb_Base *parent,
                 return 0;
         }
 
+        pr_info("[xc] wait4 got EXIT_NOTIFY child=%lu → finish_reap\n",
+                (u64)child_pid);
         return wait4_finish_reap(parent, user_wstatus, child_pid, exit_code);
 }
 

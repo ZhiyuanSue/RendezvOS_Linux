@@ -161,4 +161,7 @@ mrproper:
 $(ROOT_OBJ_DIR)/%.o: $(ROOT_DIR)/%.c
 	@mkdir -p $(dir $@)
 	@echo "CC	" $@
-	@$(CC) $(CFLAGS) $(ROOT_COMMON_CFLAGS) $(ROOT_EXTRA_CFLAGS) -c $< -o $@
+	@$(CC) $(CFLAGS) $(ROOT_COMMON_CFLAGS) $(ROOT_EXTRA_CFLAGS) \
+		-MMD -MP -MF $(@:.o=.d) -c $< -o $@
+
+-include $(ROOT_OBJECTS:.o=.d)

@@ -4,6 +4,7 @@
 #include <common/string.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/fs/vfs_protocol.h>
+#include <linux_compat/ipc/port_naming.h>
 #include <linux_compat/ipc/rpc.h>
 #include <rendezvos/error.h>
 #include <rendezvos/ipc/ipc_serial.h>
@@ -13,9 +14,39 @@
 
 extern struct Port_Table *global_port_table;
 
-static Message_Port_t *vfs_backend_ipc_reply_port(void)
+/*
+ * Kernel-side VFS client reply: vfs_cli_k_<tag> (PORT_NAMING §3.2 sentinel).
+ * tag must be unique among concurrent callers (srv vs reg_<fstype>).
+ */
+static Message_Port_t *vfs_backend_ipc_cli_port(const char *tag)
 {
-        return ipc_rpc_port_lookup_or_create(VFS_BACKEND_IPC_CALLER_PORT);
+        char name[PORT_NAME_LEN_MAX];
+        size_t i = 0;
+        size_t j;
+        const char *pfx = VFS_CLIENT_PORT_PREFIX; /* "vfs_cli_" */
+
+        if (!tag || !tag[0]) {
+                return NULL;
+        }
+
+        while (pfx[i] && i + 1 < sizeof(name)) {
+                name[i] = pfx[i];
+                i++;
+        }
+        if (i + 2 >= sizeof(name)) {
+                return NULL;
+        }
+        name[i++] = 'k';
+        name[i++] = '_';
+        for (j = 0; tag[j] && i + 1 < sizeof(name); j++) {
+                name[i++] = tag[j];
+        }
+        name[i] = '\0';
+        if (tag[j]) {
+                return NULL;
+        }
+
+        return ipc_rpc_port_lookup_or_create(name);
 }
 
 i64 vfs_backend_ipc_rpc_handler(u16 opcode, const kmsg_t *km,
@@ -243,7 +274,8 @@ i64 vfs_backend_ipc_call(vfs_backend_req_t *req)
                 return -LINUX_EINVAL;
         }
 
-        reply = vfs_backend_ipc_reply_port();
+        /* VFS listen is single-threaded: one srv reply port is enough. */
+        reply = vfs_backend_ipc_cli_port("srv");
         if (!reply) {
                 return -LINUX_ENOMEM;
         }
@@ -309,13 +341,32 @@ i64 vfs_backend_ipc_register(const char *port_name, const char *fstype,
                              u32 caps, u32 reg_flags)
 {
         Message_Port_t *reply;
+        char tag[VFS_BACKEND_FSTYPE_MAX + 4];
+        size_t i;
+        size_t j;
+        const char *ft;
         i64 ret;
 
         if (!port_name || !port_name[0]) {
                 return -LINUX_EINVAL;
         }
 
-        reply = vfs_backend_ipc_reply_port();
+        /*
+         * Backends register concurrently at init: each needs its own reply
+         * port (vfs_cli_k_reg_<fstype>), not a shared singleton.
+         */
+        ft = fstype && fstype[0] ? fstype : "anon";
+        i = 0;
+        tag[i++] = 'r';
+        tag[i++] = 'e';
+        tag[i++] = 'g';
+        tag[i++] = '_';
+        for (j = 0; ft[j] && i + 1 < sizeof(tag); j++) {
+                tag[i++] = ft[j];
+        }
+        tag[i] = '\0';
+
+        reply = vfs_backend_ipc_cli_port(tag);
         if (!reply) {
                 return -LINUX_ENOMEM;
         }

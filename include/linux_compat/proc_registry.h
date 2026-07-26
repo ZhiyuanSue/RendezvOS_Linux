@@ -93,8 +93,11 @@ void unregister_process(Tcb_Base* task);
 void proc_reparent_children(pid_t old_ppid, pid_t new_ppid);
 
 /*
- * True when a wait reaper exists: live parent, or kernel init (ppid 0 / dead
- * parent). False only when no reaper will collect exit_state==1 zombies.
+ * True only for link A: a live parent that can wait4 on wait_port_<ppid>.
+ * ppid == LINUX_INIT_REAP_PPID (0) or a dead parent → link B (REAPED +
+ * THREAD_REAP-only; listen claims delete_task), not EXIT_NOTIFY
+ * to kernel_port.
+ * See doc/linux_compat/protocols/EXIT_CLEAN.md.
  */
 bool proc_has_wait_reaper(linux_proc_append_t* pa);
 

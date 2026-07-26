@@ -6,18 +6,16 @@
 
 /*
  * VFS-specific opcodes and TLV format strings (transport:
- * linux_compat/ipc/rpc.h). kmsg_hdr.module = vfs_server_port->service_id (see
- * doc/ai/IPC_MESSAGE.md).
+ * linux_compat/ipc/rpc.h). kmsg_hdr.module = vfs listen port->service_id (see
+ * doc/ai/IPC_MESSAGE.md). Port names: doc/linux_compat/protocols/PORT_NAMING.md
+ * (VFS_SERVER_PORT_NAME = "vfs_listen", clients vfs_cli_{pid}).
  *
  * Scheme B (FD_TABLE.md): OPEN/mkdir/stat use abs path; I/O ops use handle id.
  *
  * Opcodes start above core system kmsg range (see kmsg_system.h).
  */
 
-#define VFS_SERVER_PORT_NAME "vfs_server_port"
-
-#define VFS_CLIENT_PORT_PREFIX   "vfs_client_"
-#define VFS_CLIENT_PORT_NAME_MAX 32
+#include <linux_compat/ipc/port_naming.h>
 
 #define VFS_HANDLE_MAX 128u
 

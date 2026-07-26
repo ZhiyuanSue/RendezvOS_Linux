@@ -43,6 +43,7 @@
 - `doc/linux_compat/ARCHITECTURE.md` - 分层原则、IPC vs 直接调core的决策
 - `doc/linux_compat/MM_AND_COW.md` - 内存管理设计（nexus作为真源）
 - `doc/linux_compat/DATA_MODEL.md` - 进程/线程数据模型
+- `doc/linux_compat/protocols/` - **servers / linux_layer / core IPC 通信协议合集**（port 命名、RPC、exit/clean、VFS）
 
 **参考文档**：
 - `doc/ai/TEST_MATRIX.md` - 不同变更类型的测试要求
@@ -162,7 +163,7 @@ make ARCH=aarch64 config && make ARCH=aarch64 user && make ARCH=aarch64 build
 **核心组件**：
 - `include/linux_compat/ipc/rpc.h` - RPC接口定义
 - `linux_layer/ipc/rpc.c` - RPC实现
-- `doc/linux_compat/IPC_RPC_FRAMEWORK.md` - 详细文档
+- `doc/linux_compat/protocols/IPC_RPC_FRAMEWORK.md` - 详细文档
 
 **两种server模式**：
 1. **Request-Reply**：客户端发送请求，等待服务器响应（如VFS）
@@ -173,10 +174,10 @@ make ARCH=aarch64 config && make ARCH=aarch64 user && make ARCH=aarch64 build
 **基本用法**：
 ```c
 // 1. 创建或查找reply端口
-Message_Port_t* reply_port = ipc_rpc_port_lookup_or_create("vfs_client_<pid>");
+Message_Port_t* reply_port = ipc_rpc_port_lookup_or_create("vfs_cli_<pid>");
 
 // 2. 查找服务器端口
-Message_Port_t* server_port = thread_lookup_port("vfs_server_port");
+Message_Port_t* server_port = thread_lookup_port("vfs_listen");
 
 // 3. 发送RPC请求并等待响应
 i64 result = ipc_rpc_call(server_port, reply_port,
@@ -249,31 +250,28 @@ DEFINE_INIT(my_server_init);
 
 **One-Way服务器**（如clean_server）：
 ```c
-static void on_message(Message_t* msg, u16 service_id)
-{
-        // 处理消息，不发送响应
-        const kmsg_t* km = kmsg_from_msg(msg);
-        // ... 处理逻辑 ...
-}
-
 void clean_server_thread(void)
 {
+        // THREAD_REAP 等在 listen 上内联；勿对 clean 用 per_msg_worker
         ipc_server_recv_loop(CLEAN_SERVER_PORT_NAME, on_message);
 }
 ```
 
 ### ⚠️ 关键注意事项
 
-1. **端口命名约定**：
-   - 客户端reply端口：`<service>_client_<pid>`
-   - 服务器端口：`<service>_server_port`
+1. **端口命名约定**（权威：[`doc/linux_compat/protocols/PORT_NAMING.md`](doc/linux_compat/protocols/PORT_NAMING.md)）：
+   - 先定身份 `(service, cpu, local_id)`，再拼字符串；全局表禁止无结构撞名
+   - Listen：`{service}_c{cpu}`（或文档标明的全局 `{service}_listen`）
+   - Worker：`{service}_c{cpu}_w{wid}`
+   - Client reply：`{service}_cli_{pid}`
+   - 历史名如 `*_server_port` / `ipc_wk_*` 仅过渡期；新代码勿再发明第三套
 
 2. **消息格式**：
    - 请求：业务参数格式 + `'t'`（reply port）
    - 响应：默认`"q"`（单个i64），可自定义
 
 3. **错误处理**：
-   - 服务端必须使用`ipc_rpc_reply_best_effort`发送错误响应
+   - 服务端必须使用`ipc_rpc_reply`发送响应（blocking rendezvous；遗弃 client 靠 reply-port teardown 唤醒）
    - 避免客户端卡在`recv_msg`等待
 
 4. **引用计数**：
@@ -286,8 +284,11 @@ void clean_server_thread(void)
 
 ### 📚 相关文档
 
-- `doc/linux_compat/IPC_RPC_FRAMEWORK.md` - RPC框架详细文档
-- `doc/ai/IPC_MESSAGE.md` - IPC消息机制
+- `doc/linux_compat/protocols/` - **通信协议目录入口**（[`README.md`](doc/linux_compat/protocols/README.md)）
+- `doc/linux_compat/protocols/PORT_NAMING.md` - **全局 port 命名约定**
+- `doc/linux_compat/protocols/IPC_RPC_FRAMEWORK.md` - RPC框架详细文档
+- `doc/linux_compat/protocols/EXIT_CLEAN.md` - exit / clean_server / wait4
+- `doc/ai/IPC_MESSAGE.md` - IPC消息机制（envelope）
 - `include/linux_compat/ipc/rpc.h` - API接口
 
 ---

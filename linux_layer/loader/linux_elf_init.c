@@ -1,5 +1,6 @@
 #include <linux_compat/append_hooks.h>
 #include <linux_compat/clone_flags.h>
+#include <linux_compat/ipc/clean_protocol.h>
 #include <linux_compat/proc/linux_exec_stack.h>
 
 #include <common/align.h>
@@ -55,6 +56,7 @@ void linux_task_append_fini(Tcb_Base *tcb)
         proc_reparent_children(pid, LINUX_INIT_REAP_PPID);
         proc_unregister_wait_port(pid);
         ipc_rpc_unregister_port_by_pid(VFS_CLIENT_PORT_PREFIX, pid);
+        ipc_rpc_unregister_port_by_pid(CLEAN_CLIENT_PORT_PREFIX, pid);
         unregister_process(task);
         linux_signal_proc_destroy(task);
         linux_fs_proc_destroy(task);

@@ -41,7 +41,8 @@
 | `ppid` | ✅ 完成 | P1 | `getppid()`、进程树查询 |
 | `pgid` | ✅ 完成 | P1 | 进程组，wait4进程组语义 |
 | `exit_code` | ✅ 完成 | P1 | 进程退出码 |
-| `exit_state` | ✅ 完成 | P1 | 进程状态（running/zombie/reaped） |
+| `exit_state` | ✅ 完成 | P1 | 0..3：RUNNING/ZOMBIE/REAPED/TASK_CLAIMED（见 EXIT_CLEAN） |
+| `exit_notify_sent` | ✅ 完成 | P1 | EXIT_NOTIFY 至多一次 |
 | `tgid` | 📋 未实现 | 后续 | 多线程时 `getpid`≠`gettid` |
 | `exit_signal` / `clone` 相关 | 📋 未实现 | 后续 | `clone` flags |
 
@@ -81,14 +82,9 @@
 
 ## 4. 与 `clean_server` 的关系
 
-> **状态**: ✅ Phase 1 完成
+权威协议：[`protocols/EXIT_CLEAN.md`](protocols/EXIT_CLEAN.md)。
 
-- **线程物理回收**：仍在 [`servers/clean_server.c`](../../servers/clean_server.c)。
-- **进程级** `exit_group`：
-  - ✅ 最后一线程才 `delete_task`
-  - ✅ 在 `proc_registry` 上标记 `exit_state=2`（reaped）
-  - ✅ 写 `exit_code`
-  - ✅ 唤醒阻塞在 `wait4` 的父线程（IPC通知）
-  - ✅ 竞态条件修复：exit_state三态管理防止clean_server过早删除
-- **实现**：在 **linux_layer** 内由 `sys_exit` 完成，clean_server检查exit_state
-- **测试验证**: ✅ 所有exit/wait4测试通过，无竞态问题
+- **线程物理回收**：`THREAD_REAP` → listen 内联 `delete_thread`；链路 B 末线程同线程认领 `delete_task`（[`servers/clean_server.c`](../../servers/clean_server.c)）。
+- **进程物理回收**：`TASK_REAP_SYNC`（wait4）或链路 B 的 THREAD_REAP 尾部；必须 `REAPED→TASK_CLAIMED` 认领后 `delete_task`。
+- **wait4**：async `EXIT_NOTIFY` → 标 REAPED → **同步** `TASK_REAP_SYNC`。
+- **孤儿 exit**：REAPED + 仅 `THREAD_REAP`（listen 内联完成）。

@@ -16,7 +16,8 @@ static bool proc_child_zombie_ready(Tcb_Base* child, linux_proc_append_t* pa,
 {
         bool ready;
 
-        if (!child || !pa || pa->ppid != ppid || pa->exit_state != 1) {
+        if (!child || !pa || pa->ppid != ppid
+            || pa->exit_state != LINUX_EXIT_ZOMBIE) {
                 return false;
         }
         if (filter_pgid && pa->pgid != pgid) {
@@ -298,14 +299,11 @@ bool proc_has_wait_reaper(linux_proc_append_t* pa)
         if (!pa) {
                 return false;
         }
-        if (pa->ppid == LINUX_INIT_REAP_PPID) {
-                return true;
-        }
-        if (pa->ppid > 0) {
-                if (find_task_by_pid(pa->ppid)) {
-                        return true;
-                }
-                /* Parent exited: kernel init reaps via kernel_port. */
+        /*
+         * Link A only when a live parent owns wait_port. Init-adopted (ppid 0)
+         * and orphaned-with-dead-parent use link B — see protocols/EXIT_CLEAN.md.
+         */
+        if (pa->ppid > 0 && find_task_by_pid(pa->ppid)) {
                 return true;
         }
         return false;
@@ -395,7 +393,8 @@ bool proc_parent_has_unreaped_child(pid_t ppid, pid_t pgid, bool filter_by_pgid)
                 }
 
                 pa = linux_proc_append(child);
-                if (!pa || pa->ppid != ppid || pa->exit_state == 2) {
+                if (!pa || pa->ppid != ppid
+                    || pa->exit_state >= LINUX_EXIT_REAPED) {
                         continue;
                 }
                 if (filter_by_pgid && pa->pgid != pgid) {

@@ -21,9 +21,12 @@
 | [`APPEND_HOOKS.md`](APPEND_HOOKS.md) | **append 生命周期 hook（init/copy/fini）** |
 | [`SYSCALLS.md`](SYSCALLS.md) | **实现顺序**与文件清单 |
 | [`MM_AND_COW.md`](MM_AND_COW.md) | Radix 虚存真源、COW、页故障 |
-| [`IPC_RPC_FRAMEWORK.md`](IPC_RPC_FRAMEWORK.md) | RPC / one-way server 模板 |
+| [`protocols/README.md`](protocols/README.md) | **通信协议合集入口**（port / RPC / exit-clean / VFS） |
+| [`PORT_NAMING.md`](protocols/PORT_NAMING.md) | **全局 port 表命名约定**（`service` + `cpu` + worker / `cli`） |
+| [`IPC_RPC_FRAMEWORK.md`](protocols/IPC_RPC_FRAMEWORK.md) | RPC / one-way server 模板 |
+| [`EXIT_CLEAN.md`](protocols/EXIT_CLEAN.md) | **exit / wait4 / clean_server 权威协议** |
 | [`../ai/IPC_MESSAGE.md`](../ai/IPC_MESSAGE.md) | kmsg envelope、TLV、reply port `t` |
-| [`../../include/linux_compat/ipc/clean_protocol.h`](../../include/linux_compat/ipc/clean_protocol.h) | clean_server、exit 等 compat opcode（见同目录 `exit_protocol.h`、`fs/vfs_protocol.h`） |
+| [`../../include/linux_compat/ipc/clean_protocol.h`](../../include/linux_compat/ipc/clean_protocol.h) | clean_server opcodes（协议见 EXIT_CLEAN） |
 | [`SYSCALL_USER_RETURN_AND_EXECVE.md`](SYSCALL_USER_RETURN_AND_EXECVE.md) | Path A 返回、exec 接线 |
 | [`SIGNAL_IMPLEMENTATION_STATUS.md`](SIGNAL_IMPLEMENTATION_STATUS.md) | 信号实现状态（持续更新） |
 | [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md) | execve 实现状态（Phase 3） |
@@ -31,7 +34,7 @@
 | [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md) | 双架构配对验证日志 |
 | [`SIGNAL_DELIVERY_TRAP_PATHS.md`](SIGNAL_DELIVERY_TRAP_PATHS.md) | trap 路径投递 |
 | [`IPC_BASED_SIGNAL_DESIGN.md`](IPC_BASED_SIGNAL_DESIGN.md) | IPC 辅助 vs pending（勿用信号服务器替代 trap） |
-| [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md) | vfs_server 协议 |
+| [`VFS_SERVER_IPC.md`](protocols/VFS_SERVER_IPC.md) | vfs_server 协议 |
 | [`VFS_ARCHITECTURE.md`](VFS_ARCHITECTURE.md) | **VFS 三层、Linux 对齐、演进与验证门** |
 | [`VFS_IMPLEMENTATION_STATUS.md`](VFS_IMPLEMENTATION_STATUS.md) | **Phase 4 live：已写什么 / RPC 表 / 缺口** |
 | [`VFS_EVOLUTION.md`](VFS_EVOLUTION.md) | **VFS 演进待办（树 / page cache / mount / 权限）** |

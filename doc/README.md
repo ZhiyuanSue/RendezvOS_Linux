@@ -40,6 +40,8 @@ See [`linux_compat/README.md`](linux_compat/README.md). Archived drafts: [`linux
 | [`INVARIANTS.md`](ai/INVARIANTS.md) | Runtime rules |
 | [`AI_CHECKLIST.md`](ai/AI_CHECKLIST.md) | Review patterns |
 | [`IPC_MESSAGE.md`](ai/IPC_MESSAGE.md) | kmsg / TLV / reply port `t` |
+| [`linux_compat/protocols/`](linux_compat/protocols/README.md) | **servers / compat / core IPC 通信协议合集** |
+| [`linux_compat/protocols/PORT_NAMING.md`](linux_compat/protocols/PORT_NAMING.md) | **全局 port 命名约定**（service / cpu / worker） |
 | [`DECISIONS.md`](ai/DECISIONS.md) | ADR-lite |
 
 Stale core API drafts: [`ai/archive/core_api_stale/README.md`](ai/archive/core_api_stale/README.md).

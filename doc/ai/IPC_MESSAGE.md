@@ -53,9 +53,11 @@ For `printf`, GCC/Clang can use `__attribute__((format(printf, ...)))` so **mism
 
 Today, many paths are **one-way** (e.g. clean server reaps a thread; no reply `Msg_Data_t`). For RPC-style calls, the natural transport is still `Message_t` on a `Message_Port_t`.
 
+**Port name grammar (canonical):** [`../linux_compat/protocols/PORT_NAMING.md`](../linux_compat/protocols/PORT_NAMING.md) — encode `(service, cpu, local_id)` or client `(service, caller_id)`; do not invent ad-hoc strings for `register_port`.
+
 **Intended pattern (name-based reply port, aligns with your idea):**
 
-1. The **caller** creates or owns a port, **registers** it in the global table under a stable name (see `register_port`, `PORT_NAME_LEN_MAX`).
+1. The **caller** creates or owns a port, **registers** it in the global table under a stable name (see `register_port`, `PORT_NAME_LEN_MAX`, and **PORT_NAMING.md**).
 2. The **request TLV** includes a leading `t` (or a dedicated position agreed per opcode) carrying that **port name string**.
 3. The **callee** unpacks the TLV, resolves the name with `thread_lookup_port` / `port_table_lookup` (same mechanism as today’s string ports), builds a reply `Msg_Data_t` (also TLV + `kmsg` if the reply is kernel-control), enqueues on the current thread, and `send_msg(reply_port)`.
 
@@ -79,10 +81,13 @@ Today, many paths are **one-way** (e.g. clean server reaps a thread; no reply `M
 
 ## Call-site façade (clean server)
 
-- `linux_layer/proc/clean_ipc.c`: `linux_clean_send_thread_reap` / `linux_clean_send_task_reap` (`include/linux_compat/proc/clean_ipc.h`, opcodes in `include/linux_compat/ipc/clean_protocol.h`).
-- `sys_exit` / fatal fault: always `KMSG_OP_CLEAN_THREAD_REAP` (`delete_thread`); orphans also `KMSG_OP_CLEAN_TASK_REAP` (`delete_task`).
-- `wait4` reap: `KMSG_OP_CLEAN_TASK_REAP` with child pid after `exit_state=2` and `thread_number==0`.
-- Server: `servers/clean_server.c` dispatches by opcode; only core `delete_thread` / `delete_task`.
+Authoritative protocol: [`doc/linux_compat/protocols/EXIT_CLEAN.md`](../linux_compat/protocols/EXIT_CLEAN.md).
+
+- `linux_layer/proc/clean_ipc.c`: `linux_clean_send_thread_reap`, `linux_clean_task_reap_sync` (wait4/init RPC); one-way `linux_clean_send_task_reap` is legacy only.
+- `sys_exit`: always `THREAD_REAP`; orphans mark `REAPED` and listen finishes `delete_task` inline; waitable children stay `ZOMBIE` until wait.
+- `wait4` / init: `exit_state=REAPED` then `TASK_REAP_SYNC` (reply after `delete_task`).
+- Task delete is claimed by `REAPED→TASK_CLAIMED` so concurrent paths cannot double-`delete_task`.
+- clean_server: one BSP `ipc_server_recv_loop`; EXIT_NOTIFY only is async.
 
 ## Init and layering
 

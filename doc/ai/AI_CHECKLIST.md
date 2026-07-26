@@ -108,6 +108,13 @@ If any section is missing, review is incomplete.
 
 ### 7) API/Type Discipline
 
+- [ ] **Global IPC port names:** any `register_port` / reply-port string must
+  follow [`doc/linux_compat/protocols/PORT_NAMING.md`](../linux_compat/protocols/PORT_NAMING.md):
+  encode `(service, cpu, local_id)` or client `(service, caller_id)` as
+  `{svc}_c{cpu}`, `{svc}_c{cpu}_w{wid}`, `{svc}_cli_{id}` (global `{svc}_listen`
+  only when the service protocol documents a singleton). **Check:** SMP worker
+  names include both **service** and **cpu**; no new ad-hoc prefixes
+  (`ipc_wk_*` without service, bare `foo_port` for per-CPU endpoints).
 - [ ] Header/source signatures match exactly.
 - [ ] Type width choices are intentional for target architectures.
 - [ ] Comments match actual behavior (no stale comment drift).
@@ -337,6 +344,22 @@ When a new bug pattern appears during review/debug:
   ...)` only; it uses `ipc_serial_measure_va` + `ipc_serial_encode_into_va` into the
   allocated `kmsg` (no extra TLV allocation + copy). Checklist: §7 +
   `doc/ai/IPC_MESSAGE.md`.
+
+- 2026-07-26: **Global port name collisions on SMP:** listen/worker/client
+  strings shared one flat table without structure → `register_port` fail /
+  wrong endpoint / exit path “port not found”. **Rule:** identity first
+  `(service, cpu, local_id)`, then `PORT_NAMING.md` grammar. Checklist: §7 +
+  `doc/linux_compat/protocols/PORT_NAMING.md`.
+
+- 2026-07-26: **RPC reply = blocking rendezvous:** do not use bare
+  `try_send` on live request–reply (races client entering recv). Abandoned
+  clients: reply-port teardown wakes server. Unique `vfs_cli_k_*` for kernel
+  VFS clients — never share `vfs_backend_caller`. Checklist: §2 +
+  `protocols/IPC_RPC_FRAMEWORK.md` + `PORT_NAMING.md`.
+
+- 2026-07-26: **clean_server role split:** `THREAD_REAP` on single
+  `clean_listen` (`ipc_server_recv_loop`); async only for EXIT_NOTIFY.
+  Checklist: §2 + `protocols/EXIT_CLEAN.md`.
 
 - 2026-04: **Field repurposing with union + type-safe caching (vmm_radix_tree_change_range_flags):**
   - **Pattern**: When repurposing struct fields as temporary cache, use union with

@@ -2,7 +2,7 @@
 
 > **Purpose**: 已写什么 / 缺什么 / 怎么验  
 > **架构**: [`VFS_ARCHITECTURE.md`](VFS_ARCHITECTURE.md) · **演进**: [`VFS_EVOLUTION.md`](VFS_EVOLUTION.md)  
-> **fd 表**: [`FD_TABLE.md`](FD_TABLE.md) · **IPC**: [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md)  
+> **fd 表**: [`FD_TABLE.md`](FD_TABLE.md) · **IPC**: [`VFS_SERVER_IPC.md`](protocols/VFS_SERVER_IPC.md)  
 > **Last updated**: 2026-07-12
 
 ---

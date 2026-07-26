@@ -53,28 +53,16 @@ void sys_exit(i64 exit_code)
         }
 
         /*
-         * Set task exit state for wait4().
-         * exit_state: 0=running, 1=zombie, 2=reaped
-         *
-         * IMPORTANT: Set exit_state=1 (zombie) so wait4 can find this child.
-         * wait4 will mark it as exit_state=2 (reaped) after retrieving status.
-         * This follows Linux semantics where child becomes zombie on exit
-         * and stays zombie until parent calls wait().
+         * Protocol: doc/linux_compat/protocols/EXIT_CLEAN.md
+         * Default ZOMBIE so wait4 can collect; orphans upgraded to REAPED below.
          */
         if (task) {
                 linux_proc_append_t* pa = linux_proc_append(task);
                 if (pa) {
                         pa->exit_code = (i32)exit_code;
-                        pa->exit_state = 1; /* 1 = zombie (wait4 can find us) */
+                        pa->exit_state = LINUX_EXIT_ZOMBIE;
                 }
         }
-
-        /*
-         * Model: set zombie flag, then THREAD_REAP. clean_server checks
-         * exit_state after delete_thread and posts EXIT_NOTIFY; parent wait4
-         * recv then TASK_REAP. Flag must be set before the reap message so
-         * clean_server never races a missing zombie mark.
-         */
         bool reaper_exists = false;
         if (task && task->pid > 0) {
                 linux_proc_append_t* pa = linux_proc_append(task);
@@ -104,25 +92,22 @@ void sys_exit(i64 exit_code)
                 }
         }
 
-        /*
-         * No wait reaper: mark reaped now; TASK_REAP after THREAD_REAP removes
-         * the last thread. Live parent / kernel init keep exit_state==1.
-         */
+        /* Link B: REAPED; listen THREAD_REAP finishes delete_task when last. */
         if (task && !reaper_exists) {
                 linux_proc_append_t* pa = linux_proc_append(task);
                 if (pa) {
-                        pa->exit_state = 2;
+                        pa->exit_state = LINUX_EXIT_REAPED;
                 }
         }
 
         thread_or_flags(self, THREAD_FLAG_EXIT_REQUESTED);
 
         /*
-         * schedule() only transitions running -> zombie on exit. After wait4
-         * recv_msg the parent may still be block_on_receive; force running so
-         * the next schedule can reap this thread in clean_server.
+         * If we were parked on IPC, get to a known state before send. Do NOT
+         * mark zombie yet — THREAD_REAP send must finish first or clean_server
+         * can delete_thread while we still sit in send_msg.
          */
-        if (self) {
+        {
                 u64 st = thread_get_status(self);
 
                 if (st == thread_status_block_on_receive
@@ -133,25 +118,39 @@ void sys_exit(i64 exit_code)
 
         (void)linux_clean_send_thread_reap(self, exit_code);
 
-        if (task && !reaper_exists && task->pid > 0) {
-                (void)linux_clean_send_task_reap(task->pid);
-        }
+        /*
+         * Link B: do not send a separate TASK_REAP from the exiting thread.
+         * That raced THREAD_REAP (listen can run TASK_REAP before delete_thread).
+         * Protocol: THREAD_REAP listen finishes claim+delete_task when REAPED.
+         */
 
         /*
-         * Ensure clean_server sees zombie even if schedule() cannot switch
-         * (no other ready thread on this TM). Do not spin in schedule() after
-         * reap — that can run again on a thread struct clean_server is freeing.
+         * Unconditional zombie: after send_msg the status is often "ready"
+         * not "running", so "if running → zombie" skipped and clean_server
+         * spun forever on EXIT_REQUESTED. Then a tight for(;;) starved the
+         * same-CPU worker.
          */
-        if (self && thread_get_status(self) == thread_status_running) {
-                (void)thread_set_status_with_expect(self,
-                                                    thread_status_running,
-                                                    thread_status_zombie);
+        (void)thread_set_status(self, thread_status_zombie);
+
+        {
+                linux_proc_append_t* pa = task ? linux_proc_append(task) : NULL;
+
+                pr_info("[xc] sys_exit sent pid=%lu reaper=%d state=%d "
+                        "thr_status=%lu cpu=%lu\n",
+                        task ? (u64)task->pid : 0,
+                        (int)reaper_exists,
+                        pa ? (int)pa->exit_state : -1,
+                        (u64)thread_get_status(self),
+                        (u64)percpu(cpu_number));
         }
 
 out:
-        schedule(percpu(core_tm));
+        /*
+         * Keep yielding until delete_thread reaps us. A bare for(;;) after
+         * schedule returns burns the CPU and can block same-CPU clean workers.
+         */
         for (;;)
-                ;
+                schedule(percpu(core_tm));
 }
 
 void linux_fatal_user_fault(i64 exit_code)
@@ -164,14 +163,14 @@ void linux_fatal_user_fault(i64 exit_code)
                 linux_proc_append_t* pa = linux_proc_append(task);
                 if (pa) {
                         pa->exit_code = (i32)exit_code;
-                        pa->exit_state = 1;
+                        pa->exit_state = LINUX_EXIT_ZOMBIE;
                         reaper_exists = proc_has_wait_reaper(pa);
                 }
         }
         if (task && !reaper_exists) {
                 linux_proc_append_t* pa = linux_proc_append(task);
                 if (pa) {
-                        pa->exit_state = 2;
+                        pa->exit_state = LINUX_EXIT_REAPED;
                 }
         }
         if (self) {
@@ -179,17 +178,13 @@ void linux_fatal_user_fault(i64 exit_code)
         }
 
         (void)linux_clean_send_thread_reap(self, exit_code);
-        if (task && !reaper_exists && task->pid > 0) {
-                (void)linux_clean_send_task_reap(task->pid);
-        }
+        /* Link B: task delete is chained from THREAD_REAP when REAPED. */
 
-        schedule(percpu(core_tm));
+        if (self)
+                (void)thread_set_status(self, thread_status_zombie);
 
-        if (self) {
-                (void)thread_set_status(self, thread_status_suspend);
-        }
         for (;;)
-                ;
+                schedule(percpu(core_tm));
 }
 
 void sys_exit_group(i64 exit_code)

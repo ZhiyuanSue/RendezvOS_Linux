@@ -49,7 +49,15 @@ static void linux_init_kernel_ipc_handler(Message_t *msg, u16 service_id)
                 return;
         }
 
-        (void)linux_proc_reap_zombie_by_pid((pid_t)child_pid_i64);
+        pr_info("[xc] init_kernel EXIT_NOTIFY child=%ld code=%d → queue\n",
+                (long)child_pid_i64,
+                (int)exit_code);
+        /*
+         * Do not TASK_REAP_SYNC here: that blocks init's kernel_port recv and
+         * can pin every clean worker on send_msg(EXIT_NOTIFY) → listen on that
+         * CPU cannot dispatch (send THREAD_REAP done, never THREAD_REAP enter).
+         */
+        linux_proc_schedule_init_reap((pid_t)child_pid_i64);
         ref_put(&msg->ms_queue_node.refcount, free_message_ref);
 }
 

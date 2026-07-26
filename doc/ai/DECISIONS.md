@@ -5,6 +5,38 @@ Format: Context / Decision / Consequences.
 
 ---
 
+## 2026-07-26 | Global port names encode (service, cpu, local_id)
+
+- Context: Repeated `register_port` collisions and “port not found” on exit/clean paths; ad-hoc names (`ipc_wk_*`, bare `*_server_port`) do not scale on SMP with per-CPU pools.
+- Decision: Canonical grammar in [`doc/linux_compat/protocols/PORT_NAMING.md`](../linux_compat/protocols/PORT_NAMING.md): identity is `(service, cpu, local_id)` (or client `(service, caller_id)`); strings are `{svc}_c{cpu}`, `{svc}_c{cpu}_w{wid}`, `{svc}_cli_{id}`; global listen only as documented exception `{svc}_listen`.
+- Consequences: New ports must follow the grammar; migrate legacy names in lockstep with clients; centralize format helpers; worker names always include **service** and **cpu**.
+
+---
+
+## 2026-07-26 | Link A vs B: only live parent is a wait reaper
+
+- Context: Treating `ppid==0` as link A forced `EXIT_NOTIFY(kernel_port)` on every test exit, pinned per-CPU clean workers, then listen accepted `THREAD_REAP` but could not dispatch (`send done`, no `enter`). Contradicted link B in the same protocol doc.
+- Decision: `proc_has_wait_reaper` is true **only** if `ppid>0` and the parent task exists. Init-adopted / orphan exits use link B (`REAPED` + **only** `THREAD_REAP`; listen claims `delete_task` when last thread). `EXIT_NOTIFY` only to live parent `wait_port`. See [`protocols/EXIT_CLEAN.md`](../linux_compat/protocols/EXIT_CLEAN.md).
+- Consequences: Test/harness exits no longer force EXIT_NOTIFY to kernel_port; clone/wait4 (live parent) still uses link A + async EXIT_NOTIFY.
+
+---
+
+## 2026-07-26 | RPC reply is blocking rendezvous (not try_send)
+
+- Context: Splitting “blocking for TASK_REAP_SYNC / best-effort try_send for VFS” looked like it protected VFS from abandoned clients, but bare `try_send` races live clients still entering `recv` (boot: shared `vfs_backend_caller` → `reply best-effort failed`). Shared singleton reply ports also violate PORT_NAMING under concurrent backend register.
+- Decision: All live request–reply servers use **`ipc_rpc_reply` / blocking `send_msg`**. Abandoned clients release reply ports on teardown; core wakes `block_on_send`. Kernel VFS clients use unique `vfs_cli_k_*` names. Removed unused generic `per_msg_worker` pool from `rpc.c`.
+- Consequences: Protocol matches rendezvous IPC; no silent drop of live replies; docs no longer prescribe VFS best-effort.
+
+---
+
+## 2026-07-26 | clean_server: THREAD_REAP on listen; EXIT_NOTIFY async only
+
+- Context: Routing every `THREAD_REAP` through a generic `per_msg_worker` pool, plus one listen thread per CPU on the same `clean_listen`, produced repeated `send THREAD_REAP done` with no `THREAD_REAP enter` (pending / handoff lies).
+- Decision: One BSP `clean_listen` using `ipc_server_recv_loop` (inline THREAD_REAP / TASK_REAP*). Spawn one-shot workers **only** for EXIT_NOTIFY. Link B finishes `delete_task` on the listen thread after `delete_thread`. No framework-wide worker pool.
+- Consequences: Harness orphans no longer depend on generic pool dispatch; link A still avoids listen↔SYNC deadlock.
+
+---
+
 ## 2026-04 | Stdout/stderr `write` shim without VFS
 
 - Context: User tests and minimal libc need `write` on fd 1/2 before an fd table and filesystem exist.

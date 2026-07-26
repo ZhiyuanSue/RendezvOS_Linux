@@ -7,6 +7,7 @@
 #include <linux_compat/proc/wait_ipc.h>
 #include <linux_compat/proc_registry.h>
 #include <linux_compat/signal/signal_deliver.h>
+#include <linux_compat/initcall.h>
 #include <modules/log/log.h>
 #include <common/dsa/list.h>
 #include <rendezvos/ipc/ipc.h>
@@ -17,6 +18,8 @@
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread_loader.h>
+#include <rendezvos/task/initcall.h>
 
 typedef struct linux_wait_pending_exit {
         struct list_entry node;
@@ -280,6 +283,7 @@ bool linux_proc_reap_zombie_by_pid(pid_t child_pid)
         Tcb_Base *child;
         linux_proc_append_t *pa;
         bool task_empty;
+        i64 sync_ret;
 
         if (child_pid <= 0)
                 return false;
@@ -289,7 +293,7 @@ bool linux_proc_reap_zombie_by_pid(pid_t child_pid)
                 return false;
 
         pa = linux_proc_append(child);
-        if (!pa || pa->exit_state != 1)
+        if (!pa || pa->exit_state != LINUX_EXIT_ZOMBIE)
                 return false;
 
         lock_cas(&child->thread_list_lock);
@@ -298,9 +302,99 @@ bool linux_proc_reap_zombie_by_pid(pid_t child_pid)
                 unlock_cas(&child->thread_list_lock);
                 return false;
         }
-        pa->exit_state = 2;
+        pa->exit_state = LINUX_EXIT_REAPED;
         unlock_cas(&child->thread_list_lock);
 
-        (void)linux_clean_send_task_reap(child_pid);
+        pr_info("[xc] init_reap mark REAPED pid=%lu → TASK_REAP_SYNC\n",
+                (u64)child_pid);
+        sync_ret = linux_clean_task_reap_sync(LINUX_INIT_REAP_PPID, child_pid);
+        pr_info("[xc] init_reap SYNC done pid=%lu ret=%ld\n",
+                (u64)child_pid,
+                (long)sync_ret);
+        if (sync_ret < 0 && find_task_by_pid(child_pid) != NULL) {
+                pa->exit_state = LINUX_EXIT_ZOMBIE;
+                return false;
+        }
+
         return true;
 }
+
+/*
+ * Dedicated reaper: keeps kernel_port recv loop free for EXIT_NOTIFY.
+ * Protocol: protocols/EXIT_CLEAN.md (init must not nest SYNC in notify handler).
+ */
+#define LINUX_INIT_REAP_QUEUE_CAP 64u
+
+static pid_t linux_init_reap_queue[LINUX_INIT_REAP_QUEUE_CAP];
+static u32 linux_init_reap_head;
+static u32 linux_init_reap_tail;
+static u32 linux_init_reap_count;
+static cas_lock_t linux_init_reap_lock;
+static bool linux_init_reaper_started;
+
+void linux_proc_schedule_init_reap(pid_t child_pid)
+{
+        if (child_pid <= 0)
+                return;
+
+        lock_cas(&linux_init_reap_lock);
+        if (linux_init_reap_count >= LINUX_INIT_REAP_QUEUE_CAP) {
+                unlock_cas(&linux_init_reap_lock);
+                pr_error("[PROC] init reap queue full, drop pid=%d\n",
+                         (int)child_pid);
+                return;
+        }
+        linux_init_reap_queue[linux_init_reap_tail] = child_pid;
+        linux_init_reap_tail =
+                (linux_init_reap_tail + 1u) % LINUX_INIT_REAP_QUEUE_CAP;
+        linux_init_reap_count++;
+        unlock_cas(&linux_init_reap_lock);
+}
+
+static void *linux_init_reaper_thread(void *arg)
+{
+        (void)arg;
+
+        for (;;) {
+                pid_t pid = 0;
+
+                lock_cas(&linux_init_reap_lock);
+                if (linux_init_reap_count > 0) {
+                        pid = linux_init_reap_queue[linux_init_reap_head];
+                        linux_init_reap_head = (linux_init_reap_head + 1u)
+                                              % LINUX_INIT_REAP_QUEUE_CAP;
+                        linux_init_reap_count--;
+                }
+                unlock_cas(&linux_init_reap_lock);
+
+                if (pid > 0)
+                        (void)linux_proc_reap_zombie_by_pid(pid);
+                else
+                        schedule(percpu(core_tm));
+        }
+        return NULL;
+}
+
+static void linux_init_reaper_init(void)
+{
+        Thread_Base *thr = NULL;
+        static char name[] = "init_reaper";
+
+        if (!linux_init_bsp_once(&linux_init_reaper_started))
+                return;
+
+        lock_init_cas(&linux_init_reap_lock);
+        if (gen_thread_from_func(&thr,
+                                 linux_init_reaper_thread,
+                                 name,
+                                 percpu(core_tm),
+                                 NULL)
+            != REND_SUCCESS || !thr) {
+                pr_error("[PROC] failed to start init_reaper thread\n");
+        } else {
+                pr_info("[PROC] init_reaper thread started\n");
+        }
+        linux_init_bsp_mark_done(&linux_init_reaper_started);
+}
+
+DEFINE_INIT(linux_init_reaper_init);
