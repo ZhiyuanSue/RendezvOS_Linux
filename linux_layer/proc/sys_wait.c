@@ -112,9 +112,6 @@ static i64 wait4_finish_reap(Tcb_Base *parent, u64 user_wstatus,
         }
 
         sync_ret = linux_clean_task_reap_sync(parent->pid, child_pid);
-        pr_info("[xc] wait4_finish_reap pid=%lu sync_ret=%ld\n",
-                (u64)child_pid,
-                (long)sync_ret);
         if (sync_ret < 0) {
                 /*
                  * If the task already vanished, treat as success; otherwise
@@ -234,8 +231,6 @@ static i64 wait4_handle_port_msg(Tcb_Base *parent,
                 return 0;
         }
 
-        pr_info("[xc] wait4 got EXIT_NOTIFY child=%lu → finish_reap\n",
-                (u64)child_pid);
         return wait4_finish_reap(parent, user_wstatus, child_pid, exit_code);
 }
 

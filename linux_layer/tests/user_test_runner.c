@@ -116,21 +116,8 @@ static error_t linux_spawn_and_wait_test_path(const char *path, u32 test_index)
                 test_pid = test_task->pid;
         }
 
-        while (slot->cookie != cookie) {
-                static u64 cookie_spins;
-                if ((cookie_spins++ % 100000ull) == 0)
-                        pr_info(
-                                "[xc] harness waiting cookie test_pid=%lu "
-                                "want=%lu got=%lu\n",
-                                (u64)test_pid,
-                                (u64)cookie,
-                                (u64)slot->cookie);
+        while (slot->cookie != cookie)
                 schedule(percpu(core_tm));
-        }
-
-        pr_info("[xc] harness cookie matched test_pid=%lu path_idx=%u\n",
-                (u64)test_pid,
-                (unsigned)test_index);
 
         /*
          * Cookie is set at THREAD_REAP (before delete_thread /
@@ -139,17 +126,8 @@ static error_t linux_spawn_and_wait_test_path(const char *path, u32 test_index)
          * del_vspace on the previous test.
          */
         if (test_pid > 0) {
-                u64 spins = 0;
-
-                while (find_task_by_pid(test_pid) != NULL) {
-                        if ((spins++ % 100000ull) == 0)
-                                pr_info(
-                                        "[xc] harness waiting delete pid=%lu spins=%lu\n",
-                                        (u64)test_pid,
-                                        (u64)spins);
+                while (find_task_by_pid(test_pid) != NULL)
                         schedule(percpu(core_tm));
-                }
-                pr_info("[xc] harness task gone pid=%lu\n", (u64)test_pid);
         }
 
         slot->in_use = false;

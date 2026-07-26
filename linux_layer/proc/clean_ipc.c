@@ -71,24 +71,16 @@ error_t linux_clean_send_thread_reap(Thread_Base* thread, i64 exit_code)
         Msg_Data_t* md;
         Message_t* msg;
         error_t e;
-        pid_t pid = 0;
 
         if (!thread) {
                 return -E_IN_PARAM;
         }
-        if (thread->belong_tcb)
-                pid = thread->belong_tcb->pid;
 
         port = thread_lookup_port(CLEAN_SERVER_PORT_NAME);
         if (!port) {
                 linux_clean_log_lookup_miss("THREAD_REAP");
                 return -E_RENDEZVOS;
         }
-
-        pr_info("[xc] send THREAD_REAP pid=%lu thr=%p cpu=%lu\n",
-                (u64)pid,
-                (void*)thread,
-                (u64)percpu(cpu_number));
 
         md = kmsg_create(port->service_id,
                          KMSG_OP_CLEAN_THREAD_REAP,
@@ -109,7 +101,6 @@ error_t linux_clean_send_thread_reap(Thread_Base* thread, i64 exit_code)
         }
 
         e = linux_clean_deliver_message(msg, port);
-        pr_info("[xc] send THREAD_REAP pid=%lu done e=%d\n", (u64)pid, (int)e);
         return e;
 }
 
@@ -131,9 +122,6 @@ error_t linux_clean_send_task_reap(pid_t pid)
                 return -E_RENDEZVOS;
         }
 
-        pr_info("[xc] send TASK_REAP pid=%lu cpu=%lu\n",
-                (u64)pid,
-                (u64)percpu(cpu_number));
 
         md = kmsg_create(port->service_id,
                          KMSG_OP_CLEAN_TASK_REAP,
@@ -153,7 +141,6 @@ error_t linux_clean_send_task_reap(pid_t pid)
         }
 
         e = linux_clean_deliver_message(msg, port);
-        pr_info("[xc] send TASK_REAP pid=%lu done e=%d\n", (u64)pid, (int)e);
         return e;
 }
 
@@ -182,25 +169,16 @@ i64 linux_clean_task_reap_sync(pid_t caller_pid, pid_t target_pid)
 
         reply = ipc_rpc_port_lookup_or_create(reply_name);
         if (!reply) {
-                pr_error("[xc] TASK_REAP_SYNC: reply port '%s' create fail\n",
+                pr_error("[clean_ipc] TASK_REAP_SYNC: reply port '%s' create fail\n",
                          reply_name);
                 return -E_RENDEZVOS;
         }
-
-        pr_info("[xc] TASK_REAP_SYNC call target=%lu reply=%s cpu=%lu\n",
-                (u64)target_pid,
-                reply_name,
-                (u64)percpu(cpu_number));
 
         ret = ipc_rpc_call_named_uninterruptible(CLEAN_SERVER_PORT_NAME,
                                                  reply,
                                                  KMSG_OP_CLEAN_TASK_REAP_SYNC,
                                                  LINUX_KMSG_FMT_TASK_REAP,
                                                  (i32)target_pid);
-
-        pr_info("[xc] TASK_REAP_SYNC done target=%lu ret=%ld\n",
-                (u64)target_pid,
-                (long)ret);
 
         ref_put(&reply->refcount, free_message_port_ref);
         return ret;

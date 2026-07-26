@@ -132,18 +132,6 @@ void sys_exit(i64 exit_code)
          */
         (void)thread_set_status(self, thread_status_zombie);
 
-        {
-                linux_proc_append_t* pa = task ? linux_proc_append(task) : NULL;
-
-                pr_info("[xc] sys_exit sent pid=%lu reaper=%d state=%d "
-                        "thr_status=%lu cpu=%lu\n",
-                        task ? (u64)task->pid : 0,
-                        (int)reaper_exists,
-                        pa ? (int)pa->exit_state : -1,
-                        (u64)thread_get_status(self),
-                        (u64)percpu(cpu_number));
-        }
-
 out:
         /*
          * Keep yielding until delete_thread reaps us. A bare for(;;) after

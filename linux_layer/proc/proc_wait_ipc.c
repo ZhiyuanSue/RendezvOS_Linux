@@ -305,12 +305,7 @@ bool linux_proc_reap_zombie_by_pid(pid_t child_pid)
         pa->exit_state = LINUX_EXIT_REAPED;
         unlock_cas(&child->thread_list_lock);
 
-        pr_info("[xc] init_reap mark REAPED pid=%lu → TASK_REAP_SYNC\n",
-                (u64)child_pid);
         sync_ret = linux_clean_task_reap_sync(LINUX_INIT_REAP_PPID, child_pid);
-        pr_info("[xc] init_reap SYNC done pid=%lu ret=%ld\n",
-                (u64)child_pid,
-                (long)sync_ret);
         if (sync_ret < 0 && find_task_by_pid(child_pid) != NULL) {
                 pa->exit_state = LINUX_EXIT_ZOMBIE;
                 return false;

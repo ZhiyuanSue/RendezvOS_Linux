@@ -107,12 +107,8 @@ static void *clean_exit_notify_thread(void *arg)
         Thread_Base *self = get_cpu_current_thread();
 
         if (job) {
-                bool ok = linux_proc_post_exit_notify(
+                (void)linux_proc_post_exit_notify(
                         job->ppid, job->child_pid, job->exit_code);
-                pr_info("[xc] EXIT_NOTIFY parent=%lu child=%lu %s\n",
-                        (u64)job->ppid,
-                        (u64)job->child_pid,
-                        ok ? "ok" : "FAIL");
                 job->finished = true;
         }
         if (self) {
@@ -185,9 +181,6 @@ static void clean_async_exit_notify(pid_t ppid, pid_t child_pid, i32 exit_code)
                 return;
         }
         job->thread = thr;
-        pr_info("[xc] THREAD_REAP → async EXIT_NOTIFY pid=%lu ppid=%lu\n",
-                (u64)child_pid,
-                (u64)ppid);
 }
 
 static void clean_handle_thread_reap(const kmsg_t *km)
@@ -224,13 +217,6 @@ static void clean_handle_thread_reap(const kmsg_t *km)
                 return;
         }
 
-        pr_info("[xc] THREAD_REAP enter thr=%p pid=%lu status=%lu flags=0x%lx "
-                "cpu=%lu\n",
-                (void *)target,
-                task ? (u64)task->pid : 0,
-                (u64)thread_get_status(target),
-                (unsigned long)target->flags,
-                (u64)percpu(cpu_number));
 
         if (target == percpu(init_thread_ptr)
             || target == percpu(idle_thread_ptr)) {
@@ -239,18 +225,8 @@ static void clean_handle_thread_reap(const kmsg_t *km)
         }
 
         if (target->flags & THREAD_FLAG_EXIT_REQUESTED) {
-                u64 spins = 0;
-
-                while (thread_get_status(target) != thread_status_zombie) {
-                        if ((spins++ % 100000ull) == 0)
-                                pr_info(
-                                        "[xc] THREAD_REAP wait zombie thr=%p "
-                                        "status=%lu spins=%lu\n",
-                                        (void *)target,
-                                        (u64)thread_get_status(target),
-                                        (u64)spins);
+                while (thread_get_status(target) != thread_status_zombie)
                         schedule(percpu(core_tm));
-                }
         }
 
         if (thread_get_status(target) != thread_status_zombie) {
@@ -263,9 +239,6 @@ static void clean_handle_thread_reap(const kmsg_t *km)
 #ifdef LINUX_COMPAT_TEST
         linux_thread_append_t *ta = linux_thread_append(target);
         if (ta && ta->test_cookie != 0 && target->tm) {
-                pr_info("[xc] THREAD_REAP set cookie cpu=%d pid=%lu\n",
-                        (int)target->tm->owner_cpu,
-                        task ? (u64)task->pid : 0);
                 linux_user_test_notify_exit(
                         (i32)target->tm->owner_cpu, ta->test_cookie, exit_code);
         }
@@ -303,26 +276,12 @@ static void clean_handle_thread_reap(const kmsg_t *km)
                 unlock_cas(&task->thread_list_lock);
 
                 if (do_link_b_task && task_pid > 0) {
-                        i64 tr;
-
-                        pr_info("[xc] THREAD_REAP → link-B task_reap pid=%lu "
-                                "cpu=%lu\n",
-                                (u64)task_pid,
-                                (u64)percpu(cpu_number));
-                        tr = clean_claim_and_delete_task(task_pid);
-                        pr_info("[xc] THREAD_REAP link-B task_reap pid=%lu "
-                                "ret=%ld\n",
-                                (u64)task_pid,
-                                (long)tr);
+                        (void)clean_claim_and_delete_task(task_pid);
                         return;
                 }
         }
 
         if (!do_notify || task_pid <= 0) {
-                pr_info("[xc] THREAD_REAP done pid=%lu no_notify "
-                        "(do_notify=%d)\n",
-                        (u64)(task ? task->pid : 0),
-                        (int)do_notify);
                 return;
         }
 
@@ -440,27 +399,15 @@ static void clean_handle_task_reap(const kmsg_t *km, const char *reply_port,
                 return;
         }
 
-        pr_info("[xc] TASK_REAP%s enter pid=%d cpu=%lu\n",
-                want_reply ? "_SYNC" : "",
-                (int)pid,
-                (u64)percpu(cpu_number));
 
         result = clean_claim_and_delete_task((pid_t)pid);
-        if (result == 0) {
-                pr_info("[xc] TASK_REAP%s delete_task pid=%d e=0\n",
-                        want_reply ? "_SYNC" : "",
-                        (int)pid);
-        } else if (result == -LINUX_ECHILD) {
+        if (result == -LINUX_ECHILD) {
                 pr_error(
                         "[clean_server] TASK_REAP: pid=%d bad exit_state or append\n",
                         (int)pid);
         }
 
         if (want_reply) {
-                pr_info("[xc] TASK_REAP_SYNC reply pid=%d result=%ld port=%s\n",
-                        (int)pid,
-                        (long)result,
-                        reply_port ? reply_port : "-");
                 ipc_rpc_reply(km,
                               reply_port,
                               clean_server_service_id,
