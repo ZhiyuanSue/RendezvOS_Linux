@@ -18,8 +18,10 @@
 #define VFS_BACKEND_PORT_RAMFS  "vfs_ramfs_backend_port"
 #define VFS_BACKEND_PORT_BLKDEV "vfs_blkdev_port"
 
-#define VFS_BACKEND_REGISTRY_MAX 8u
+#define VFS_BACKEND_REGISTRY_SOFT_MAX 32u
 #define VFS_BACKEND_FSTYPE_MAX   16u
+
+/* Registry is growable (vfs_slice_table); soft max VFS_BACKEND_REGISTRY_SOFT_MAX. */
 
 #define VFS_BACKEND_FSTYPE_CPIO   "cpio"
 #define VFS_BACKEND_FSTYPE_RAMFS  "ramfs"

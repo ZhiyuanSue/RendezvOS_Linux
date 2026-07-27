@@ -5,6 +5,15 @@ Format: Context / Decision / Consequences.
 
 ---
 
+## 2026-07-27 | VFS tables use growable page_slice (no fixed BSS)
+
+- Context: cpio/ns raised to 2048 fixed BSS, readdir used 128KiB static/`names[][]` on stack, handles/ramfs/blkdev similarly hard-capped — demo-era bombs.
+- Decision: `vfs_slice_table` packs records so none straddle pages; grow via `page_slice_set_size` + new pages (old KVAs stay valid). Soft max `VFS_SLICE_TABLE_SOFT_MAX`. Stack I/O uses one heap PAGE scratch. See [`VFS_DYNAMIC_STORAGE.md`](../linux_compat/VFS_DYNAMIC_STORAGE.md).
+- Consequences: Rootfs growth no longer requires recompiling caps; OOM returns errors; namespace pointer links remain valid across grow.
+- Follow-up (same day): **S2** — drop `vfs_ns_node.path[]`, rebuild with `vfs_ns_path_of` (cpio/ramfs/inode/fd path kept as keys/snapshots). **S3** — mount / backend registry / pcache slots also on `vfs_slice_table`.
+
+---
+
 ## 2026-07-26 | Global port names encode (service, cpu, local_id)
 
 - Context: Repeated `register_port` collisions and “port not found” on exit/clean paths; ad-hoc names (`ipc_wk_*`, bare `*_server_port`) do not scale on SMP with per-CPU pools.

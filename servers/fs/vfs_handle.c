@@ -8,25 +8,64 @@
 
 #include <common/string.h>
 #include <linux_compat/errno.h>
+#include <rendezvos/error.h>
 
-static vfs_open_handle_t vfs_handles[VFS_HANDLE_MAX];
+#include "vfs_slice_table.h"
 
-void vfs_handle_init(void)
+static vfs_slice_table_t vfs_handle_tab;
+
+static vfs_open_handle_t *vfs_handle_at(u32 i)
 {
-        memset(vfs_handles, 0, sizeof(vfs_handles));
+        return (vfs_open_handle_t *)vfs_slice_table_ptr(&vfs_handle_tab, i);
+}
+
+error_t vfs_handle_init(void)
+{
+        u32 idx;
+        error_t err;
+
+        vfs_slice_table_destroy(&vfs_handle_tab);
+        err = vfs_slice_table_init(&vfs_handle_tab, sizeof(vfs_open_handle_t),
+                                   32);
+        if (err != REND_SUCCESS) {
+                return err;
+        }
+
+        /* Reserve slot 0 — VFS_HANDLE_INVALID. */
+        err = vfs_slice_table_push_zero(&vfs_handle_tab, &idx);
+        if (err != REND_SUCCESS) {
+                vfs_slice_table_destroy(&vfs_handle_tab);
+                return err;
+        }
+        return REND_SUCCESS;
 }
 
 static u32 vfs_handle_alloc_slot(void)
 {
         u32 i;
+        u32 n;
+        u32 idx;
+        error_t err;
 
-        for (i = 1; i < VFS_HANDLE_MAX; i++) {
-                if (!vfs_handles[i].in_use) {
+        n = vfs_slice_table_count(&vfs_handle_tab);
+        for (i = 1; i < n; i++) {
+                vfs_open_handle_t *h = vfs_handle_at(i);
+
+                if (h && !h->in_use) {
                         return i;
                 }
         }
 
-        return VFS_HANDLE_INVALID;
+        err = vfs_slice_table_push_zero(&vfs_handle_tab, &idx);
+        if (err != REND_SUCCESS) {
+                return VFS_HANDLE_INVALID;
+        }
+        if (!vfs_handle_at(idx)) {
+                vfs_slice_table_pop_last(&vfs_handle_tab);
+                return VFS_HANDLE_INVALID;
+        }
+
+        return idx;
 }
 
 u32 vfs_handle_open(const vfs_inode_t *ino, i32 open_flags)
@@ -43,7 +82,11 @@ u32 vfs_handle_open(const vfs_inode_t *ino, i32 open_flags)
                 return VFS_HANDLE_INVALID;
         }
 
-        h = &vfs_handles[id];
+        h = vfs_handle_at(id);
+        if (!h) {
+                return VFS_HANDLE_INVALID;
+        }
+
         h->in_use = true;
         h->refcnt = 1;
         h->ino = *ino;
@@ -54,15 +97,18 @@ u32 vfs_handle_open(const vfs_inode_t *ino, i32 open_flags)
 
 vfs_open_handle_t *vfs_handle_get(u32 handle)
 {
-        if (handle == 0 || handle >= VFS_HANDLE_MAX) {
+        vfs_open_handle_t *h;
+
+        if (handle == 0) {
                 return NULL;
         }
 
-        if (!vfs_handles[handle].in_use) {
+        h = vfs_handle_at(handle);
+        if (!h || !h->in_use) {
                 return NULL;
         }
 
-        return &vfs_handles[handle];
+        return h;
 }
 
 i64 vfs_handle_retain(u32 handle)
@@ -129,6 +175,7 @@ bool vfs_handle_busy_under_path(const char *path)
         char norm[VFS_PATH_MAX];
         u64 mlen;
         u32 i;
+        u32 n;
 
         if (!path) {
                 return false;
@@ -137,8 +184,11 @@ bool vfs_handle_busy_under_path(const char *path)
         vfs_path_normalize(path, norm, sizeof(norm));
         mlen = strlen(norm);
 
-        for (i = 1; i < VFS_HANDLE_MAX; i++) {
-                if (!vfs_handles[i].in_use) {
+        n = vfs_slice_table_count(&vfs_handle_tab);
+        for (i = 1; i < n; i++) {
+                vfs_open_handle_t *h = vfs_handle_at(i);
+
+                if (!h || !h->in_use) {
                         continue;
                 }
 
@@ -146,8 +196,7 @@ bool vfs_handle_busy_under_path(const char *path)
                         return true;
                 }
 
-                if (vfs_handle_path_under_mount(vfs_handles[i].ino.path, norm,
-                                                mlen)) {
+                if (vfs_handle_path_under_mount(h->ino.path, norm, mlen)) {
                         return true;
                 }
         }

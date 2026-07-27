@@ -684,7 +684,6 @@ static void linux_fs_retain_vfs_handle(u32 handle)
 
 static void linux_fs_release_open_resources(linux_fs_state_t *fs)
 {
-        u32 seen[VFS_HANDLE_MAX];
         u32 cap;
         u32 i;
         linux_fd_entry_t ent;
@@ -693,7 +692,6 @@ static void linux_fs_release_open_resources(linux_fs_state_t *fs)
                 return;
         }
 
-        memset(seen, 0, sizeof(seen));
         cap = linux_fs_fd_capacity(fs);
 
         for (i = 0; i < cap; i++) {
@@ -710,11 +708,8 @@ static void linux_fs_release_open_resources(linux_fs_state_t *fs)
                 if (ent.is_dir) {
                         linux_fs_dir_path_release(fs, (i32)i);
                 }
-                if (ent.vfs_handle < VFS_HANDLE_MAX
-                    && !seen[ent.vfs_handle]) {
-                        seen[ent.vfs_handle] = 1;
-                        linux_fs_release_vfs_handle(ent.vfs_handle);
-                }
+                /* One CLOSE per fd (refcnt tracks shared handles). */
+                linux_fs_release_vfs_handle(ent.vfs_handle);
         }
 }
 
@@ -777,7 +772,6 @@ void linux_fs_proc_destroy(Tcb_Base *task)
 
 static void linux_fs_fork_retain_resources(linux_fs_state_t *fs)
 {
-        u32 seen[VFS_HANDLE_MAX];
         u32 cap;
         u32 i;
         linux_fd_entry_t ent;
@@ -786,7 +780,6 @@ static void linux_fs_fork_retain_resources(linux_fs_state_t *fs)
                 return;
         }
 
-        memset(seen, 0, sizeof(seen));
         cap = linux_fs_fd_capacity(fs);
 
         for (i = 0; i < cap; i++) {
@@ -800,11 +793,8 @@ static void linux_fs_fork_retain_resources(linux_fs_state_t *fs)
                 if (ent.kind != LINUX_FD_VFS || ent.vfs_handle == 0) {
                         continue;
                 }
-                if (ent.vfs_handle < VFS_HANDLE_MAX
-                    && !seen[ent.vfs_handle]) {
-                        seen[ent.vfs_handle] = 1;
-                        linux_fs_retain_vfs_handle(ent.vfs_handle);
-                }
+                /* One RETAIN per fd (matches CLOSE-per-fd on teardown). */
+                linux_fs_retain_vfs_handle(ent.vfs_handle);
         }
 }
 

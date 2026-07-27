@@ -10,6 +10,7 @@
 #include <rendezvos/error.h>
 
 #include "vfs_kstat.h"
+#include "vfs_slice_table.h"
 
 #define CPIO_NEWC_MAGIC       "070701"
 #define CPIO_NEWC_HDR_LEN     110
@@ -62,10 +63,14 @@ static bool cpio_header_magic_ok(const cpio_newc_header_t *hdr)
         return true;
 }
 
-static cpio_rofs_entry_t cpio_entries[CPIO_ROFS_MAX_ENTRIES];
-static u32 cpio_entry_count;
+static vfs_slice_table_t cpio_entry_tab;
 static const u8 *cpio_image;
 static u64 cpio_image_len;
+
+static cpio_rofs_entry_t *cpio_entry_at(u32 i)
+{
+        return (cpio_rofs_entry_t *)vfs_slice_table_ptr(&cpio_entry_tab, i);
+}
 
 static u64 cpio_hex_field8(const char *field)
 {
@@ -156,19 +161,25 @@ static error_t cpio_rofs_add_entry(const char *name, u32 mode, u32 nlink,
                                    bool is_symlink)
 {
         cpio_rofs_entry_t *ent;
+        u32 idx;
+        error_t err;
 
         if (cpio_name_skip(name)) {
                 return REND_SUCCESS;
         }
 
-        if (cpio_entry_count >= CPIO_ROFS_MAX_ENTRIES) {
-                pr_error("[VFS][cpio] entry table full (max %u)\n",
-                         CPIO_ROFS_MAX_ENTRIES);
+        err = vfs_slice_table_push_zero(&cpio_entry_tab, &idx);
+        if (err != REND_SUCCESS) {
+                pr_error("[VFS][cpio] entry table grow failed\n");
+                return err;
+        }
+
+        ent = cpio_entry_at(idx);
+        if (!ent) {
+                vfs_slice_table_pop_last(&cpio_entry_tab);
                 return -E_RENDEZVOS;
         }
 
-        ent = &cpio_entries[cpio_entry_count];
-        memset(ent, 0, sizeof(*ent));
         cpio_normalize_path(name, ent->path, sizeof(ent->path));
         ent->mode = mode;
         ent->nlink = nlink;
@@ -177,7 +188,6 @@ static error_t cpio_rofs_add_entry(const char *name, u32 mode, u32 nlink,
         ent->is_dir = is_dir;
         ent->is_symlink = is_symlink;
 
-        cpio_entry_count++;
         return REND_SUCCESS;
 }
 
@@ -187,13 +197,20 @@ error_t cpio_rofs_init(const void *image, u64 image_len)
         const u8 *end;
         error_t err;
 
-        cpio_entry_count = 0;
+        vfs_slice_table_destroy(&cpio_entry_tab);
+        err = vfs_slice_table_init(&cpio_entry_tab, sizeof(cpio_rofs_entry_t),
+                                   64);
+        if (err != REND_SUCCESS) {
+                return err;
+        }
+
         cpio_image = (const u8 *)image;
         cpio_image_len = image_len;
 
         if (!image || image_len < CPIO_NEWC_HDR_LEN) {
                 pr_error("[VFS][cpio] image too small (%llu bytes)\n",
                          (u64)image_len);
+                vfs_slice_table_destroy(&cpio_entry_tab);
                 return -E_IN_PARAM;
         }
 
@@ -215,6 +232,7 @@ error_t cpio_rofs_init(const void *image, u64 image_len)
                 if (!cpio_header_magic_ok(hdr)) {
                         pr_error("[VFS][cpio] bad magic at offset %llu\n",
                                  (u64)(cursor - (const u8 *)image));
+                        vfs_slice_table_destroy(&cpio_entry_tab);
                         return -E_IN_PARAM;
                 }
 
@@ -228,6 +246,7 @@ error_t cpio_rofs_init(const void *image, u64 image_len)
                 if (cursor + namesize > end) {
                         pr_error("[VFS][cpio] truncated name at %llu\n",
                                  (u64)(cursor - (const u8 *)image));
+                        vfs_slice_table_destroy(&cpio_entry_tab);
                         return -E_IN_PARAM;
                 }
 
@@ -241,6 +260,7 @@ error_t cpio_rofs_init(const void *image, u64 image_len)
                 data = cursor;
                 if (cursor + filesize > end) {
                         pr_error("[VFS][cpio] truncated file %s\n", name);
+                        vfs_slice_table_destroy(&cpio_entry_tab);
                         return -E_IN_PARAM;
                 }
 
@@ -251,6 +271,7 @@ error_t cpio_rofs_init(const void *image, u64 image_len)
                         name, (u32)mode, nlink, filesize, data, is_dir,
                         is_symlink);
                 if (err != REND_SUCCESS) {
+                        vfs_slice_table_destroy(&cpio_entry_tab);
                         return err;
                 }
 
@@ -262,7 +283,7 @@ error_t cpio_rofs_init(const void *image, u64 image_len)
 
 u32 cpio_rofs_parsed_count(void)
 {
-        return cpio_entry_count;
+        return vfs_slice_table_count(&cpio_entry_tab);
 }
 
 static bool cpio_path_equal(const char *a, const char *b)
@@ -278,25 +299,28 @@ static bool cpio_path_equal(const char *a, const char *b)
 bool cpio_rofs_lookup(const char *path, cpio_rofs_stat_t *out)
 {
         u32 i;
+        u32 n;
 
         if (!path || !out) {
                 return false;
         }
 
         memset(out, 0, sizeof(*out));
+        n = vfs_slice_table_count(&cpio_entry_tab);
 
-        for (i = 0; i < cpio_entry_count; i++) {
-                if (cpio_path_equal(cpio_entries[i].path, path)) {
-                        out->mode = cpio_entries[i].mode;
-                        out->size = cpio_entries[i].filesize;
-                        out->is_dir = cpio_entries[i].is_dir;
-                        out->is_symlink = cpio_entries[i].is_symlink;
-                        out->data = cpio_entries[i].data;
-                        out->nlink = cpio_entries[i].nlink ?
-                                             cpio_entries[i].nlink :
-                                             1u;
-                        return true;
+        for (i = 0; i < n; i++) {
+                cpio_rofs_entry_t *ent = cpio_entry_at(i);
+
+                if (!ent || !cpio_path_equal(ent->path, path)) {
+                        continue;
                 }
+                out->mode = ent->mode;
+                out->size = ent->filesize;
+                out->is_dir = ent->is_dir;
+                out->is_symlink = ent->is_symlink;
+                out->data = ent->data;
+                out->nlink = ent->nlink ? ent->nlink : 1u;
+                return true;
         }
 
         return false;
@@ -341,72 +365,32 @@ i64 cpio_rofs_read(const cpio_rofs_stat_t *st, u64 offset, void *buf, u64 len)
 void cpio_rofs_visit(cpio_rofs_visit_fn fn, void *ctx)
 {
         u32 i;
+        u32 n;
 
         if (!fn) {
                 return;
         }
 
-        for (i = 0; i < cpio_entry_count; i++) {
+        n = vfs_slice_table_count(&cpio_entry_tab);
+        for (i = 0; i < n; i++) {
+                cpio_rofs_entry_t *ent = cpio_entry_at(i);
                 cpio_rofs_stat_t st;
 
+                if (!ent) {
+                        continue;
+                }
                 memset(&st, 0, sizeof(st));
-                st.mode = cpio_entries[i].mode;
-                st.size = cpio_entries[i].filesize;
-                st.is_dir = cpio_entries[i].is_dir;
-                st.is_symlink = cpio_entries[i].is_symlink;
-                st.data = cpio_entries[i].data;
-                st.nlink = cpio_entries[i].nlink ? cpio_entries[i].nlink : 1u;
+                st.mode = ent->mode;
+                st.size = ent->filesize;
+                st.is_dir = ent->is_dir;
+                st.is_symlink = ent->is_symlink;
+                st.data = ent->data;
+                st.nlink = ent->nlink ? ent->nlink : 1u;
 
-                if (!fn(cpio_entries[i].path, &st, ctx)) {
+                if (!fn(ent->path, &st, ctx)) {
                         break;
                 }
         }
-}
-
-static i32 cpio_readdir_name_cmp(const char *a, const char *b)
-{
-        return (i32)strcmp_s(a, b, 64);
-}
-
-static bool cpio_readdir_insert_name(char names[][64], u32 *count, const char *name)
-{
-        u32 i;
-
-        if (!names || !count || !name || !name[0]) {
-                return false;
-        }
-
-        for (i = 0; i < *count; i++) {
-                if (cpio_readdir_name_cmp(names[i], name) == 0) {
-                        return true;
-                }
-        }
-
-        if (*count >= CPIO_ROFS_MAX_ENTRIES) {
-                return false;
-        }
-
-        strncpy(names[*count], name, 63);
-        names[*count][63] = '\0';
-
-        for (i = *count; i > 0; i--) {
-                if (cpio_readdir_name_cmp(names[i - 1], names[i]) <= 0) {
-                        break;
-                }
-                {
-                        char tmp[64];
-
-                        strncpy(tmp, names[i - 1], sizeof(tmp) - 1);
-                        tmp[sizeof(tmp) - 1] = '\0';
-                        strncpy(names[i - 1], names[i], 63);
-                        names[i - 1][63] = '\0';
-                        strncpy(names[i], tmp, 63);
-                        names[i][63] = '\0';
-                }
-        }
-
-        (*count)++;
-        return true;
 }
 
 static u8 cpio_readdir_dtype(const char *child_path)
@@ -429,9 +413,12 @@ i64 cpio_rofs_readdir(const char *dirpath, u64 index, vfs_dirent_t *out)
 {
         char norm[VFS_PATH_MAX];
         char child_path[VFS_PATH_MAX];
-        static char names[CPIO_ROFS_MAX_ENTRIES][64];
-        u32 name_count = 0;
+        vfs_slice_table_t names;
+        u32 name_count;
         u32 i;
+        u32 n;
+        char *picked;
+        error_t err;
 
         if (!dirpath || !out) {
                 return -LINUX_EINVAL;
@@ -462,29 +449,47 @@ i64 cpio_rofs_readdir(const char *dirpath, u64 index, vfs_dirent_t *out)
 
         index -= 2;
 
-        for (i = 0; i < cpio_entry_count; i++) {
-                char child_name[64];
-
-                if (!vfs_path_direct_child_name(
-                            norm, cpio_entries[i].path, child_name,
-                            sizeof(child_name))) {
-                        continue;
-                }
-                (void)cpio_readdir_insert_name(names, &name_count, child_name);
+        err = vfs_slice_table_init(&names, VFS_DIR_NAME_SLOT, 16);
+        if (err != REND_SUCCESS) {
+                return -LINUX_ENOMEM;
         }
 
+        n = vfs_slice_table_count(&cpio_entry_tab);
+        for (i = 0; i < n; i++) {
+                cpio_rofs_entry_t *ent = cpio_entry_at(i);
+                char child_name[VFS_DIR_NAME_SLOT];
+
+                if (!ent) {
+                        continue;
+                }
+                if (!vfs_path_direct_child_name(norm, ent->path, child_name,
+                                                sizeof(child_name))) {
+                        continue;
+                }
+                if (!vfs_dir_names_insert(&names, child_name)) {
+                        vfs_slice_table_destroy(&names);
+                        return -LINUX_ENOMEM;
+                }
+        }
+
+        name_count = vfs_slice_table_count(&names);
         if (index >= name_count) {
+                vfs_slice_table_destroy(&names);
                 return 1;
         }
 
-        if (!vfs_path_join(norm, names[index], child_path, sizeof(child_path))) {
+        picked = (char *)vfs_slice_table_ptr(&names, (u32)index);
+        if (!picked
+            || !vfs_path_join(norm, picked, child_path, sizeof(child_path))) {
+                vfs_slice_table_destroy(&names);
                 return -LINUX_EIO;
         }
 
         memset(out, 0, sizeof(*out));
-        strncpy(out->name, names[index], sizeof(out->name) - 1);
+        strncpy(out->name, picked, sizeof(out->name) - 1);
         out->name[sizeof(out->name) - 1] = '\0';
         out->d_type = cpio_readdir_dtype(child_path);
         out->d_ino = vfs_path_to_ino(child_path);
+        vfs_slice_table_destroy(&names);
         return 0;
 }

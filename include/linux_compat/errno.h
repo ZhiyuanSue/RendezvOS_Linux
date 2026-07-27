@@ -41,6 +41,7 @@
 #define LINUX_EMLINK  31
 #define LINUX_EPIPE   32
 #define LINUX_ERANGE  34
+#define LINUX_ENAMETOOLONG 36
 
 #define LINUX_ESRCH  3
 #define LINUX_ENOSYS 38

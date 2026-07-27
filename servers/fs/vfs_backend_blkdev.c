@@ -3,40 +3,74 @@
 #include "vfs_backend_ipc.h"
 
 #include <common/mm.h>
+#include <common/string.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/initcall.h>
 #include <linux_compat/ipc/rpc.h>
 #include <modules/log/log.h>
+#include <rendezvos/error.h>
+#include <rendezvos/mm/allocator.h>
+#include <rendezvos/mm/page_slice.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/initcall.h>
 #include <rendezvos/task/tcb.h>
 
 #define VFS_BLKDEV_PSEUDO_SIZE (64u * 1024u)
 
-static u8 vfs_blkdev_mem[VFS_BLKDEV_PSEUDO_SIZE];
+static struct page_slice *vfs_blkdev_slice;
 static u16 vfs_blkdev_service_id;
 static Thread_Base *vfs_blkdev_thread_ptr;
 static bool vfs_blkdev_server_done;
 
-static i64 vfs_blkdev_read(u64 offset, void *buf, u64 len)
+static error_t vfs_blkdev_ensure_slice(void)
 {
-        if (!buf) {
-                return -LINUX_EINVAL;
+        struct allocator *alloc;
+        u64 pgoff;
+        u64 pages;
+        error_t err;
+
+        if (vfs_blkdev_slice) {
+                return REND_SUCCESS;
         }
-        if (offset >= VFS_BLKDEV_PSEUDO_SIZE) {
-                return 0;
+
+        alloc = percpu(kallocator);
+        if (!alloc || !alloc->m_alloc) {
+                return -E_REND_NO_MEM;
         }
-        if (len > VFS_BLKDEV_PSEUDO_SIZE - offset) {
-                len = VFS_BLKDEV_PSEUDO_SIZE - offset;
+
+        vfs_blkdev_slice = page_slice_create(0, VFS_BLKDEV_PSEUDO_SIZE);
+        if (!vfs_blkdev_slice) {
+                return -E_REND_NO_MEM;
         }
-        memcpy(buf, vfs_blkdev_mem + offset, (size_t)len);
-        return (i64)len;
+
+        pages = PAGE_SLICE_SIZE_TO_PAGE_COUNT(VFS_BLKDEV_PSEUDO_SIZE);
+        for (pgoff = 0; pgoff < pages; pgoff++) {
+                vaddr page = (vaddr)alloc->m_alloc(alloc, PAGE_SIZE);
+
+                if (!page) {
+                        page_slice_destroy(&vfs_blkdev_slice);
+                        return -E_REND_NO_MEM;
+                }
+                memset((void *)page, 0, PAGE_SIZE);
+                err = page_slice_insert_page(vfs_blkdev_slice, pgoff, page, 0);
+                if (err != REND_SUCCESS) {
+                        alloc->m_free(alloc, (void *)page);
+                        page_slice_destroy(&vfs_blkdev_slice);
+                        return err;
+                }
+        }
+        return REND_SUCCESS;
 }
 
-static i64 vfs_blkdev_write(u64 offset, const void *buf, u64 len)
+static i64 vfs_blkdev_rw(u64 offset, void *buf, u64 len, bool is_write)
 {
+        u64 done = 0;
+
         if (!buf) {
                 return -LINUX_EINVAL;
+        }
+        if (vfs_blkdev_ensure_slice() != REND_SUCCESS) {
+                return -LINUX_ENOMEM;
         }
         if (offset >= VFS_BLKDEV_PSEUDO_SIZE) {
                 return 0;
@@ -44,8 +78,34 @@ static i64 vfs_blkdev_write(u64 offset, const void *buf, u64 len)
         if (len > VFS_BLKDEV_PSEUDO_SIZE - offset) {
                 len = VFS_BLKDEV_PSEUDO_SIZE - offset;
         }
-        memcpy(vfs_blkdev_mem + offset, buf, (size_t)len);
-        return (i64)len;
+
+        while (done < len) {
+                u64 off = offset + done;
+                u64 pgoff = PAGE_SLICE_BYTE_TO_PGOFF(off);
+                u64 in_page = PAGE_SLICE_IN_PAGE_OFF(off);
+                struct page_slice_entry *entry;
+                size_t chunk;
+
+                entry = page_slice_lookup(vfs_blkdev_slice, pgoff);
+                if (!entry) {
+                        return -LINUX_EIO;
+                }
+                chunk = PAGE_SIZE - (size_t)in_page;
+                if (chunk > len - done) {
+                        chunk = (size_t)(len - done);
+                }
+                if (is_write) {
+                        memcpy((void *)(entry->kernel_virtual_address + in_page),
+                               (const u8 *)buf + done,
+                               chunk);
+                } else {
+                        memcpy((u8 *)buf + done,
+                               (void *)(entry->kernel_virtual_address + in_page),
+                               chunk);
+                }
+                done += chunk;
+        }
+        return (i64)done;
 }
 
 static i64 vfs_backend_blkdev_service(vfs_backend_req_t *req)
@@ -58,9 +118,10 @@ static i64 vfs_backend_blkdev_service(vfs_backend_req_t *req)
         case VFS_BACKEND_OP_LOOKUP:
                 return -LINUX_ENOSYS;
         case VFS_BACKEND_OP_READ:
-                return vfs_blkdev_read(req->offset, req->buf, req->len);
+                return vfs_blkdev_rw(req->offset, req->buf, req->len, false);
         case VFS_BACKEND_OP_WRITE:
-                return vfs_blkdev_write(req->offset, req->wbuf, req->len);
+                return vfs_blkdev_rw(req->offset, (void *)req->wbuf, req->len,
+                                     true);
         case VFS_BACKEND_OP_TRUNCATE:
                 return -LINUX_ENOSYS;
         case VFS_BACKEND_OP_FLUSH:
@@ -80,6 +141,11 @@ static i64 vfs_blkdev_rpc_handler(u16 opcode, const kmsg_t *km,
 static void vfs_blkdev_thread_entry(void)
 {
         i64 reg_ret;
+
+        if (vfs_blkdev_ensure_slice() != REND_SUCCESS) {
+                pr_error("[VFS/blkdev] slice alloc failed\n");
+                return;
+        }
 
         reg_ret = vfs_backend_ipc_register(
                 VFS_BACKEND_PORT_BLKDEV,

@@ -3,6 +3,7 @@
 #include "cpio_rofs.h"
 #include "ramfs_layer.h"
 #include "vfs_backend.h"
+#include "vfs_slice_table.h"
 
 #include <common/dsa/list.h>
 #include <common/mm.h>
@@ -14,7 +15,7 @@
 #include <rendezvos/mm/page_slice_copy.h>
 #include <rendezvos/smp/percpu.h>
 
-#define VFS_PCACHE_MAX_ENTRIES 8u
+#define VFS_PCACHE_SOFT_MAX    64u
 #define VFS_PCACHE_MAX_CACHED  (256u * 1024u)
 
 /* Upper-layer page_slice entry flag (not in core PAGE_SLICE_FLAG_*). */
@@ -33,9 +34,27 @@ typedef struct vfs_pcache_entry {
         struct list_entry pages_inactive;
 } vfs_pcache_entry_t;
 
-static vfs_pcache_entry_t vfs_pcache[VFS_PCACHE_MAX_ENTRIES];
+static vfs_slice_table_t vfs_pcache_tab;
 static LIST_HEAD(vfs_pcache_active);
 static LIST_HEAD(vfs_pcache_inactive);
+static bool vfs_pcache_ready;
+
+static vfs_pcache_entry_t *vfs_pcache_at(u32 i)
+{
+        return (vfs_pcache_entry_t *)vfs_slice_table_ptr(&vfs_pcache_tab, i);
+}
+
+static void vfs_pcache_tab_ensure(void)
+{
+        if (vfs_pcache_ready) {
+                return;
+        }
+        if (vfs_slice_table_init(&vfs_pcache_tab, sizeof(vfs_pcache_entry_t), 8)
+            == REND_SUCCESS) {
+                vfs_pcache_tab.soft_max = VFS_PCACHE_SOFT_MAX;
+                vfs_pcache_ready = true;
+        }
+}
 
 static struct allocator *vfs_pcache_alloc(void)
 {
@@ -71,17 +90,22 @@ static ramfs_entry_t *vfs_inode_ramfs_storage(const vfs_inode_t *ino)
 static vfs_pcache_entry_t *vfs_pcache_find(const char *path)
 {
         u32 i;
+        u32 n;
 
         if (!path) {
                 return NULL;
         }
 
-        for (i = 0; i < VFS_PCACHE_MAX_ENTRIES; i++) {
-                if (!vfs_pcache[i].valid) {
+        vfs_pcache_tab_ensure();
+        n = vfs_slice_table_count(&vfs_pcache_tab);
+        for (i = 0; i < n; i++) {
+                vfs_pcache_entry_t *e = vfs_pcache_at(i);
+
+                if (!e || !e->valid) {
                         continue;
                 }
-                if (strcmp_s(vfs_pcache[i].path, path, VFS_PATH_MAX) == 0) {
-                        return &vfs_pcache[i];
+                if (strcmp_s(e->path, path, VFS_PATH_MAX) == 0) {
+                        return e;
                 }
         }
 
@@ -187,47 +211,47 @@ static void vfs_pcache_touch_pages(vfs_pcache_entry_t *ent, u64 offset, u64 len)
         }
 }
 
-static void vfs_pcache_flush_entry(vfs_pcache_entry_t *ent)
+static bool vfs_pcache_flush_entry(vfs_pcache_entry_t *ent)
 {
         u8 *dst;
 
         if (!ent || !ent->valid || !ent->dirty || !ent->slice) {
-                return;
+                return true;
         }
 
         if (ent->backend_caps & VFS_BACKEND_CAP_FLUSH_DROP) {
                 ent->dirty = false;
-                return;
+                return true;
         }
 
         if (!(ent->backend_caps & VFS_BACKEND_CAP_WRITE_SOURCE)
             || !ent->storage) {
                 ent->dirty = false;
-                return;
+                return true;
         }
 
         dst = ((ramfs_entry_t *)ent->storage)->data;
         if (!dst) {
                 ent->dirty = false;
-                return;
+                return true;
         }
 
         if (page_slice_copy_to_buffer(ent->slice, 0, dst, (size_t)ent->size)
             != REND_SUCCESS) {
-                return;
+                return false;
         }
 
         ((ramfs_entry_t *)ent->storage)->size = ent->size;
         ent->dirty = false;
+        return true;
 }
 
-static void vfs_pcache_free_entry(vfs_pcache_entry_t *ent)
+static void vfs_pcache_destroy_entry(vfs_pcache_entry_t *ent)
 {
         if (!ent) {
                 return;
         }
 
-        vfs_pcache_flush_entry(ent);
         vfs_pcache_clear_page_lru(ent);
         if (list_node_is_valid(&ent->lru_node)
             && !list_node_is_detached(&ent->lru_node)) {
@@ -245,6 +269,17 @@ static void vfs_pcache_free_entry(vfs_pcache_entry_t *ent)
         ent->valid = false;
         ent->path[0] = '\0';
         INIT_LIST_HEAD(&ent->lru_node);
+}
+
+/* Best-effort flush then free (used by drop/reset). Eviction uses careful path. */
+static void vfs_pcache_free_entry(vfs_pcache_entry_t *ent)
+{
+        if (!ent) {
+                return;
+        }
+
+        (void)vfs_pcache_flush_entry(ent);
+        vfs_pcache_destroy_entry(ent);
 }
 
 static void vfs_pcache_evict_one(void)
@@ -265,22 +300,41 @@ static void vfs_pcache_evict_one(void)
         }
 
         ent = list_entry(node, vfs_pcache_entry_t, lru_node);
-        vfs_pcache_free_entry(ent);
+        if (ent->dirty && !vfs_pcache_flush_entry(ent)) {
+                /* Keep dirty; rotate toward MRU so we try another victim next. */
+                list_del_init(&ent->lru_node);
+                list_add_head(&ent->lru_node, &vfs_pcache_active);
+                return;
+        }
+        vfs_pcache_destroy_entry(ent);
 }
 
 void vfs_page_cache_reset(void)
 {
         u32 i;
+        u32 n;
 
-        for (i = 0; i < VFS_PCACHE_MAX_ENTRIES; i++) {
-                if (vfs_pcache[i].valid) {
-                        vfs_pcache_free_entry(&vfs_pcache[i]);
+        vfs_pcache_tab_ensure();
+        n = vfs_slice_table_count(&vfs_pcache_tab);
+        for (i = 0; i < n; i++) {
+                vfs_pcache_entry_t *e = vfs_pcache_at(i);
+
+                if (!e) {
+                        continue;
+                }
+                if (e->valid) {
+                        vfs_pcache_free_entry(e);
                 } else {
-                        INIT_LIST_HEAD(&vfs_pcache[i].lru_node);
-                        INIT_LIST_HEAD(&vfs_pcache[i].pages_active);
-                        INIT_LIST_HEAD(&vfs_pcache[i].pages_inactive);
+                        INIT_LIST_HEAD(&e->lru_node);
+                        INIT_LIST_HEAD(&e->pages_active);
+                        INIT_LIST_HEAD(&e->pages_inactive);
                 }
         }
+        vfs_slice_table_destroy(&vfs_pcache_tab);
+        vfs_pcache_ready = false;
+        INIT_LIST_HEAD(&vfs_pcache_active);
+        INIT_LIST_HEAD(&vfs_pcache_inactive);
+        vfs_pcache_tab_ensure();
 }
 
 void vfs_page_cache_drop(const char *path)
@@ -394,18 +448,42 @@ static error_t vfs_pcache_fill_from_inode(vfs_pcache_entry_t *ent,
 static vfs_pcache_entry_t *vfs_pcache_alloc_slot(const char *path)
 {
         u32 i;
+        u32 n;
+        u32 idx;
         vfs_pcache_entry_t *ent;
+        error_t err;
 
-        for (i = 0; i < VFS_PCACHE_MAX_ENTRIES; i++) {
-                if (!vfs_pcache[i].valid) {
+        vfs_pcache_tab_ensure();
+        if (!vfs_pcache_ready) {
+                return NULL;
+        }
+
+        n = vfs_slice_table_count(&vfs_pcache_tab);
+        for (i = 0; i < n; i++) {
+                ent = vfs_pcache_at(i);
+                if (ent && !ent->valid) {
                         goto init_slot;
+                }
+        }
+
+        /* Grow until soft max, then evict. */
+        if (n < vfs_pcache_tab.soft_max) {
+                err = vfs_slice_table_push_zero(&vfs_pcache_tab, &idx);
+                if (err == REND_SUCCESS) {
+                        ent = vfs_pcache_at(idx);
+                        if (ent) {
+                                goto init_slot;
+                        }
+                        vfs_slice_table_pop_last(&vfs_pcache_tab);
                 }
         }
 
         vfs_pcache_evict_one();
 
-        for (i = 0; i < VFS_PCACHE_MAX_ENTRIES; i++) {
-                if (!vfs_pcache[i].valid) {
+        n = vfs_slice_table_count(&vfs_pcache_tab);
+        for (i = 0; i < n; i++) {
+                ent = vfs_pcache_at(i);
+                if (ent && !ent->valid) {
                         goto init_slot;
                 }
         }
@@ -413,7 +491,6 @@ static vfs_pcache_entry_t *vfs_pcache_alloc_slot(const char *path)
         return NULL;
 
 init_slot:
-        ent = &vfs_pcache[i];
         ent->slice = NULL;
         ent->size = 0;
         ent->storage = NULL;

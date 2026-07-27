@@ -2,6 +2,7 @@
 
 #include "vfs_backend_ipc.h"
 #include "vfs_mount.h"
+#include "vfs_slice_table.h"
 
 #include <common/string.h>
 #include <linux_compat/errno.h>
@@ -14,29 +15,50 @@ typedef struct vfs_backend_entry {
         bool active;
 } vfs_backend_entry_t;
 
-static vfs_backend_entry_t vfs_backend_registry[VFS_BACKEND_REGISTRY_MAX];
+static vfs_slice_table_t vfs_backend_tab;
 static const char *vfs_backend_root_port_ptr;
 static const char *vfs_backend_overlay_port_ptr;
 static u32 vfs_backend_online_flags;
+static bool vfs_backend_tab_ready;
 
-#define VFS_BACKEND_ONLINE_ROOT    VFS_BACKEND_REG_ROOT
-#define VFS_BACKEND_ONLINE_OVERLAY VFS_BACKEND_REG_OVERLAY
-#define VFS_BACKEND_BOOT_IO_READY  (VFS_BACKEND_ONLINE_ROOT | VFS_BACKEND_ONLINE_OVERLAY)
+#define VFS_BACKEND_BOOT_IO_READY \
+        (VFS_BACKEND_REG_ROOT | VFS_BACKEND_REG_OVERLAY)
+
+static void vfs_backend_tab_ensure(void)
+{
+        if (vfs_backend_tab_ready) {
+                return;
+        }
+        if (vfs_slice_table_init(&vfs_backend_tab, sizeof(vfs_backend_entry_t),
+                                 8)
+            == REND_SUCCESS) {
+                vfs_backend_tab.soft_max = VFS_BACKEND_REGISTRY_SOFT_MAX;
+                vfs_backend_tab_ready = true;
+        }
+}
+
+static vfs_backend_entry_t *vfs_backend_at(u32 i)
+{
+        return (vfs_backend_entry_t *)vfs_slice_table_ptr(&vfs_backend_tab, i);
+}
 
 static vfs_backend_entry_t *vfs_backend_find_port(const char *port_name)
 {
         u32 i;
+        u32 n;
 
         if (!port_name) {
                 return NULL;
         }
 
-        for (i = 0; i < VFS_BACKEND_REGISTRY_MAX; i++) {
-                if (vfs_backend_registry[i].active
-                    && strcmp_s(vfs_backend_registry[i].port_name, port_name,
-                                VFS_PATH_MAX)
-                               == 0) {
-                        return &vfs_backend_registry[i];
+        vfs_backend_tab_ensure();
+        n = vfs_slice_table_count(&vfs_backend_tab);
+        for (i = 0; i < n; i++) {
+                vfs_backend_entry_t *e = vfs_backend_at(i);
+
+                if (e && e->active
+                    && strcmp_s(e->port_name, port_name, VFS_PATH_MAX) == 0) {
+                        return e;
                 }
         }
 
@@ -46,14 +68,37 @@ static vfs_backend_entry_t *vfs_backend_find_port(const char *port_name)
 static vfs_backend_entry_t *vfs_backend_alloc_slot(void)
 {
         u32 i;
+        u32 n;
+        u32 idx;
+        error_t err;
+        vfs_backend_entry_t *e;
 
-        for (i = 0; i < VFS_BACKEND_REGISTRY_MAX; i++) {
-                if (!vfs_backend_registry[i].active) {
-                        return &vfs_backend_registry[i];
+        vfs_backend_tab_ensure();
+        if (!vfs_backend_tab_ready) {
+                return NULL;
+        }
+
+        n = vfs_slice_table_count(&vfs_backend_tab);
+        for (i = 0; i < n; i++) {
+                e = vfs_backend_at(i);
+
+                if (e && !e->active) {
+                        memset(e, 0, sizeof(*e));
+                        return e;
                 }
         }
 
-        return NULL;
+        err = vfs_slice_table_push_zero(&vfs_backend_tab, &idx);
+        if (err != REND_SUCCESS) {
+                return NULL;
+        }
+
+        e = vfs_backend_at(idx);
+        if (!e) {
+                vfs_slice_table_pop_last(&vfs_backend_tab);
+                return NULL;
+        }
+        return e;
 }
 
 i64 vfs_backend_register(const char *port_name, const char *fstype, u32 caps,
@@ -118,18 +163,21 @@ u32 vfs_backend_caps_for_port(const char *port_name)
 const char *vfs_backend_port_for_fstype(const char *fstype)
 {
         u32 i;
+        u32 n;
 
         if (!fstype || !fstype[0]) {
                 return NULL;
         }
 
-        for (i = 0; i < VFS_BACKEND_REGISTRY_MAX; i++) {
-                if (vfs_backend_registry[i].active
-                    && vfs_backend_registry[i].fstype[0]
-                    && strcmp_s(vfs_backend_registry[i].fstype, fstype,
-                                VFS_BACKEND_FSTYPE_MAX)
+        vfs_backend_tab_ensure();
+        n = vfs_slice_table_count(&vfs_backend_tab);
+        for (i = 0; i < n; i++) {
+                vfs_backend_entry_t *e = vfs_backend_at(i);
+
+                if (e && e->active && e->fstype[0]
+                    && strcmp_s(e->fstype, fstype, VFS_BACKEND_FSTYPE_MAX)
                                == 0) {
-                        return vfs_backend_registry[i].port_name;
+                        return e->port_name;
                 }
         }
 

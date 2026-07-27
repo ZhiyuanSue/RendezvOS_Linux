@@ -146,20 +146,22 @@ demo 的 **`argv[0]="ls"`** 是 busybox **多调用名**；进程镜像是 `/bin
 
 ---
 
-## P1 — initramfs / VFS 容量妥协（已做，需正规化）
+## P1 — initramfs / VFS 容量妥协（**已回收 → 动态表**）
 
-### cpio / namespace 上限
+> 2026-07-27：改为 `vfs_slice_table`（page_slice 可增长），见 [`VFS_DYNAMIC_STORAGE.md`](VFS_DYNAMIC_STORAGE.md)。下列为历史记录。
 
-| 原值 | 现值 | 原因 |
-|------|------|------|
+### cpio / namespace 上限（历史）
+
+| 原值 | 曾调至 | 原因 |
+|------|--------|------|
 | `CPIO_ROFS_MAX_ENTRIES` **64** | **2048** | busybox applet symlink + tests |
 | `VFS_NS_MAX_NODES` **256** | **2048** | 与 cpio 条目同量级 |
 
-**文件**: `servers/fs/cpio_rofs.h`, `servers/fs/vfs_namespace.h`
+**现况**：无固定 BSS 容量；软上限 `VFS_SLICE_TABLE_SOFT_MAX`。
 
-### `cpio_rofs_readdir` static BSS
+### `cpio_rofs_readdir` static BSS（历史）
 
-`static char names[CPIO_ROFS_MAX_ENTRIES][64]`（约 128KiB BSS），避免 2048×64 爆内核栈。
+曾用 `static char names[2048][64]`（~128KiB）。**现况**：临时 `vfs_slice_table` 存名字，用完销毁。
 
 ---
 

@@ -4,8 +4,10 @@
 #include <common/stdbool.h>
 #include <common/types.h>
 
-#define VFS_MOUNT_MAX 8u
+#define VFS_MOUNT_SOFT_MAX 64u
 #define VFS_MOUNT_PORT_NAME_MAX 32u
+
+/* Mount table is growable (vfs_slice_table); soft max VFS_MOUNT_SOFT_MAX. */
 
 typedef struct vfs_mount_view {
         const char *target;

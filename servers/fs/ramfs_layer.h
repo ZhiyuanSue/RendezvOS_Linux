@@ -14,7 +14,7 @@
  * Path existence / delete state: vfs_namespace.c — not here.
  */
 
-#define RAMFS_MAX_ENTRIES   128
+/* Entry table is growable (vfs_slice_table); no fixed BSS cap. */
 #define RAMFS_MAX_FILE_SIZE (256u * 1024u)
 
 #define RAMFS_FLAG_DIR      0x01u
@@ -30,6 +30,7 @@ typedef struct ramfs_entry {
         u64 capacity;
         u8 *data;
         u8 flags;
+        bool alive; /* false = free slot; never relocate (open storage ptrs). */
 } ramfs_entry_t;
 
 void ramfs_init(void);

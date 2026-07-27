@@ -3,6 +3,7 @@
 #include "vfs_backend.h"
 #include "vfs_handle.h"
 #include "vfs_namespace.h"
+#include "vfs_slice_table.h"
 #include <linux_compat/fs/vfs_path.h>
 
 #include <common/string.h>
@@ -17,11 +18,11 @@ typedef struct vfs_mount_rec {
         bool active;
 } vfs_mount_rec_t;
 
-static vfs_mount_rec_t vfs_mounts[VFS_MOUNT_MAX];
+static vfs_slice_table_t vfs_mount_tab;
 
-static bool vfs_mount_path_equal(const char *a, const char *b)
+static vfs_mount_rec_t *vfs_mount_at(u32 i)
 {
-        return vfs_path_equal(a, b);
+        return (vfs_mount_rec_t *)vfs_slice_table_ptr(&vfs_mount_tab, i);
 }
 
 static bool vfs_mount_path_under_or_equal(const char *path, const char *mount)
@@ -55,7 +56,11 @@ static bool vfs_mount_path_under_or_equal(const char *path, const char *mount)
 
 void vfs_mount_reset(void)
 {
-        memset(vfs_mounts, 0, sizeof(vfs_mounts));
+        vfs_slice_table_destroy(&vfs_mount_tab);
+        if (vfs_slice_table_init(&vfs_mount_tab, sizeof(vfs_mount_rec_t), 8)
+            == REND_SUCCESS) {
+                vfs_mount_tab.soft_max = VFS_MOUNT_SOFT_MAX;
+        }
 }
 
 const char *vfs_mount_backend_port_for_path(const char *path)
@@ -72,42 +77,45 @@ const char *vfs_mount_backend_port_for_path(const char *path)
 bool vfs_mount_view_for_path(const char *path, vfs_mount_view_t *out)
 {
         u32 i;
+        u32 n;
         char norm[VFS_PATH_MAX];
         u64 best_len = 0;
-        u32 best_i = VFS_MOUNT_MAX;
+        vfs_mount_rec_t *best = NULL;
 
         if (!path) {
                 return false;
         }
 
         vfs_path_normalize(path, norm, sizeof(norm));
+        n = vfs_slice_table_count(&vfs_mount_tab);
 
-        for (i = 0; i < VFS_MOUNT_MAX; i++) {
+        for (i = 0; i < n; i++) {
+                vfs_mount_rec_t *m = vfs_mount_at(i);
                 u64 mlen;
 
-                if (!vfs_mounts[i].active || !vfs_mounts[i].backend_port[0]) {
+                if (!m || !m->active || !m->backend_port[0]) {
                         continue;
                 }
-                if (!vfs_mount_path_under_or_equal(norm, vfs_mounts[i].target)) {
+                if (!vfs_mount_path_under_or_equal(norm, m->target)) {
                         continue;
                 }
 
-                mlen = strlen(vfs_mounts[i].target);
+                mlen = strlen(m->target);
                 if (mlen > best_len) {
                         best_len = mlen;
-                        best_i = i;
+                        best = m;
                 }
         }
 
-        if (best_i >= VFS_MOUNT_MAX) {
+        if (!best) {
                 return false;
         }
 
         if (out) {
-                out->target = vfs_mounts[best_i].target;
-                out->backend_port = vfs_mounts[best_i].backend_port;
-                out->fstype = vfs_mounts[best_i].fstype;
-                out->flags = vfs_mounts[best_i].flags;
+                out->target = best->target;
+                out->backend_port = best->backend_port;
+                out->fstype = best->fstype;
+                out->flags = best->flags;
         }
         return true;
 }
@@ -115,8 +123,12 @@ bool vfs_mount_view_for_path(const char *path, vfs_mount_view_t *out)
 i64 vfs_mount_register(const char *target, const char *fstype, u64 flags)
 {
         u32 i;
+        u32 n;
+        u32 idx;
         char norm[VFS_PATH_MAX];
         const char *backend_port;
+        vfs_mount_rec_t *slot;
+        error_t err;
 
         if (!target || !fstype) {
                 return -LINUX_EINVAL;
@@ -132,47 +144,55 @@ i64 vfs_mount_register(const char *target, const char *fstype, u64 flags)
                 return -LINUX_EINVAL;
         }
 
-        for (i = 0; i < VFS_MOUNT_MAX; i++) {
-                if (vfs_mounts[i].active
-                    && vfs_mount_path_equal(vfs_mounts[i].target, norm)) {
+        n = vfs_slice_table_count(&vfs_mount_tab);
+        for (i = 0; i < n; i++) {
+                vfs_mount_rec_t *m = vfs_mount_at(i);
+
+                if (m && m->active && vfs_path_equal(m->target, norm)) {
                         return 0;
                 }
         }
 
-        for (i = 0; i < VFS_MOUNT_MAX; i++) {
-                if (!vfs_mounts[i].active) {
-                        strncpy(vfs_mounts[i].target, norm,
-                                sizeof(vfs_mounts[i].target) - 1);
-                        vfs_mounts[i].target[sizeof(vfs_mounts[i].target) - 1] =
-                                '\0';
-                        strncpy(vfs_mounts[i].fstype, fstype,
-                                sizeof(vfs_mounts[i].fstype) - 1);
-                        vfs_mounts[i].fstype[sizeof(vfs_mounts[i].fstype) - 1] =
-                                '\0';
-                        strncpy(vfs_mounts[i].backend_port, backend_port,
-                                sizeof(vfs_mounts[i].backend_port) - 1);
-                        vfs_mounts[i].backend_port
-                                [sizeof(vfs_mounts[i].backend_port) - 1] = '\0';
-                        vfs_mounts[i].flags = flags;
-                        vfs_mounts[i].active = true;
-                        if (strcmp_s(fstype,
-                                     VFS_BACKEND_FSTYPE_RAMFS,
-                                     VFS_BACKEND_FSTYPE_MAX)
-                            == 0) {
-                                (void)vfs_backend_mkdir(backend_port, norm,
-                                                        0755u | 0040000u);
-                        }
-                        (void)vfs_namespace_set_mount_cover(norm, true);
-                        return 0;
+        slot = NULL;
+        for (i = 0; i < n; i++) {
+                vfs_mount_rec_t *m = vfs_mount_at(i);
+
+                if (m && !m->active) {
+                        slot = m;
+                        break;
+                }
+        }
+        if (!slot) {
+                err = vfs_slice_table_push_zero(&vfs_mount_tab, &idx);
+                if (err != REND_SUCCESS) {
+                        return -LINUX_ENOMEM;
+                }
+                slot = vfs_mount_at(idx);
+                if (!slot) {
+                        vfs_slice_table_pop_last(&vfs_mount_tab);
+                        return -LINUX_ENOMEM;
                 }
         }
 
-        return -LINUX_ENOMEM;
+        memset(slot, 0, sizeof(*slot));
+        strncpy(slot->target, norm, sizeof(slot->target) - 1);
+        strncpy(slot->fstype, fstype, sizeof(slot->fstype) - 1);
+        strncpy(slot->backend_port, backend_port, sizeof(slot->backend_port) - 1);
+        slot->flags = flags;
+        slot->active = true;
+
+        if (strcmp_s(fstype, VFS_BACKEND_FSTYPE_RAMFS, VFS_BACKEND_FSTYPE_MAX)
+            == 0) {
+                (void)vfs_backend_mkdir(backend_port, norm, 0755u | 0040000u);
+        }
+        (void)vfs_namespace_set_mount_cover(norm, true);
+        return 0;
 }
 
 i64 vfs_mount_unregister(const char *target, u64 flags)
 {
         u32 i;
+        u32 n;
         char norm[VFS_PATH_MAX];
 
         if (!target) {
@@ -180,21 +200,19 @@ i64 vfs_mount_unregister(const char *target, u64 flags)
         }
 
         vfs_path_normalize(target, norm, sizeof(norm));
+        n = vfs_slice_table_count(&vfs_mount_tab);
 
-        for (i = 0; i < VFS_MOUNT_MAX; i++) {
-                if (vfs_mounts[i].active
-                    && vfs_mount_path_equal(vfs_mounts[i].target, norm)) {
+        for (i = 0; i < n; i++) {
+                vfs_mount_rec_t *m = vfs_mount_at(i);
+
+                if (m && m->active && vfs_path_equal(m->target, norm)) {
                         if ((flags & LINUX_MNT_DETACH) == 0
                             && vfs_handle_busy_under_path(norm)) {
                                 return -LINUX_EBUSY;
                         }
 
                         (void)vfs_namespace_set_mount_cover(norm, false);
-                        vfs_mounts[i].active = false;
-                        vfs_mounts[i].target[0] = '\0';
-                        vfs_mounts[i].fstype[0] = '\0';
-                        vfs_mounts[i].backend_port[0] = '\0';
-                        vfs_mounts[i].flags = 0;
+                        memset(m, 0, sizeof(*m));
                         return 0;
                 }
         }
@@ -205,14 +223,17 @@ i64 vfs_mount_unregister(const char *target, u64 flags)
 bool vfs_mount_is_mountpoint(const char *path)
 {
         u32 i;
+        u32 n;
 
         if (!path) {
                 return false;
         }
 
-        for (i = 0; i < VFS_MOUNT_MAX; i++) {
-                if (vfs_mounts[i].active
-                    && vfs_mount_path_equal(vfs_mounts[i].target, path)) {
+        n = vfs_slice_table_count(&vfs_mount_tab);
+        for (i = 0; i < n; i++) {
+                vfs_mount_rec_t *m = vfs_mount_at(i);
+
+                if (m && m->active && vfs_path_equal(m->target, path)) {
                         return true;
                 }
         }

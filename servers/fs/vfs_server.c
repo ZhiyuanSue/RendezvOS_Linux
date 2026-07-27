@@ -359,7 +359,11 @@ static void vfs_service_data_init(void)
 
         pr_info("[VFS] data init on BSP CPU %llu\n", (u64)percpu(cpu_number));
 
-        vfs_handle_init();
+        err = vfs_handle_init();
+        if (err != REND_SUCCESS) {
+                pr_error("[VFS] vfs_handle_init failed: %d\n", (int)err);
+                return;
+        }
 
         cpio_len = (u64)(rootfs_cpio_end - rootfs_cpio_start);
         err = vfs_root_init(rootfs_cpio_start, cpio_len);

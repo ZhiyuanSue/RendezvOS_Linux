@@ -12,14 +12,42 @@
 #include "vfs_root.h"
 
 #include <common/string.h>
+#include <common/mm.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/fs/vfs_protocol.h>
 #include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/proc_registry.h>
+#include <rendezvos/mm/allocator.h>
 #include <rendezvos/mm/vmm.h>
+#include <rendezvos/smp/percpu.h>
 
+#if PAGE_SIZE < 4096u
+#define VFS_READ_CHUNK PAGE_SIZE
+#else
 #define VFS_READ_CHUNK 4096u
-#define VFS_S_IFREG    0100000u
+#endif
+
+#define VFS_S_IFREG 0100000u
+
+/* vfs_listen is single-threaded: one PAGE_SIZE I/O scratch (not on kstack). */
+static u8 *vfs_io_chunk;
+
+static u8 *vfs_io_chunk_get(void)
+{
+        struct allocator *alloc;
+
+        if (vfs_io_chunk) {
+                return vfs_io_chunk;
+        }
+
+        alloc = percpu(kallocator);
+        if (!alloc || !alloc->m_alloc) {
+                return NULL;
+        }
+
+        vfs_io_chunk = (u8 *)alloc->m_alloc(alloc, PAGE_SIZE);
+        return vfs_io_chunk;
+}
 
 static bool vfs_inode_symlink_target(const vfs_inode_t *ino, char *out, u64 cap)
 {
@@ -204,7 +232,7 @@ i64 vfs_read_handle(pid_t pid, u32 handle, u64 user_buf, u64 count)
 {
         Tcb_Base *task = vfs_task_for_pid(pid);
         vfs_open_handle_t *file;
-        u8 chunk[VFS_READ_CHUNK];
+        u8 *chunk;
         u64 remaining = count;
         u64 total = 0;
         i64 n;
@@ -224,6 +252,11 @@ i64 vfs_read_handle(pid_t pid, u32 handle, u64 user_buf, u64 count)
 
         if ((file->open_flags & VFS_O_ACCMODE) == VFS_O_WRONLY) {
                 return -LINUX_EBADF;
+        }
+
+        chunk = vfs_io_chunk_get();
+        if (!chunk) {
+                return -LINUX_ENOMEM;
         }
 
         while (remaining > 0) {
@@ -263,7 +296,7 @@ i64 vfs_write_handle(pid_t pid, u32 handle, u64 user_buf, u64 count)
 {
         Tcb_Base *task = vfs_task_for_pid(pid);
         vfs_open_handle_t *file;
-        u8 chunk[VFS_READ_CHUNK];
+        u8 *chunk;
         u64 remaining = count;
         u64 total = 0;
         i64 n;
@@ -287,6 +320,11 @@ i64 vfs_write_handle(pid_t pid, u32 handle, u64 user_buf, u64 count)
 
         if (file->open_flags & VFS_O_APPEND) {
                 file->offset = file->ino.size;
+        }
+
+        chunk = vfs_io_chunk_get();
+        if (!chunk) {
+                return -LINUX_ENOMEM;
         }
 
         while (remaining > 0) {

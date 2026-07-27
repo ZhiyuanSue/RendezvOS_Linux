@@ -17,7 +17,7 @@
 
 #include <linux_compat/ipc/port_naming.h>
 
-#define VFS_HANDLE_MAX 128u
+/* Handle IDs are growable on the VFS server (vfs_slice_table). */
 
 /* Bit 31 on OPEN response: target is a directory (compat fd metadata). */
 #define VFS_OPEN_RET_IS_DIR_BIT  (1LL << 31)

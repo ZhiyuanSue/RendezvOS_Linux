@@ -13,18 +13,18 @@
 #include <rendezvos/smp/percpu.h>
 
 #include "vfs_kstat.h"
+#include "vfs_slice_table.h"
 
-static ramfs_entry_t ramfs_entries[RAMFS_MAX_ENTRIES];
-static u32 ramfs_nentries;
+static vfs_slice_table_t ramfs_entry_tab;
+
+static ramfs_entry_t *ramfs_entry_at(u32 i)
+{
+        return (ramfs_entry_t *)vfs_slice_table_ptr(&ramfs_entry_tab, i);
+}
 
 static struct allocator *ramfs_alloc(void)
 {
         return percpu(kallocator);
-}
-
-static bool ramfs_path_equal(const char *a, const char *b)
-{
-        return vfs_path_equal(a, b);
 }
 
 static void ramfs_free_entry_data(ramfs_entry_t *ent)
@@ -32,14 +32,18 @@ static void ramfs_free_entry_data(ramfs_entry_t *ent)
         struct allocator *alloc;
         u32 refs;
         u32 i;
+        u32 n;
 
         if (!ent || !ent->data) {
                 return;
         }
 
         refs = 0;
-        for (i = 0; i < ramfs_nentries; i++) {
-                if (ramfs_entries[i].data == ent->data) {
+        n = vfs_slice_table_count(&ramfs_entry_tab);
+        for (i = 0; i < n; i++) {
+                ramfs_entry_t *e = ramfs_entry_at(i);
+
+                if (e && e->alive && e->data == ent->data) {
                         refs++;
                 }
         }
@@ -63,18 +67,59 @@ static void ramfs_free_entry_data(ramfs_entry_t *ent)
 static ramfs_entry_t *ramfs_find_mutable(const char *path)
 {
         u32 i;
+        u32 n;
 
         if (!path) {
                 return NULL;
         }
 
-        for (i = 0; i < ramfs_nentries; i++) {
-                if (ramfs_path_equal(ramfs_entries[i].path, path)) {
-                        return &ramfs_entries[i];
+        n = vfs_slice_table_count(&ramfs_entry_tab);
+        for (i = 0; i < n; i++) {
+                ramfs_entry_t *e = ramfs_entry_at(i);
+
+                if (e && e->alive && vfs_path_equal(e->path, path)) {
+                        return e;
                 }
         }
 
         return NULL;
+}
+
+static ramfs_entry_t *ramfs_alloc_slot(u32 *idx_out)
+{
+        u32 i;
+        u32 n;
+        u32 idx;
+        error_t err;
+        ramfs_entry_t *e;
+
+        n = vfs_slice_table_count(&ramfs_entry_tab);
+        for (i = 0; i < n; i++) {
+                e = ramfs_entry_at(i);
+
+                if (e && !e->alive) {
+                        memset(e, 0, sizeof(*e));
+                        if (idx_out) {
+                                *idx_out = i;
+                        }
+                        return e;
+                }
+        }
+
+        err = vfs_slice_table_push_zero(&ramfs_entry_tab, &idx);
+        if (err != REND_SUCCESS) {
+                return NULL;
+        }
+
+        e = ramfs_entry_at(idx);
+        if (!e) {
+                vfs_slice_table_pop_last(&ramfs_entry_tab);
+                return NULL;
+        }
+        if (idx_out) {
+                *idx_out = idx;
+        }
+        return e;
 }
 
 static error_t ramfs_insert(const char *path, u32 mode, u8 flags,
@@ -90,17 +135,15 @@ static error_t ramfs_insert(const char *path, u32 mode, u8 flags,
                 return -E_RENDEZVOS;
         }
 
-        if (ramfs_nentries >= RAMFS_MAX_ENTRIES) {
-                pr_error("[VFS][ramfs] entry table full (max %u)\n",
-                         RAMFS_MAX_ENTRIES);
-                return -E_RENDEZVOS;
+        ent = ramfs_alloc_slot(NULL);
+        if (!ent) {
+                return -E_REND_NO_MEM;
         }
 
-        ent = &ramfs_entries[ramfs_nentries++];
-        memset(ent, 0, sizeof(*ent));
         vfs_path_normalize(path, ent->path, sizeof(ent->path));
         ent->mode = mode;
         ent->flags = flags;
+        ent->alive = true;
         *out_ent = ent;
         return REND_SUCCESS;
 }
@@ -191,13 +234,18 @@ static error_t ramfs_grow(ramfs_entry_t *ent, u64 need_size)
 
 void ramfs_init(void)
 {
-        ramfs_nentries = 0;
-        memset(ramfs_entries, 0, sizeof(ramfs_entries));
+        error_t err;
+
+        vfs_slice_table_destroy(&ramfs_entry_tab);
+        err = vfs_slice_table_init(&ramfs_entry_tab, sizeof(ramfs_entry_t), 32);
+        if (err != REND_SUCCESS) {
+                pr_error("[VFS][ramfs] entry table init failed: %d\n", err);
+        }
 }
 
 u32 ramfs_entry_count(void)
 {
-        return ramfs_nentries;
+        return vfs_slice_table_count(&ramfs_entry_tab);
 }
 
 const ramfs_entry_t *ramfs_lookup(const char *path)
@@ -262,25 +310,19 @@ error_t ramfs_create_file(const char *path, u32 mode)
 error_t ramfs_unlink(const char *path)
 {
         ramfs_entry_t *ent;
-        u32 i;
 
         ent = ramfs_find_mutable(path);
         if (!ent) {
                 return -E_IN_PARAM;
         }
 
+        /*
+         * Tombstone in place — do not swap-with-last. Open vfs_inode.storage
+         * pointers must keep addressing the same slot for other live files.
+         */
         ramfs_free_entry_data(ent);
-
-        for (i = 0; i < ramfs_nentries; i++) {
-                if (&ramfs_entries[i] == ent) {
-                        break;
-                }
-        }
-
-        if (i + 1 < ramfs_nentries) {
-                ramfs_entries[i] = ramfs_entries[ramfs_nentries - 1];
-        }
-        ramfs_nentries--;
+        memset(ent, 0, sizeof(*ent));
+        ent->alive = false;
         return REND_SUCCESS;
 }
 
@@ -355,7 +397,7 @@ i64 ramfs_read(const ramfs_entry_t *ent, u64 offset, void *buf, u64 len)
 {
         u64 avail;
 
-        if (!ent || !buf || (ent->flags & RAMFS_FLAG_DIR) != 0) {
+        if (!ent || !ent->alive || !buf || (ent->flags & RAMFS_FLAG_DIR) != 0) {
                 return -E_IN_PARAM;
         }
 
@@ -380,7 +422,7 @@ i64 ramfs_write(ramfs_entry_t *ent, u64 offset, const void *buf, u64 len)
         u64 end;
         error_t err;
 
-        if (!ent || !buf || (ent->flags & RAMFS_FLAG_DIR) != 0) {
+        if (!ent || !ent->alive || !buf || (ent->flags & RAMFS_FLAG_DIR) != 0) {
                 return -E_IN_PARAM;
         }
 
@@ -410,7 +452,7 @@ error_t ramfs_truncate(ramfs_entry_t *ent, u64 size)
 {
         error_t err;
 
-        if (!ent || (ent->flags & RAMFS_FLAG_DIR) != 0) {
+        if (!ent || !ent->alive || (ent->flags & RAMFS_FLAG_DIR) != 0) {
                 return -E_IN_PARAM;
         }
 
@@ -436,59 +478,16 @@ error_t ramfs_truncate(ramfs_entry_t *ent, u64 size)
         return REND_SUCCESS;
 }
 
-static i32 ramfs_readdir_name_cmp(const char *a, const char *b)
-{
-        return (i32)strcmp_s(a, b, 64);
-}
-
-static bool ramfs_readdir_insert_name(char names[][64], u32 *count, const char *name)
-{
-        u32 i;
-
-        if (!names || !count || !name || !name[0]) {
-                return false;
-        }
-
-        for (i = 0; i < *count; i++) {
-                if (ramfs_readdir_name_cmp(names[i], name) == 0) {
-                        return true;
-                }
-        }
-
-        if (*count >= RAMFS_MAX_ENTRIES) {
-                return false;
-        }
-
-        strncpy(names[*count], name, 63);
-        names[*count][63] = '\0';
-
-        for (i = *count; i > 0; i--) {
-                if (ramfs_readdir_name_cmp(names[i - 1], names[i]) <= 0) {
-                        break;
-                }
-                {
-                        char tmp[64];
-
-                        strncpy(tmp, names[i - 1], sizeof(tmp) - 1);
-                        tmp[sizeof(tmp) - 1] = '\0';
-                        strncpy(names[i - 1], names[i], 63);
-                        names[i - 1][63] = '\0';
-                        strncpy(names[i], tmp, 63);
-                        names[i][63] = '\0';
-                }
-        }
-
-        (*count)++;
-        return true;
-}
-
 i64 ramfs_readdir(const char *dirpath, u64 index, vfs_dirent_t *out)
 {
         char norm[VFS_PATH_MAX];
         char child_path[VFS_PATH_MAX];
-        char names[RAMFS_MAX_ENTRIES][64];
-        u32 name_count = 0;
+        vfs_slice_table_t names;
+        u32 name_count;
         u32 i;
+        u32 n;
+        char *picked;
+        error_t err;
 
         if (!dirpath || !out) {
                 return -LINUX_EINVAL;
@@ -519,27 +518,44 @@ i64 ramfs_readdir(const char *dirpath, u64 index, vfs_dirent_t *out)
 
         index -= 2;
 
-        for (i = 0; i < ramfs_nentries; i++) {
-                char child_name[64];
-
-                if (!vfs_path_direct_child_name(
-                            norm, ramfs_entries[i].path, child_name,
-                            sizeof(child_name))) {
-                        continue;
-                }
-                (void)ramfs_readdir_insert_name(names, &name_count, child_name);
+        err = vfs_slice_table_init(&names, VFS_DIR_NAME_SLOT, 16);
+        if (err != REND_SUCCESS) {
+                return -LINUX_ENOMEM;
         }
 
+        n = vfs_slice_table_count(&ramfs_entry_tab);
+        for (i = 0; i < n; i++) {
+                ramfs_entry_t *ent = ramfs_entry_at(i);
+                char child_name[VFS_DIR_NAME_SLOT];
+
+                if (!ent || !ent->alive) {
+                        continue;
+                }
+                if (!vfs_path_direct_child_name(norm, ent->path, child_name,
+                                                sizeof(child_name))) {
+                        continue;
+                }
+                if (!vfs_dir_names_insert(&names, child_name)) {
+                        vfs_slice_table_destroy(&names);
+                        return -LINUX_ENOMEM;
+                }
+        }
+
+        name_count = vfs_slice_table_count(&names);
         if (index >= name_count) {
+                vfs_slice_table_destroy(&names);
                 return 1;
         }
 
-        if (!vfs_path_join(norm, names[index], child_path, sizeof(child_path))) {
+        picked = (char *)vfs_slice_table_ptr(&names, (u32)index);
+        if (!picked
+            || !vfs_path_join(norm, picked, child_path, sizeof(child_path))) {
+                vfs_slice_table_destroy(&names);
                 return -LINUX_EIO;
         }
 
         memset(out, 0, sizeof(*out));
-        strncpy(out->name, names[index], sizeof(out->name) - 1);
+        strncpy(out->name, picked, sizeof(out->name) - 1);
         out->name[sizeof(out->name) - 1] = '\0';
 
         {
@@ -555,5 +571,6 @@ i64 ramfs_readdir(const char *dirpath, u64 index, vfs_dirent_t *out)
         }
 
         out->d_ino = vfs_path_to_ino(child_path);
+        vfs_slice_table_destroy(&names);
         return 0;
 }

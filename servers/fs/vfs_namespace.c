@@ -15,8 +15,9 @@
 #include <modules/log/log.h>
 #include <rendezvos/error.h>
 
-static vfs_ns_node_t vfs_ns_nodes[VFS_NS_MAX_NODES];
-static u32 vfs_ns_node_count;
+#include "vfs_slice_table.h"
+
+static vfs_slice_table_t vfs_ns_node_tab;
 static vfs_ns_node_t vfs_ns_root;
 static bool vfs_ns_initialized;
 
@@ -60,34 +61,74 @@ static vfs_ns_node_t *vfs_ns_alloc_node(vfs_ns_node_t *parent, const char *name,
                                         bool is_dir)
 {
         vfs_ns_node_t *node;
-        u64 plen;
+        u32 idx;
+        error_t err;
 
-        if (!parent || !name || !name[0] || vfs_ns_node_count >= VFS_NS_MAX_NODES) {
+        if (!parent || !name || !name[0]) {
                 return NULL;
         }
 
-        node = &vfs_ns_nodes[vfs_ns_node_count++];
-        memset(node, 0, sizeof(*node));
+        err = vfs_slice_table_push_zero(&vfs_ns_node_tab, &idx);
+        if (err != REND_SUCCESS) {
+                return NULL;
+        }
+
+        node = (vfs_ns_node_t *)vfs_slice_table_ptr(&vfs_ns_node_tab, idx);
+        if (!node) {
+                vfs_slice_table_pop_last(&vfs_ns_node_tab);
+                return NULL;
+        }
         strncpy(node->name, name, sizeof(node->name) - 1);
         node->name[sizeof(node->name) - 1] = '\0';
         node->parent = parent;
         node->is_dir = is_dir;
         node->mode = is_dir ? (0755u | 0040000u) : (0644u | 0100000u);
 
-        plen = strlen(parent->path);
-        if (parent == &vfs_ns_root || plen <= 1) {
-                node->path[0] = '/';
-                strncpy(node->path + 1, name, sizeof(node->path) - 2);
-                node->path[sizeof(node->path) - 1] = '\0';
-        } else {
-                if (!vfs_path_join(parent->path, name, node->path,
-                                   sizeof(node->path))) {
-                        vfs_ns_node_count--;
-                        return NULL;
-                }
+        return node;
+}
+
+#define VFS_NS_PATH_DEPTH_MAX 64u
+
+/* Rebuild absolute path from parent chain (no cached path[] on nodes). */
+static bool vfs_ns_path_of(const vfs_ns_node_t *node, char *out, u64 out_cap)
+{
+        const vfs_ns_node_t *chain[VFS_NS_PATH_DEPTH_MAX];
+        u32 depth = 0;
+        u32 i;
+        char cur[VFS_PATH_MAX];
+        char next[VFS_PATH_MAX];
+
+        if (!node || !out || out_cap < 2) {
+                return false;
         }
 
-        return node;
+        if (node == &vfs_ns_root) {
+                out[0] = '/';
+                out[1] = '\0';
+                return true;
+        }
+
+        while (node && node != &vfs_ns_root) {
+                if (depth >= VFS_NS_PATH_DEPTH_MAX) {
+                        return false;
+                }
+                chain[depth++] = node;
+                node = node->parent;
+        }
+
+        cur[0] = '/';
+        cur[1] = '\0';
+        for (i = depth; i > 0; i--) {
+                if (!vfs_path_join(cur, chain[i - 1]->name, next, sizeof(next))) {
+                        return false;
+                }
+                strncpy(cur, next, sizeof(cur) - 1);
+                cur[sizeof(cur) - 1] = '\0';
+        }
+
+        strncpy(out, cur, out_cap - 1);
+        out[out_cap - 1] = '\0';
+        return true;
 }
 
 static void vfs_ns_link_child(vfs_ns_node_t *parent, vfs_ns_node_t *child)
@@ -256,9 +297,14 @@ static vfs_ns_node_t *vfs_ns_ensure_path_nodes(const char *path, bool is_dir)
 static i64 vfs_ns_fill_inode(const vfs_ns_node_t *node, vfs_inode_t *out)
 {
         const char *port;
+        char path[VFS_PATH_MAX];
 
         if (!node || !out) {
                 return -LINUX_EINVAL;
+        }
+
+        if (!vfs_ns_path_of(node, path, sizeof(path))) {
+                return -LINUX_ENAMETOOLONG;
         }
 
         /*
@@ -271,7 +317,7 @@ static i64 vfs_ns_fill_inode(const vfs_ns_node_t *node, vfs_inode_t *out)
                 if (!port) {
                         return -LINUX_ENXIO;
                 }
-                if (vfs_backend_lookup(port, node->path, out)) {
+                if (vfs_backend_lookup(port, path, out)) {
                         return 0;
                 }
                 return -LINUX_EIO;
@@ -282,7 +328,7 @@ static i64 vfs_ns_fill_inode(const vfs_ns_node_t *node, vfs_inode_t *out)
                 if (!port) {
                         return -LINUX_ENXIO;
                 }
-                if (vfs_backend_lookup(port, node->path, out)) {
+                if (vfs_backend_lookup(port, path, out)) {
                         return 0;
                 }
                 return -LINUX_EIO;
@@ -342,8 +388,7 @@ static bool vfs_ns_populate_cb(const char *path, const cpio_rofs_stat_t *st,
 
         node = vfs_ns_ensure_path_nodes(path, st->is_dir);
         if (!node) {
-                pr_error("[VFS][namespace] populate failed (node cap %u): %s\n",
-                         VFS_NS_MAX_NODES,
+                pr_error("[VFS][namespace] populate failed (OOM or path): %s\n",
                          path);
                 vfs_ns_populate_failed = true;
                 return false;
@@ -381,11 +426,10 @@ static u32 vfs_ns_count_live_nodes(const vfs_ns_node_t *node)
 
 void vfs_namespace_reset(void)
 {
-        vfs_ns_node_count = 0;
-        memset(vfs_ns_nodes, 0, sizeof(vfs_ns_nodes));
+        vfs_slice_table_destroy(&vfs_ns_node_tab);
+        (void)vfs_slice_table_init(&vfs_ns_node_tab, sizeof(vfs_ns_node_t), 32);
         memset(&vfs_ns_root, 0, sizeof(vfs_ns_root));
-        vfs_ns_root.path[0] = '/';
-        vfs_ns_root.path[1] = '\0';
+        vfs_ns_root.name[0] = '\0';
         vfs_ns_root.is_dir = true;
         vfs_ns_root.mode = 0755u | 0040000u;
         vfs_ns_initialized = false;
@@ -620,12 +664,6 @@ i64 vfs_namespace_unlink(const char *path)
         }
 
         vfs_page_cache_drop(norm);
-
-        if (node->in_cpio) {
-                node->deleted = true;
-                return 0;
-        }
-
         node->deleted = true;
         return 0;
 }
@@ -633,6 +671,7 @@ i64 vfs_namespace_unlink(const char *path)
 i64 vfs_namespace_readdir(const char *dirpath, u64 index, vfs_dirent_t *out)
 {
         char norm[VFS_PATH_MAX];
+        char path_buf[VFS_PATH_MAX];
         const vfs_ns_node_t *dir;
         const vfs_ns_node_t *child;
         vfs_mount_view_t mount_view;
@@ -661,7 +700,10 @@ i64 vfs_namespace_readdir(const char *dirpath, u64 index, vfs_dirent_t *out)
                 memset(out, 0, sizeof(*out));
                 strncpy(out->name, ".", sizeof(out->name) - 1);
                 out->d_type = VFS_DT_DIR;
-                out->d_ino = vfs_path_to_ino(dir->path);
+                if (!vfs_ns_path_of(dir, path_buf, sizeof(path_buf))) {
+                        return -LINUX_ENAMETOOLONG;
+                }
+                out->d_ino = vfs_path_to_ino(path_buf);
                 return 0;
         }
         if (index == 1) {
@@ -693,7 +735,10 @@ i64 vfs_namespace_readdir(const char *dirpath, u64 index, vfs_dirent_t *out)
                         out->d_type = child->is_symlink ?
                                               VFS_DT_LNK :
                                       child->is_dir ? VFS_DT_DIR : VFS_DT_REG;
-                        out->d_ino = vfs_path_to_ino(child->path);
+                        if (!vfs_ns_path_of(child, path_buf, sizeof(path_buf))) {
+                                return -LINUX_ENAMETOOLONG;
+                        }
+                        out->d_ino = vfs_path_to_ino(path_buf);
                         return 0;
                 }
 
@@ -721,34 +766,6 @@ static void vfs_ns_detach(vfs_ns_node_t *node)
                         node->parent = NULL;
                         return;
                 }
-        }
-}
-
-static void vfs_ns_rebuild_paths(vfs_ns_node_t *node)
-{
-        vfs_ns_node_t *child;
-
-        if (!node) {
-                return;
-        }
-
-        if (node == &vfs_ns_root) {
-                node->path[0] = '/';
-                node->path[1] = '\0';
-        } else if (node->parent) {
-                if (node->parent == &vfs_ns_root) {
-                        node->path[0] = '/';
-                        strncpy(node->path + 1, node->name,
-                                sizeof(node->path) - 2);
-                        node->path[sizeof(node->path) - 1] = '\0';
-                } else if (!vfs_path_join(node->parent->path, node->name,
-                                          node->path, sizeof(node->path))) {
-                        return;
-                }
-        }
-
-        for (child = node->first_child; child; child = child->next_sibling) {
-                vfs_ns_rebuild_paths(child);
         }
 }
 
@@ -848,7 +865,6 @@ i64 vfs_namespace_rename(const char *oldpath, const char *newpath)
         node->name[sizeof(node->name) - 1] = '\0';
         node->parent = dest_parent;
         vfs_ns_link_child(dest_parent, node);
-        vfs_ns_rebuild_paths(node);
         return 0;
 }
 

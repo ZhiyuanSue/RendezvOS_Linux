@@ -14,10 +14,9 @@
  * hold bytes only.
  */
 
-#define VFS_NS_MAX_NODES 2048
+/* Node table: vfs_slice_table. Path rebuilt via parent+name (no path[]). */
 
 typedef struct vfs_ns_node {
-        char path[VFS_PATH_MAX];
         char name[64];
         struct vfs_ns_node *parent;
         struct vfs_ns_node *first_child;
@@ -42,7 +41,7 @@ i64 vfs_namespace_lookup(const char *path, vfs_inode_t *out);
 i64 vfs_namespace_mkdir(const char *path, u32 mode);
 i64 vfs_namespace_create_file(const char *path, u32 mode, vfs_inode_t *out);
 i64 vfs_namespace_unlink(const char *path);
-i64 vfs_namespace_rename(const char *path, const char *newpath);
+i64 vfs_namespace_rename(const char *oldpath, const char *newpath);
 i64 vfs_namespace_link(const char *oldpath, const char *newpath);
 i64 vfs_namespace_set_mount_cover(const char *target, bool covered);
 
