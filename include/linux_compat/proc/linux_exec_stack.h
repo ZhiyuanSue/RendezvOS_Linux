@@ -44,9 +44,9 @@ bool linux_exec_elf_auxv_from_slice(struct page_slice *slice,
                                     linux_exec_elf_auxv_t *out);
 
 /*
- * Build Linux initial user stack (argc/argv/envp/auxv/strings).
- * @p stack_top is generate_user_stack() return value.
- * @p elf_auxv when have_elf, supplies glibc/musl static auxv (AT_PHDR, …).
+ * Shared by sys_execve (Path A) and Path B gen_task_from_elf bootstrap.
+ * Layout: argc, argv[], NULL, envp[], NULL, auxv…, random16, strings.
+ * @stack_top is generate_user_stack() return (or Path B adjusted SP).
  * Returns new SP (points at argc) or 0 on failure.
  */
 vaddr linux_exec_build_initial_stack(VSpace *vs, vaddr stack_top, i64 argc,
@@ -55,9 +55,15 @@ vaddr linux_exec_build_initial_stack(VSpace *vs, vaddr stack_top, i64 argc,
                                      vaddr *argv_user_out);
 
 /*
- * Path B (run_elf_program → thread.append.init): build Linux argc/argv/envp/auxv
- * when the mapped image is a static glibc ELF. Musl harness ELFs keep core's fake
- * return only. Updates thread ctx user SP on success.
+ * Path B: called from thread.append.init inside run_elf_program (after the
+ * new thread is scheduled — NOT during gen_task_from_elf return).
+ *
+ * For static-glibc ELFs (busybox), rebuilds argc/argv/auxv via
+ * linux_exec_build_initial_stack. Musl harness ELFs (one PT_NOTE) skip this.
+ *
+ * Temporary: argv hardcoded to busybox ash smoke
+ *   {"sh","-c","/bin/ls /bin; echo SHELL_OK"}
+ * (absolute /bin/ls — empty envp means no PATH). Next: PATH= or script.
  */
 error_t linux_exec_bootstrap_elf_spawn_stack(Thread_Base *thread, VSpace *vs,
                                              const elf_load_info_t *info);

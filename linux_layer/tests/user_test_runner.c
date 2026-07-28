@@ -216,8 +216,10 @@ static void *linux_user_test_thread(void *arg)
 
         linux_run_user_tests();
 
-        // pr_info("[ Linux compat ] Trying initramfs /bin/ls demo\n");
-
+        /*
+         * Busybox demo: still Path B gen_task_from_elf (not sys_execve).
+         * argv/auxv injected in bootstrap: sh -c 'ls /bin; echo SHELL_OK'.
+         */
         pr_info("[ Linux compat ] Trying initramfs /bin/busybox demo\n");
         if (linux_spawn_and_wait_test_path("/bin/busybox", 9998u)
             != REND_SUCCESS) {

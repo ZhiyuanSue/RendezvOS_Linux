@@ -1,7 +1,8 @@
 # VFS 动态存储（page_slice 表）
 
 > **Status**: S0–S3 已落地（2026-07-27）  
-> **优先于**: busybox Path B / execve 速成项回收
+> **从属**: 原 busybox 容量妥协，见 [`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md) §P1 容量（已回收）  
+> **不阻塞**: busybox Path B / execve / `run_all.sh` 回收（那些仍是更高优先级）
 
 ## 问题
 
@@ -19,7 +20,8 @@
 4. **OOM**：grow / `m_alloc` 失败返回错误；`ensure_cap` 中途失败回滚逻辑 size。  
 5. **VFS listen 单线程**：表无内部锁。  
 6. **readdir**：临时 slice 表存名字；插入失败传播 `-ENOMEM`。  
-7. **ramfs 条目**：原地 tombstone（`alive`），禁止 unlink 时 swap-with-last。
+7. **ramfs 条目**：原地 tombstone（`alive`），禁止 unlink 时 swap-with-last。  
+8. **push 后 ptr 失败**：一律 `pop_last`，避免 orphan 槽。
 
 ## S0–S3 状态与方案
 
@@ -50,12 +52,14 @@ cpio catalog 与 ramfs entry 是 **path → 记录** 的平铺索引，没有树
 | cpio / ramfs / handle / ns 表 | growable |
 | ramfs unlink | tombstone（指针稳定） |
 | namespace 节点 | **无** `path[]`；`vfs_ns_path_of` 重建 |
-| mount / backend / pcache 槽 | growable（软上限见代码） |
+| mount / backend / pcache 槽 | growable（软上限 64 / 32 / 64） |
 | vfs_open I/O / blkdev | heap / page_slice |
 | pcache eviction | dirty flush 失败不丢数据 |
 
-## 建议后续（非本轮）
+## 建议后续（扩展性；不阻塞 busybox）
 
 1. readdir 按 index 扫描，避免每次重建全名字表（大目录 O(n²)）  
-2. ramfs 文件体 → page_slice（对齐 page cache）  
-3. 打开句柄改持 `vfs_ns_node *` + 世代号（再谈砍 inode.path）
+2. tombstone / deleted 槽压缩或世代号回收  
+3. 下调 cpio/ns/ramfs/handle 的默认 `soft_max` 到更贴近 boot 的上限  
+4. ramfs 文件体 → page_slice（对齐 page cache；抬高 256KiB 策略上限）  
+5. 打开句柄改持 `vfs_ns_node *` + 世代号（再谈砍 inode.path）

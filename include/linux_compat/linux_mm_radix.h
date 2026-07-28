@@ -48,7 +48,10 @@ error_t linux_mm_load_cstring_from_user(VSpace* vs, u64 user_va, char* dst,
 error_t linux_mm_copy_user_range(VSpace* vs, u64 dst_user_va, u64 src_user_va,
                                  size_t len);
 
-/** Map @p page_num user pages at @p hint (must be page-aligned; 0 = failure).
+/**
+ * Map @p page_num user pages at @p hint (page-aligned; 0 = failure).
+ * VA-contiguous only: large ranges are split into <= 2^BUDDY_MAXORDER
+ * power-of-two chunks so each call stays within buddy pmm_alloc limits.
  */
 void* linux_mm_map_user_range(VSpace* vs, vaddr hint, size_t page_num,
                               ENTRY_FLAGS_t flags);
@@ -61,7 +64,7 @@ void* linux_mm_map_user_range_search(VSpace* vs, vaddr search_start,
                                      size_t page_num, ENTRY_FLAGS_t flags,
                                      int max_probes);
 
-/** Unmap + drop radix reservation + pmm_free contiguous run from @p start. */
+/** Unmap + drop radix + pmm_free; coalesces contiguous PPN runs (chunked maps). */
 error_t linux_mm_unmap_user_range(VSpace* vs, vaddr start, size_t page_num);
 
 /** Query one page: radix shadow flags; @p out_start is the page base. */

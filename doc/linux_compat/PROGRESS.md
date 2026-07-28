@@ -1,7 +1,7 @@
 # Linux 兼容层 — 进展与追溯索引
 
 > **Purpose**: 单一入口，把 **路线图 → 实现状态 → 验证证据 → 决策** 串起来。  
-> **Last updated**: 2026-07-09
+> **Last updated**: 2026-07-27
 
 ---
 
@@ -24,6 +24,7 @@ doc/ai/DECISIONS.md      非显然设计选择（ADR-lite）
 - 测例数字、stdout 细节 → **verification log**，不写进 roadmap。
 - 实现细节 / 已知 gap → **status 文档**，roadmap 只写阶段目标。
 - 历史阶段报告 → [`archive/README.md`](archive/README.md)（只读，指标可能过时）。
+- busybox demo 妥协与回收清单 → [`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md)。
 
 ---
 
@@ -35,12 +36,14 @@ doc/ai/DECISIONS.md      非显然设计选择（ADR-lite）
 | **1** | ✅ | fork/exit/wait/brk/mmap | [`archive/PHASE1_SUMMARY.md`](archive/PHASE1_SUMMARY.md) |
 | **2A–2D** | ✅ | clone + 信号 + 缺页 SIGSEGV | [`SIGNAL_IMPLEMENTATION_STATUS.md`](SIGNAL_IMPLEMENTATION_STATUS.md), [`WAIT4_IMPLEMENTATION_STATUS.md`](WAIT4_IMPLEMENTATION_STATUS.md) |
 | **2E** | ✅ | sigaltstack / SA_ONSTACK (#21) | 2026-06 gate #21 PASS |
-| **3** | 🔧 进行中 | execve（3a 内嵌 ELF 部分可用） | [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md) |
+| **3** | 🔧 进行中 | execve（VFS 路径可用；Path B demo 仍妥协） | [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md) · [`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md) |
 | **3.5** | ✅ | time 子系统（gettimeofday/nanosleep/times/uname） | [`TIME_SUBSYSTEM_PLAN.md`](TIME_SUBSYSTEM_PLAN.md) |
-| **4** | 🔧 **bootstrap ✅ / 目录 ⬜** | VFS + initramfs | [`VFS_IMPLEMENTATION_STATUS.md`](VFS_IMPLEMENTATION_STATUS.md) · [`DIRECTORY_PHASE.md`](DIRECTORY_PHASE.md) |
+| **4** | 🔧 **bootstrap ✅ / 目录与动态表 ✅** | VFS + initramfs | [`VFS_IMPLEMENTATION_STATUS.md`](VFS_IMPLEMENTATION_STATUS.md) · [`VFS_DYNAMIC_STORAGE.md`](VFS_DYNAMIC_STORAGE.md) |
 | **5** | 📋 待做 | IPC/socket/rlimit 等 | [`SYSCALLS.md`](SYSCALLS.md) |
 
 **Cross-arch gate (最新)**: 2026-07-09 — x86_64 + aarch64 **52/52 harness PASS**；FS bootstrap stdout（open/read/fstat/execve 等）双架构 PASS → [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md) §2026-07-09
+
+**busybox demo**: 2026-07-13+ — `ls /bin` exit 0（x86_64 / aarch64）；开放项见 deferrals 文首表。
 
 **core 前置（FS 前）**: 调度、trap/syscall、IPC、VSpace/COW、SMP boot、timer/sleep — **无大块 core 缺口**；Phase 4 在 `linux_layer` + `servers/fs`，不扩 core（见 [`GOALS_AND_CORE_CONTRACT.md`](GOALS_AND_CORE_CONTRACT.md) §4–§7）。
 
@@ -56,15 +59,25 @@ doc/ai/DECISIONS.md      非显然设计选择（ADR-lite）
 
 详见 [`WAIT4_IMPLEMENTATION_STATUS.md`](WAIT4_IMPLEMENTATION_STATUS.md)、verification log §2026-06-13。
 
+### P0 — busybox Path B / execve 正规化
+
+| 项 | 状态 |
+|----|------|
+| `ls /bin` demo | ✅ |
+| spawn 仍 `gen_task_from_elf` + Path B 二次 bootstrap | ⬜ 应改 execve |
+| harness 内核 manifest 循环 | ⬜ 迁 `busybox sh /tests/run_all.sh` |
+
+详见 [`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md) 文首「剩余开放项」。
+
 ### P1 — execve 补完（Phase 3）
 
 | 项 | 状态 |
 |----|------|
 | 内嵌 ELF + argv | ✅ #03/#43/#52 |
 | initramfs / VFS execve | ✅ #8 stdout `execve success`（2026-07-09） |
-| envp / auxv | ❌ |
+| envp / auxv | 部分（busybox Path B 有；正规化不足） |
 | de_thread + 完整 post-exec 清理 | ❌ |
-| 缩小 embedded program_map | ⬜ VFS 路径已可用 |
+| 缩小 embedded program_map / `_num_app` | ⬜ 待全量迁 cpio 后清 |
 
 详见 [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md)。
 
@@ -72,10 +85,11 @@ doc/ai/DECISIONS.md      非显然设计选择（ADR-lite）
 
 **Bootstrap ✅**（2026-07-09）：initramfs、open/read/close/fstat、mkdir/unlink、execve、page_slice 加载。
 
-**下一刀：目录** — chdir、cwd、openat(dirfd)、getdents64。  
-**不需要** 新建 Linux inode；用现有 `vfs_inode_t` + per-process cwd。见 [`DIRECTORY_PHASE.md`](DIRECTORY_PHASE.md)。
+**目录 / fd（busybox 已用）**: chdir、cwd、openat、getdents64、dup/pipe 等已接线；stdout 全绿仍以测例为准。
 
-仍 FAIL 的 FS stdout：chdir、getdents、openat、dup/dup2、pipe、mount（后两者可 deferred）。
+**动态表 ✅**（2026-07-27）：定长 BSS/栈炸弹 → [`VFS_DYNAMIC_STORAGE.md`](VFS_DYNAMIC_STORAGE.md)（S0–S3）。
+
+扩展性（readdir O(n²)、tombstone、ramfs body）不阻塞 busybox。
 
 **Live 进度**：[`VFS_IMPLEMENTATION_STATUS.md`](VFS_IMPLEMENTATION_STATUS.md)。
 
@@ -95,11 +109,11 @@ doc/ai/DECISIONS.md      非显然设计选择（ADR-lite）
 ```text
 1. ~~#49 wait4 SIGCHLD/EINTR 修复~~ — ✅
 2. ~~VFS Phase 4 bootstrap（initramfs, open/read, execve, page_slice）~~ — ✅ 2026-07-09
-3. VFS Phase 4b 目录（chdir, cwd, openat dirfd, getdents64） — 当前
-4. VFS Phase 4c fd（dup/dup2/pipe, vfs_fd_drop_pid）
-5. execve 3b–3c（env/auxv、de_thread）与 3–4 并行
-6. busybox `/bin/ls` demo（INITRAMFS_PLAN）
-7. time polish / mount+blk（按需 deferred）
+3. ~~busybox ls /bin demo~~ — ✅ 2026-07-13+
+4. ~~VFS 定长表 → vfs_slice_table（S0–S3）~~ — ✅ 2026-07-27
+5. Demo/harness 改 execve + 阶段 A run_all.sh — 当前优先（BUSYBOX_BOOT_DEFERRALS）
+6. 清 _num_app / program_map；pathname/auxv 正规化
+7. execve 3b–3c（env/auxv、de_thread）与 VFS 扩展性按需并行
 ```
 
 ---
@@ -112,7 +126,8 @@ doc/ai/DECISIONS.md      非显然设计选择（ADR-lite）
 | Wait | [`DATA_MODEL.md`](DATA_MODEL.md) | [`WAIT4_IMPLEMENTATION_STATUS.md`](WAIT4_IMPLEMENTATION_STATUS.md) | log §#49 |
 | Exec | [`SYSCALL_USER_RETURN_AND_EXECVE.md`](SYSCALL_USER_RETURN_AND_EXECVE.md) | [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md) | log §2026-07-09 #8 execve |
 | Time | [`TIME_SUBSYSTEM_PLAN.md`](TIME_SUBSYSTEM_PLAN.md) | §0 已落地 checklist | #16–#20 |
-| VFS | [`VFS_ARCHITECTURE.md`](VFS_ARCHITECTURE.md) · [`DIRECTORY_PHASE.md`](DIRECTORY_PHASE.md) | [`VFS_IMPLEMENTATION_STATUS.md`](VFS_IMPLEMENTATION_STATUS.md) | log §2026-07-09 |
+| VFS | [`VFS_ARCHITECTURE.md`](VFS_ARCHITECTURE.md) · [`VFS_DYNAMIC_STORAGE.md`](VFS_DYNAMIC_STORAGE.md) | [`VFS_IMPLEMENTATION_STATUS.md`](VFS_IMPLEMENTATION_STATUS.md) | log §2026-07-09；busybox §deferrals |
+| Busybox | [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) | [`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md) | demo `ls /bin` |
 | MM | [`MM_AND_COW.md`](MM_AND_COW.md) | 分散在 Phase 1 文档 | #35 brk 等 |
 
 ---

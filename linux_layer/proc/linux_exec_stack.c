@@ -76,12 +76,24 @@ static bool linux_exec_elf_needs_spawn_stack(struct page_slice *slice)
         return linux_exec_elf_pt_note_count(base) > 1;
 }
 
+/*
+ * Temporary Path B demo argv (busybox multi-call).
+ * Must live in bootstrap itself: append.init runs in run_elf_program on the
+ * *new* thread after gen_task_from_elf returns — a "set before / clear after"
+ * pending buffer on the caller is racy and was clearing before bootstrap.
+ *
+ * Next milestone after `ls /bin`: non-interactive ash (`sh -c …`). Do NOT use
+ * bare `sh` — that waits on stdin (read(0) is still EOF stub) and looks hung.
+ * After this works: `sh /tests/run_all.sh` (real script path).
+ */
 static u8 linux_exec_spawn_default_argv(const char *kargv[LINUX_EXEC_SPAWN_MAX_ARGC + 1])
 {
-        kargv[0] = "ls";
-        kargv[1] = "/bin";
-        kargv[2] = NULL;
-        return 2;
+        kargv[0] = "sh";
+        kargv[1] = "-c";
+        /* Absolute path: Path B stack has empty envp → no PATH → bare `ls` → not found */
+        kargv[2] = "/bin/ls /bin; echo SHELL_OK";
+        kargv[3] = NULL;
+        return 3;
 }
 
 typedef struct {

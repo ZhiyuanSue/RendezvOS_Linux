@@ -7,6 +7,7 @@
 #include <linux_compat/linux_mm_radix.h>
 #include <modules/log/log.h>
 #include <rendezvos/error.h>
+#include <rendezvos/mm/buddy_pmm.h>
 #include <rendezvos/mm/map_handler.h>
 #include <rendezvos/mm/mm_user_utils.h>
 #include <rendezvos/mm/pmm.h>
@@ -22,6 +23,20 @@ static bool linux_mm_user_vspace_ok(const VSpace* vs)
 static vaddr linux_mm_l0_lock_lo(vaddr range_start)
 {
         return ROUND_DOWN(range_start, (vaddr)HUGE_PAGE_SIZE);
+}
+
+/*
+ * Buddy pmm_alloc requires one physically contiguous block of size
+ * round_up_pow2(n) and n <= 2^BUDDY_MAXORDER. User mappings only need VA
+ * contiguity — split large requests into greedy power-of-two chunks.
+ */
+static size_t linux_mm_buddy_chunk_pages(size_t remaining)
+{
+        size_t chunk = (size_t)1 << BUDDY_MAXORDER;
+
+        while (chunk > remaining)
+                chunk >>= 1;
+        return chunk;
 }
 
 static bool linux_mm_page_is_reserved(VSpace* vs, vaddr va)
@@ -229,6 +244,9 @@ error_t linux_mm_copy_user_range(VSpace* vs, u64 dst_user_va, u64 src_user_va,
 void* linux_mm_map_user_range(VSpace* vs, vaddr hint, size_t page_num,
                               ENTRY_FLAGS_t flags)
 {
+        struct map_handler* handler = &percpu(Map_Handler);
+        size_t mapped_pages = 0;
+
         if (!linux_mm_user_vspace_ok(vs) || page_num == 0 || hint == 0
             || ROUND_DOWN(hint, PAGE_SIZE) != hint) {
                 return NULL;
@@ -242,10 +260,45 @@ void* linux_mm_map_user_range(VSpace* vs, vaddr hint, size_t page_num,
         if (vmm_radix_tree_lock_range_big(vs, l0_lo, range_end) != REND_SUCCESS)
                 return NULL;
 
-        vaddr mapped =
-                mm_user_utils_set_range_and_fill(vs, hint, page_num, flags);
+        while (mapped_pages < page_num) {
+                size_t chunk = linux_mm_buddy_chunk_pages(page_num - mapped_pages);
+                vaddr chunk_va = hint + mapped_pages * PAGE_SIZE;
+
+                if (!mm_user_utils_set_range_and_fill(
+                            vs, chunk_va, chunk, flags)) {
+                        goto out_rollback;
+                }
+                mapped_pages += chunk;
+        }
+
         (void)vmm_radix_tree_unlock_range_big(vs, l0_lo, range_end);
-        return mapped ? (void*)mapped : NULL;
+        return (void*)hint;
+
+out_rollback:
+        /*
+         * Each chunk is physically contiguous; unmap per chunk so we do not
+         * pass a false contiguous ppn_first across chunk boundaries.
+         */
+        {
+                size_t done = 0;
+
+                while (done < mapped_pages) {
+                        size_t chunk = linux_mm_buddy_chunk_pages(mapped_pages - done);
+                        vaddr chunk_va = hint + done * PAGE_SIZE;
+                        ENTRY_FLAGS_t pte_flags = 0;
+                        int pte_level = 3;
+                        ppn_t ppn = have_mapped(
+                                vs, VPN(chunk_va), &pte_flags, &pte_level, handler);
+
+                        if (!invalid_ppn(ppn)) {
+                                (void)mm_user_utils_clean_range_and_unfill(
+                                        vs, chunk_va, chunk, ppn);
+                        }
+                        done += chunk;
+                }
+        }
+        (void)vmm_radix_tree_unlock_range_big(vs, l0_lo, range_end);
+        return NULL;
 }
 
 void* linux_mm_map_user_range_search(VSpace* vs, vaddr search_start,
@@ -269,6 +322,7 @@ void* linux_mm_map_user_range_search(VSpace* vs, vaddr search_start,
 error_t linux_mm_unmap_user_range(VSpace* vs, vaddr start, size_t page_num)
 {
         struct map_handler* handler = &percpu(Map_Handler);
+        size_t done = 0;
 
         if (!linux_mm_user_vspace_ok(vs) || page_num == 0
             || ROUND_DOWN(start, PAGE_SIZE) != start) {
@@ -279,23 +333,57 @@ error_t linux_mm_unmap_user_range(VSpace* vs, vaddr start, size_t page_num)
         if (!vmm_radix_tree_calculate_end_check(start, page_num, &range_end))
                 return -E_IN_PARAM;
 
-        int pte_level = 3;
-        ENTRY_FLAGS_t pte_flags = 0;
-        ppn_t ppn_first =
-                have_mapped(vs, VPN(start), &pte_flags, &pte_level, handler);
-        if ((i64)ppn_first < 0)
-                return (error_t)ppn_first;
-        if (invalid_ppn(ppn_first))
-                return -E_REND_NOFOUND;
-
         vaddr l0_lo = linux_mm_l0_lock_lo(start);
         if (vmm_radix_tree_lock_range_big(vs, l0_lo, range_end) != REND_SUCCESS)
                 return -E_RENDEZVOS;
 
-        error_t err = mm_user_utils_clean_range_and_unfill(
-                vs, start, page_num, ppn_first);
+        /*
+         * Chunked map → non-contiguous PPNs across chunks. leaf_unbind_range
+         * requires a contiguous PPN run — coalesce from PTEs, not one shot.
+         */
+        while (done < page_num) {
+                vaddr page_va = start + done * PAGE_SIZE;
+                ENTRY_FLAGS_t pte_flags = 0;
+                int pte_level = 3;
+                ppn_t run_ppn = have_mapped(
+                        vs, VPN(page_va), &pte_flags, &pte_level, handler);
+                size_t run = 1;
+                error_t err;
+
+                if ((i64)run_ppn < 0) {
+                        (void)vmm_radix_tree_unlock_range_big(vs, l0_lo, range_end);
+                        return (error_t)run_ppn;
+                }
+                if (invalid_ppn(run_ppn)) {
+                        (void)vmm_radix_tree_unlock_range_big(vs, l0_lo, range_end);
+                        return -E_REND_NOFOUND;
+                }
+
+                while (done + run < page_num) {
+                        vaddr next_va = start + (done + run) * PAGE_SIZE;
+                        ENTRY_FLAGS_t nf = 0;
+                        int nl = 3;
+                        ppn_t next_ppn =
+                                have_mapped(vs, VPN(next_va), &nf, &nl, handler);
+
+                        if (invalid_ppn(next_ppn)
+                            || next_ppn != run_ppn + (ppn_t)run) {
+                                break;
+                        }
+                        run++;
+                }
+
+                err = mm_user_utils_clean_range_and_unfill(
+                        vs, page_va, run, run_ppn);
+                if (err != REND_SUCCESS) {
+                        (void)vmm_radix_tree_unlock_range_big(vs, l0_lo, range_end);
+                        return err;
+                }
+                done += run;
+        }
+
         (void)vmm_radix_tree_unlock_range_big(vs, l0_lo, range_end);
-        return err;
+        return REND_SUCCESS;
 }
 
 error_t linux_mm_query_vaddr(VSpace* vs, vaddr va, vaddr* out_start,

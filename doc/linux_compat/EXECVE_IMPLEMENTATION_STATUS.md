@@ -1,9 +1,10 @@
 # execve 实现状态
 
 > **Phase**: 3（程序执行）  
-> **Last updated**: 2026-07-09  
+> **Last updated**: 2026-07-27  
 > **Design**: [`SYSCALL_USER_RETURN_AND_EXECVE.md`](SYSCALL_USER_RETURN_AND_EXECVE.md)  
-> **Roadmap**: [`SYSCALLS.md`](SYSCALLS.md) · **Index**: [`PROGRESS.md`](PROGRESS.md)
+> **Roadmap**: [`SYSCALLS.md`](SYSCALLS.md) · **Index**: [`PROGRESS.md`](PROGRESS.md)  
+> **Busybox Path B 妥协**: [`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md) §P0
 
 ---
 
@@ -12,15 +13,17 @@
 | Area | x86_64 | aarch64 | Notes |
 |------|--------|---------|-------|
 | Syscall wired | ✅ | ✅ | `syscall_entry.c` → `sys_execve` |
-| Phase 3a embedded ELF | ✅ | ✅ | Hardcoded `program_map` (5 names) |
-| argv on user stack | ✅ | ✅ | `build_initial_stack` |
+| Phase 3a embedded ELF | ✅ | ✅ | Hardcoded `program_map` (5 names) — **待清**（迁全 cpio 后） |
+| argv on user stack | ✅ | ✅ | `build_initial_stack` / Path B bootstrap |
 | aarch64 x0/x1 = argc/argv | ✅ | — | x86 relies on stack layout at `_start` |
-| envp | ❌ | ❌ | `user_envp` ignored |
-| auxv | ❌ | ❌ | No `AT_*` vector |
+| envp | ❌ | ❌ | `user_envp` ignored（syscall 路径） |
+| auxv（syscall execve） | ❌ | ❌ | 正规化不足 |
+| auxv（busybox Path B spawn） | ⚠️ | ⚠️ | `linux_exec_bootstrap_elf_spawn_stack`；缺 HWCAP/EXECFN/真随机 |
 | de_thread before exec | ❌ | ❌ | Multi-thread exec unsafe |
 | Full post-exec reset | ⚠️ | ⚠️ | Only brk/mmap_hint/pending; not dispositions/altstack |
 | FS path (open + load) | ✅ | ✅ | CPIO slice + initramfs execve `#8` stdout PASS（2026-07-09） |
 | shebang / PT_INTERP | ❌ | ❌ | Out of scope (no dynamic linking) |
+| Demo spawn = execve | ❌ | ❌ | 仍 `gen_task_from_elf` + Path B（见 deferrals） |
 
 ---
 
@@ -74,7 +77,8 @@
 
 ## Next steps
 
-1. envp + minimal auxv for static musl tests  
-2. de_thread + complete signal/MM reset  
-3. After VFS directory phase: shrink embedded `program_map` in `linux_exec_image.c`  
-4. Verification gate entry in [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md)
+1. **Busybox / harness**: demo 与测例 spawn 改走 execve；阶段 A `run_all.sh`（[`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md)）  
+2. envp + 正规化 auxv（含 Path B 已有项的合并）  
+3. de_thread + complete signal/MM reset  
+4. 全量迁 cpio 后删除 `_num_app` / `program_map`（`linux_exec_image.c`）  
+5. Verification gate entry in [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md)
