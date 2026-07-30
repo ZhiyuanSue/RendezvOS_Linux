@@ -123,7 +123,36 @@ static void *clean_exit_notify_thread(void *arg)
 /*
  * Link A only: must not block clean_listen on wait_port (parent may need to
  * send TASK_REAP_SYNC to the same listen). One-shot worker.
+ *
+ * If spawn/alloc fails: push pending_exits on the parent and poke wait_port
+ * (WAIT_INTERRUPT → try_pending). See protocols/EXIT_CLEAN.md.
  */
+static void clean_exit_notify_fallback_pending(pid_t ppid, pid_t child_pid,
+                                               i32 exit_code)
+{
+        Tcb_Base *parent;
+        linux_proc_append_t *parent_pa;
+
+        pr_warn(
+                "[CLEAN] EXIT_NOTIFY fallback pending+poke ppid=%d child=%d\n",
+                (int)ppid,
+                (int)child_pid);
+
+        parent = find_task_by_pid(ppid);
+        if (!parent)
+                return;
+        parent_pa = linux_proc_append(parent);
+        if (!parent_pa)
+                return;
+        if (!linux_proc_wait_pending_push(parent_pa, child_pid, exit_code)) {
+                pr_error(
+                        "[clean_server] EXIT_NOTIFY fallback pending_push failed pid=%d\n",
+                        (int)child_pid);
+                return;
+        }
+        (void)linux_proc_wait_poke(ppid);
+}
+
 static void clean_async_exit_notify(pid_t ppid, pid_t child_pid, i32 exit_code)
 {
         struct allocator *alloc = percpu(kallocator);
@@ -134,8 +163,10 @@ static void clean_async_exit_notify(pid_t ppid, pid_t child_pid, i32 exit_code)
 
         clean_reap_exit_notify_jobs();
 
-        if (!alloc || !alloc->m_alloc || ppid <= 0 || child_pid <= 0)
+        if (!alloc || !alloc->m_alloc || ppid <= 0 || child_pid <= 0) {
+                clean_exit_notify_fallback_pending(ppid, child_pid, exit_code);
                 return;
+        }
 
         job = (clean_exit_notify_job_t *)alloc->m_alloc(alloc, sizeof(*job));
         name = (char *)alloc->m_alloc(alloc, 32);
@@ -145,6 +176,7 @@ static void clean_async_exit_notify(pid_t ppid, pid_t child_pid, i32 exit_code)
                 if (name && alloc->m_free)
                         alloc->m_free(alloc, name);
                 pr_error("[clean_server] EXIT_NOTIFY job alloc failed\n");
+                clean_exit_notify_fallback_pending(ppid, child_pid, exit_code);
                 return;
         }
         memset(job, 0, sizeof(*job));
@@ -178,6 +210,7 @@ static void clean_async_exit_notify(pid_t ppid, pid_t child_pid, i32 exit_code)
                 }
                 pr_error("[clean_server] EXIT_NOTIFY spawn failed e=%d\n",
                          (int)e);
+                clean_exit_notify_fallback_pending(ppid, child_pid, exit_code);
                 return;
         }
         job->thread = thr;
@@ -216,7 +249,6 @@ static void clean_handle_thread_reap(const kmsg_t *km)
                         "[clean_server] THREAD_REAP: cannot reap current thread\n");
                 return;
         }
-
 
         if (target == percpu(init_thread_ptr)
             || target == percpu(idle_thread_ptr)) {
@@ -398,7 +430,6 @@ static void clean_handle_task_reap(const kmsg_t *km, const char *reply_port,
                 }
                 return;
         }
-
 
         result = clean_claim_and_delete_task((pid_t)pid);
         if (result == -LINUX_ECHILD) {

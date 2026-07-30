@@ -29,10 +29,11 @@
  * - CLONE_CHILD_SETTID: Store child TID in child memory
  * - CLONE_CHILD_CLEARTID: Clear TID on exit (via set_tid_address)
  *
- * Raw syscall signature (x86_64):
- * long clone(unsigned long flags, void *stack,
- *            int *parent_tid, int *child_tid,
- *            unsigned long tls);
+ * Raw syscall signatures:
+ *   x86_64:  clone(flags, stack, parent_tid, child_tid, tls)
+ *   aarch64: clone(flags, stack, parent_tid, tls, child_tid)
+ * sys_clone() always takes (flags, stack, parent_tid, child_tid, tls);
+ * syscall_entry remaps aarch64 arg4/arg5 accordingly.
  *
  * Implementation notes:
  * - Append: memset + proc static fields, then linux_task_append_clone (see APPEND_HOOKS.md)
@@ -261,9 +262,9 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
                 }
         }
 
-        /* TODO: Implement CLONE_FS, CLONE_FILES, CLONE_SIGHAND in Phase 2B/2C
+        /*
+         * TODO: Implement CLONE_FS, CLONE_FILES, CLONE_SIGHAND in Phase 2B/2C
          */
-
         /*
          * Linux clone(2): parent gets child TID for CLONE_THREAD threads,
          * child PID for fork-style (separate thread group / address space).

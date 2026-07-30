@@ -11,14 +11,6 @@
 void syscall(struct trap_frame *syscall_ctx)
 {
         const u64 syscall_id = (u64)syscall_ctx->ARCH_SYSCALL_ID;
-        // pr_info("[SYSCALL] syscall id=%lu arg1=%lu arg2=%lu arg3=%lu0 arg4=%lu arg5=%lu arg6=%lu\n",
-        //         (u64)syscall_id,
-        //         (u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
-        //         (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
-        //         (u64)syscall_ctx->ARCH_SYSCALL_ARG_3,
-        //         (u64)syscall_ctx->ARCH_SYSCALL_ARG_4,
-        //         (u64)syscall_ctx->ARCH_SYSCALL_ARG_5,
-        //         (u64)syscall_ctx->ARCH_SYSCALL_ARG_6);
         /* Linux compat: user-visible errors must be Linux errno (negative). */
         i64 ret = -LINUX_ENOSYS;
         bool skip_syscall_ret_assign = false;
@@ -50,12 +42,18 @@ void syscall(struct trap_frame *syscall_ctx)
                                         (u64)syscall_ctx->ARCH_SYSCALL_ARG_5);
                 }
 #elif defined(_AARCH64_)
-                /* aarch64: fork is clone with flags=0 */
+                /*
+                 * aarch64 clone(2) ABI (unlike x86_64):
+                 *   clone(flags, stack, parent_tid, tls, child_tid)
+                 * sys_clone() parameters are (…, child_tid, tls).
+                 * glibc _Fork uses CLONE_CHILD_SETTID|CLEARTID|SIGCHLD —
+                 * swapping tls/child_tid silently drops CLEARTID setup.
+                 */
                 ret = sys_clone(clone_flags,
                                 (u64)syscall_ctx->ARCH_SYSCALL_ARG_2,
                                 (u64)syscall_ctx->ARCH_SYSCALL_ARG_3,
-                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_4,
-                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_5);
+                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_5,
+                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_4);
 #else
 #error "Unsupported architecture"
 #endif
@@ -407,7 +405,6 @@ void syscall(struct trap_frame *syscall_ctx)
 
         if (!skip_syscall_ret_assign) {
                 syscall_ctx->ARCH_SYSCALL_RET = (u64)ret;
-                // pr_info("[SYSCALL] syscall ret %ld\n",ret);
         }
 
         /* Deliver after syscall return value is set (handler uses rdi/x0, not
@@ -415,7 +412,6 @@ void syscall(struct trap_frame *syscall_ctx)
         if (!skip_signal_deliver) {
                 (void)linux_deliver_pending_signals(syscall_ctx);
         }
-
         return;
 }
 static inline void

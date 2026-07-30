@@ -23,10 +23,11 @@
 #define LINUX_WCONTINUED 0x00000008
 
 /*
- * wait4 model — see doc/linux_compat/protocols/EXIT_CLEAN.md
- *   child: ZOMBIE + THREAD_REAP
+ * wait4 model — see protocols/EXIT_CLEAN.md + WAIT_AND_SIGCHLD.md
+ *   child: ZOMBIE + THREAD_REAP (+ SIGCHLD pending only)
  *   clean: delete_thread; last thread → EXIT_NOTIFY
- *   parent: recv → REAPED + TASK_REAP_SYNC (RPC until delete_task done)
+ *   parent: recv EXIT_NOTIFY → REAPED + TASK_REAP_SYNC
+ *   SIGCHLD must not WAIT_INTERRUPT / EINTR wait4
  */
 
 static error_t proc_put_wstatus_helper(Tcb_Base *task, u64 user_wstatus,
@@ -76,6 +77,8 @@ static bool wait4_pid_matches(i32 want_pid, pid_t child_pid, Tcb_Base *parent,
 
 /*
  * After EXIT_NOTIFY: mark REAPED and TASK_REAP_SYNC (waits for delete_task).
+ * Returns 0 if the child still has threads — caller must keep the exit
+ * pending for a later drain.
  */
 static i64 wait4_finish_reap(Tcb_Base *parent, u64 user_wstatus,
                              pid_t child_pid, i32 exit_code)
@@ -191,6 +194,18 @@ static bool wait4_decode_exit_notify(Message_Port_t *wait_port, Message_t *msg,
         return true;
 }
 
+static i64 wait4_try_pending(Tcb_Base *parent, linux_proc_append_t *parent_pa,
+                             i32 want_pid, u64 user_wstatus)
+{
+        pid_t child_pid;
+        i32 exit_code;
+
+        if (!linux_proc_wait_pending_take(parent_pa, want_pid, parent,
+                                         &child_pid, &exit_code))
+                return 0;
+        return wait4_finish_reap(parent, user_wstatus, child_pid, exit_code);
+}
+
 /*
  * Handle one dequeued wait_port message.
  * Returns >0 reaped pid, <0 errno, or 0 to keep waiting.
@@ -202,9 +217,20 @@ static i64 wait4_handle_port_msg(Tcb_Base *parent,
 {
         pid_t child_pid;
         i32 exit_code;
+        i64 reap_ret;
 
         if (wait4_recv_is_interrupt(wait_port, msg)) {
+                i64 pending_ret;
+
                 ref_put(&msg->ms_queue_node.refcount, free_message_ref);
+                /*
+                 * WAIT_INTERRUPT may be a poke to drain pending_exits
+                 * (EXIT_NOTIFY spawn failure). Try that before EINTR.
+                 */
+                pending_ret = wait4_try_pending(parent, parent_pa, want_pid,
+                                                user_wstatus);
+                if (pending_ret != 0)
+                        return pending_ret;
                 if (self && linux_signal_wait4_should_return_eintr(self))
                         return -LINUX_EINTR;
                 return 0;
@@ -231,19 +257,21 @@ static i64 wait4_handle_port_msg(Tcb_Base *parent,
                 return 0;
         }
 
-        return wait4_finish_reap(parent, user_wstatus, child_pid, exit_code);
-}
-
-static i64 wait4_try_pending(Tcb_Base *parent, linux_proc_append_t *parent_pa,
-                             i32 want_pid, u64 user_wstatus)
-{
-        pid_t child_pid;
-        i32 exit_code;
-
-        if (!linux_proc_wait_pending_take(parent_pa, want_pid, parent,
-                                         &child_pid, &exit_code))
-                return 0;
-        return wait4_finish_reap(parent, user_wstatus, child_pid, exit_code);
+        reap_ret = wait4_finish_reap(parent, user_wstatus, child_pid,
+                                     exit_code);
+        if (reap_ret == 0) {
+                /*
+                 * EXIT_NOTIFY consumed but child not empty yet. Park for a
+                 * later poke / pending drain — do not lose the exit.
+                 */
+                if (!linux_proc_wait_pending_push(parent_pa, child_pid,
+                                                 exit_code)) {
+                        pr_error(
+                                "[WAIT4] defer reap pending_push drop pid=%d\n",
+                                (int)child_pid);
+                }
+        }
+        return reap_ret;
 }
 
 static i64 wait4_try_recv_once(Tcb_Base *parent, linux_proc_append_t *parent_pa,

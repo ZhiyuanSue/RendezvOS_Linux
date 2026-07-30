@@ -6,10 +6,22 @@
 
 /*
  * wait4 IPC wake helpers (linux_layer/proc/proc_wait_ipc.c).
- * Child exit uses KMSG_OP_PROC_EXIT_NOTIFY; signal EINTR uses WAIT_INTERRUPT.
+ *
+ * Protocol: doc/linux_compat/protocols/EXIT_CLEAN.md
+ *   - Child exit → KMSG_OP_PROC_EXIT_NOTIFY (authoritative wait wake / reap).
+ *   - WAIT_INTERRUPT:
+ *       (1) EINTR for non-SIGCHLD signals;
+ *       (2) poke to drain pending_exits when async EXIT_NOTIFY spawn fails.
+ *     SIGCHLD alone must not post interrupt.
  */
 
 void linux_proc_wait_wake_for_signal(Thread_Base *thread, Tcb_Base *process);
+
+/*
+ * Unconditionally post WAIT_INTERRUPT so a blocked wait4 re-checks
+ * pending_exits (try_pending). Not an EINTR by itself.
+ */
+bool linux_proc_wait_poke(pid_t parent_pid);
 
 /*
  * Blocking EXIT_NOTIFY to parent's wait_port (enqueue + send_msg).

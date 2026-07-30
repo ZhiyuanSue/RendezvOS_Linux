@@ -87,6 +87,28 @@ Parent wait4:
 
 ---
 
+## 与 SIGCHLD 的边界
+
+**完整交互模型（时间线、Layer B、二次 wait→ECHILD、卡死归因）见 [`WAIT_AND_SIGCHLD.md`](WAIT_AND_SIGCHLD.md)。**  
+下文仅保留 EXIT_CLEAN 必需的硬边界，避免两处文档漂移。
+
+子进程退出同时产生两件事，**角色不同，禁止互相替代**：
+
+| 通道 | 谁发 | 作用 | 是否唤醒 `wait4` 的 `recv` |
+|------|------|------|---------------------------|
+| **`EXIT_NOTIFY`** | EXIT_NOTIFY worker → 父 `wait_port` | **wait 的权威事件**；父据此 REAPED + `TASK_REAP_SYNC` | **是** |
+| **`SIGCHLD` pending** | `sys_exit` → `linux_queue_signal(parent)` | 信号语义；层 B 在 syscall 返回前投递 | **否** |
+
+- SIGCHLD **不得**令 wait4 在未完成收尸前 `-EINTR`（见 `WAIT_AND_SIGCHLD.md` §2）。  
+- `WAIT_INTERRUPT`：非 SIGCHLD 的 EINTR，或 EXIT_NOTIFY 异步失败时的 poke（同文 §6）。  
+- Layer B / restorer / RX stub：见同文 §5；**禁止** RW 栈 EXEC trampoline。
+
+### EXIT_NOTIFY 异步失败回退
+
+`clean_async_exit_notify` 若 alloc/spawn 失败：向父 `pending_exits` 推送 + `linux_proc_wait_poke`。禁止 listen 同步堵在 `wait_port` 上。
+
+---
+
 ## exit_state
 
 | 值 | 名字 | 含义 |
@@ -142,7 +164,10 @@ Parent wait4:
 - wait4 在 one-way `TASK_REAP` 后空转等 pid 消失。  
 - 链路 B 从 exitor 再发 one-way `TASK_REAP`。  
 - listen 上同步 `EXIT_NOTIFY`（与 `TASK_REAP_SYNC` 死锁）。  
-- 未认领并发 `delete_task`。
+- 未认领并发 `delete_task`。  
+- **用 SIGCHLD / `WAIT_INTERRUPT` 代替 `EXIT_NOTIFY` 唤醒 wait4，或因 SIGCHLD pending 对 wait4 返回 `-EINTR`（未收 EXIT_NOTIFY 即离开）。**  
+  （例外：EXIT_NOTIFY 异步失败时，`pending_exits` + poke 用的 `WAIT_INTERRUPT` 只唤醒并 `try_pending`，不因此对 SIGCHLD 返回 `-EINTR`。）
+- **在 RW 用户栈上种 EXEC 信号 trampoline**（与 WXN / absolute mprotect 冲突）。
 
 ---
 
@@ -153,6 +178,7 @@ Parent wait4:
 | 协议 / `proc_has_wait_reaper` | 本文；`sys_proc_registry.c` |
 | 客户端 | `linux_layer/proc/clean_ipc.c` |
 | Server | `servers/clean_server.c`（`ipc_server_recv_loop` + async EXIT_NOTIFY） |
-| exit | `linux_layer/syscall/thread_syscall.c` |
-| wait4 | `linux_layer/proc/sys_wait.c` |
+| exit / SIGCHLD queue | `linux_layer/syscall/thread_syscall.c` |
+| wait4 / EINTR 判定 | `linux_layer/proc/sys_wait.c`；`linux_signal_wait4_should_return_eintr` |
+| wait 唤醒 | `linux_layer/proc/proc_wait_ipc.c`（EXIT_NOTIFY / WAIT_INTERRUPT） |
 | 通用 pool（VFS 等，**非 clean client 路径**） | `linux_layer/ipc/rpc.c` |

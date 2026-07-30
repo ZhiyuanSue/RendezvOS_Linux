@@ -285,10 +285,13 @@ linux_deliver_pending_signals(syscall_ctx);
 
 ## 8. 与 IPC / wait / SIGCHLD
 
+权威收尸握手见 [`protocols/EXIT_CLEAN.md`](protocols/EXIT_CLEAN.md)（含 **与 SIGCHLD 的边界**）。此处只列信号侧要点：
+
 | 场景 | 做法 |
 |------|------|
-| 子进程 exit，父 wait4 | 已有 `KMSG_LINUX_EXIT_NOTIFY` → `wait_port`；**不必**再为每次信号走 server |
-| SIGCHLD | `linux_queue_signal(parent, SIGCHLD)` + 父已在 wait 时由 exit kmsg 唤醒 |
+| 子进程 exit，父 wait4 | **`EXIT_NOTIFY` → `wait_port`**（权威唤醒）；**不必**也不应用 SIGCHLD/`WAIT_INTERRUPT` 代替 |
+| SIGCHLD | `linux_queue_signal(parent, SIGCHLD)` 只写 pending；父在 wait 时 **仍由 EXIT_NOTIFY 唤醒**；层 B 在 wait **返回后**（或其它 syscall 出口）投递 |
+| 其它信号打断 wait4 | `WAIT_INTERRUPT` → wait `-EINTR` → 层 B 投递（**不含** SIGCHLD） |
 | kill(pid, sig) | **直接** `linux_queue_signal`，热路径无 IPC |
 | kill(-1) 广播 | 可选将来 coordinator + kmsg；非 2B 必须 |
 

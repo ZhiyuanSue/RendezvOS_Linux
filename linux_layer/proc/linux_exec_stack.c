@@ -82,16 +82,13 @@ static bool linux_exec_elf_needs_spawn_stack(struct page_slice *slice)
  * *new* thread after gen_task_from_elf returns — a "set before / clear after"
  * pending buffer on the caller is racy and was clearing before bootstrap.
  *
- * Next milestone after `ls /bin`: non-interactive ash (`sh -c …`). Do NOT use
- * bare `sh` — that waits on stdin (read(0) is still EOF stub) and looks hung.
- * After this works: `sh /tests/run_all.sh` (real script path).
+ * Smoke: ash + echo / ls / AFTER_LS (Channel R + fork/COW + SIGCHLD).
  */
 static u8 linux_exec_spawn_default_argv(const char *kargv[LINUX_EXEC_SPAWN_MAX_ARGC + 1])
 {
         kargv[0] = "sh";
         kargv[1] = "-c";
-        /* Absolute path: Path B stack has empty envp → no PATH → bare `ls` → not found */
-        kargv[2] = "/bin/ls /bin; echo SHELL_OK";
+        kargv[2] = "echo SHELL_OK; /bin/busybox ls /bin; echo AFTER_LS";
         kargv[3] = NULL;
         return 3;
 }

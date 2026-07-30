@@ -192,7 +192,6 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
         vaddr entry_addr;
         vaddr user_sp;
         vaddr initial_stack_sp;
-        vaddr argv_user = 0;
 
         if (!current || !current_thread || !current->vs) {
                 return -LINUX_ESRCH;
@@ -206,12 +205,11 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
                 return -LINUX_EFAULT;
         }
 
-        e = linux_mm_load_from_user(
+        e = linux_mm_load_cstring_from_user(
                 vs, user_filename, filename, sizeof(filename));
         if (e != REND_SUCCESS) {
-                return -LINUX_EFAULT;
+                return (e == -E_IN_PARAM) ? -LINUX_EINVAL : -LINUX_EFAULT;
         }
-        filename[EXEC_MAX_PATH - 1] = '\0';
 
         ret = linux_exec_load_elf_slice(vs, filename, alloc, &elf_slice);
         if (ret != 0) {
@@ -288,7 +286,7 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
         }
 
         initial_stack_sp = linux_exec_build_initial_stack(
-                vs, user_sp, argc, kargv, &elf_auxv, &argv_user);
+                vs, user_sp, argc, kargv, &elf_auxv, NULL);
         alloc->m_free(alloc, arg_storage);
         arg_storage = NULL;
         if (initial_stack_sp == 0) {
@@ -305,9 +303,18 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
                                      entry_addr,
                                      initial_stack_sp,
                                      0);
-#if defined(_AARCH64_)
-        arch_syscall_set_user_int_arg(syscall_ctx, 0, (u64)argc);
-        arch_syscall_set_user_int_arg(syscall_ctx, 1, (u64)argv_user);
+        /*
+         * ELF entry register hygiene (must match Linux / glibc _start):
+         * - aarch64: arch_syscall_set_user_return writes x0=syscall_ret (0).
+         *   Do NOT put argc/argv in x0/x1 — glibc treats x0 as rtld_fini.
+         * - x86_64: sysret restores rdi/rsi/rdx from the syscall save area.
+         *   Leaving rdx=old envp makes static glibc `_start` do
+         *   `mov %rdx,%r9` and later call that pointer → fetch of a stale
+         *   pre-exec VA (seen as RIP=CR2=0xcdca70 after ash execve busybox).
+         * argc/argv/envp live on the user stack only (same as Path B).
+         */
+#if defined(_X86_64_)
+        syscall_ctx->rdx = 0;
 #endif
 
         return 0;

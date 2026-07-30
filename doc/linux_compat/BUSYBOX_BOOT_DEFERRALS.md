@@ -403,8 +403,9 @@ done < /tests/manifest
 
 | 日期 | 变更 |
 |------|------|
+| 2026-07-30 | ash `AFTER_LS` hang：根因 core COW 子 PTE 可写（父子共享页应两侧 RO）；兼容层 Channel R/S + RX stub 保留 |
+| 2026-07-29 | ash `SHELL_OK` 前：SIGCHLD 曾 EINTR wait4；现 SIGCHLD 不打断 wait；禁止 RW 栈 EXEC trampoline |
 | 2026-07-28 | ash smoke：裸 `ls`→not found（空 envp）；改 `/bin/ls`；默认 `MEM_SIZE` 256→512M（仅 QEMU `-m`，无需 reconfig） |
-| 2026-07-28 | demo argv：`ls`/`/bin` → `sh -c …`（下一里程碑：ash） |
 | 2026-07-28 | **回归**：pending argv 跨 `gen_task_from_elf` 有竞态 → BusyBox Usage；恢复 bootstrap 硬编码，并文档化时序 |
 | 2026-07-28 | 白话说明 `run_all.sh`；spawn API 封装 argv（后回滚） |
 | 2026-07-27 | **VFS 容量妥协回收**：S0–S3 → `vfs_slice_table`；文首增加「剩余开放项一览」；去掉「收紧 cpio/ns」旧建议；补 `_num_app`/头文件分层节 |

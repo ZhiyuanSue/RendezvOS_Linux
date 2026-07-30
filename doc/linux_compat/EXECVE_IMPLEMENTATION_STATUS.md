@@ -15,7 +15,7 @@
 | Syscall wired | ✅ | ✅ | `syscall_entry.c` → `sys_execve` |
 | Phase 3a embedded ELF | ✅ | ✅ | Hardcoded `program_map` (5 names) — **待清**（迁全 cpio 后） |
 | argv on user stack | ✅ | ✅ | `build_initial_stack` / Path B bootstrap |
-| aarch64 x0/x1 = argc/argv | ✅ | — | x86 relies on stack layout at `_start` |
+| aarch64 x0/x1 at exec | ✅ | ✅ | **必须为 0 / 勿塞 argc**：glibc `_start` 把 x0 当 `rtld_fini`；argc/argv 只在栈上 |
 | envp | ❌ | ❌ | `user_envp` ignored（syscall 路径） |
 | auxv（syscall execve） | ❌ | ❌ | 正规化不足 |
 | auxv（busybox Path B spawn） | ⚠️ | ⚠️ | `linux_exec_bootstrap_elf_spawn_stack`；缺 HWCAP/EXECFN/真随机 |
@@ -71,7 +71,8 @@
 - **Same PID**: exec must **not** call `register_process` again.
 - **Failure before clear**: return `-errno`; old mappings kept.
 - **Failure after clear**: `linux_exec_abort_unrecoverable` → fatal (no return to old user PC).
-- **aarch64 argc/argv in registers**: documented exception to “no `set_user_int_arg` on exec” in design doc — update ADR when stable.
+|- **aarch64 exec 入口寄存器**：与 Linux 一致，**不要** `set_user_int_arg(argc/argv)`。glibc `_start` 将入口 `x0` 存为 `rtld_fini`；`arch_syscall_set_user_return` 已写 `x0=0`。argc/argv 只通过用户栈传递。
+- **x86_64 exec 入口寄存器**：`sysret` 会恢复 syscall 保存的 `%rdx`。必须在 `sys_execve` 成功路径上把 `syscall_ctx->rdx = 0`，否则旧 `envp` 指针被 `_start` 当成 `rtld_fini` 随后执行 → `RIP=CR2=<旧堆地址>`（ash→execve busybox 实测 `0xcdca70`）。
 
 ---
 

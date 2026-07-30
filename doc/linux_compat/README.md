@@ -25,6 +25,7 @@
 | [`PORT_NAMING.md`](protocols/PORT_NAMING.md) | **全局 port 表命名约定**（`service` + `cpu` + worker / `cli`） |
 | [`IPC_RPC_FRAMEWORK.md`](protocols/IPC_RPC_FRAMEWORK.md) | RPC / one-way server 模板 |
 | [`EXIT_CLEAN.md`](protocols/EXIT_CLEAN.md) | **exit / wait4 / clean_server 权威协议** |
+| [`WAIT_AND_SIGCHLD.md`](protocols/WAIT_AND_SIGCHLD.md) | **wait4 ↔ SIGCHLD ↔ Layer B**（与 EXIT_CLEAN 配套） |
 | [`../ai/IPC_MESSAGE.md`](../ai/IPC_MESSAGE.md) | kmsg envelope、TLV、reply port `t` |
 | [`../../include/linux_compat/ipc/clean_protocol.h`](../../include/linux_compat/ipc/clean_protocol.h) | clean_server opcodes（协议见 EXIT_CLEAN） |
 | [`SYSCALL_USER_RETURN_AND_EXECVE.md`](SYSCALL_USER_RETURN_AND_EXECVE.md) | Path A 返回、exec 接线 |

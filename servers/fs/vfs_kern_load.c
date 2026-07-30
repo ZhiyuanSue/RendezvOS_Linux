@@ -10,6 +10,7 @@
 #include <rendezvos/mm/page_slice.h>
 
 #include "vfs_backend_ops.h"
+#include "vfs_open.h"
 #include "vfs_page_cache.h"
 #include "vfs_root.h"
 
@@ -19,6 +20,7 @@ i64 vfs_kern_read_file_slice(const char *path, struct allocator *alloc,
                              struct page_slice **out_slice)
 {
         vfs_inode_t ino;
+        i64 lookup_ret;
 
         (void)alloc;
 
@@ -28,15 +30,20 @@ i64 vfs_kern_read_file_slice(const char *path, struct allocator *alloc,
 
         *out_slice = NULL;
 
-        {
-                i64 lookup_ret = vfs_root_lookup(path, &ino);
-
-                if (lookup_ret < 0) {
-                        return lookup_ret;
-                }
+        /*
+         * Must follow symlinks like open(2). execve("/bin/ls") otherwise reads
+         * the 7-byte link target ("busybox") as file contents — not an ELF.
+         */
+        lookup_ret = vfs_lookup_path(path, &ino, true);
+        if (lookup_ret < 0) {
+                return lookup_ret;
         }
         if (ino.is_dir) {
                 return -LINUX_EISDIR;
+        }
+        if (ino.is_symlink) {
+                /* Dangling or unfollowed link — not a regular executable. */
+                return -LINUX_ENOENT;
         }
         if (ino.size <= 0 || ino.size > VFS_KERN_MAX_FILE) {
                 return -LINUX_EFBIG;

@@ -193,10 +193,30 @@ void linux_proc_wait_wake_for_signal(Thread_Base *thread, Tcb_Base *process)
         wait_port = proc_get_or_create_wait_port(process->pid);
         if (!wait_port)
                 return;
-        if ((Message_Port_t *)thread->port_ptr != wait_port)
+        if ((Message_Port_t *)thread->port_ptr != wait_port) {
+                ref_put(&wait_port->refcount, free_message_port_ref);
                 return;
+        }
 
         (void)linux_proc_wait_post_interrupt(wait_port);
+        ref_put(&wait_port->refcount, free_message_port_ref);
+}
+
+bool linux_proc_wait_poke(pid_t parent_pid)
+{
+        Message_Port_t *wait_port;
+        bool ok;
+
+        if (parent_pid <= 0)
+                return false;
+
+        wait_port = proc_get_or_create_wait_port(parent_pid);
+        if (!wait_port)
+                return false;
+
+        ok = linux_proc_wait_post_interrupt(wait_port);
+        ref_put(&wait_port->refcount, free_message_port_ref);
+        return ok;
 }
 
 bool linux_proc_post_exit_notify(pid_t parent_pid, pid_t child_pid,

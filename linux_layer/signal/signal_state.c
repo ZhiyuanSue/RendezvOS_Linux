@@ -19,6 +19,7 @@ static void linux_signal_init_proc_state(linux_signal_proc_state_t *ps)
         }
 
         sigemptyset(&ps->pending_signals);
+        ps->sigreturn_page = 0;
         for (i = 0; i < NSIG; i++) {
                 ps->dispositions[i].sa_handler = SIG_DFL;
                 ps->dispositions[i].sa_flags = 0;
@@ -172,6 +173,7 @@ error_t linux_signal_proc_fork(Tcb_Base *child, Tcb_Base *parent)
         }
         if (child_ps) {
                 sigemptyset(&child_ps->pending_signals);
+                child_ps->sigreturn_page = 0;
         }
 
         return REND_SUCCESS;
@@ -186,6 +188,7 @@ void linux_signal_proc_reset(Tcb_Base *task)
         }
 
         sigemptyset(&ps->pending_signals);
+        ps->sigreturn_page = 0;
 }
 
 error_t linux_signal_thread_attach(Thread_Base *thread)

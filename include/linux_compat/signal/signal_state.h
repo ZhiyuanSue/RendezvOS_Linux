@@ -23,6 +23,8 @@ typedef struct linux_signal_restore {
 typedef struct linux_signal_proc_state {
         sigaction_t dispositions[NSIG];
         sigset_t pending_signals;
+        /* Per-process RX page with rt_sigreturn stub (0 = not mapped yet). */
+        vaddr sigreturn_page;
 } linux_signal_proc_state_t;
 
 typedef struct linux_signal_thread_state {

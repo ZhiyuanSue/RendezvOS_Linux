@@ -13,7 +13,7 @@
 | `sigaltstack` | ⚠️ | ⚠️ | #21 fix: field copy + alt region validate (2026-05-19) |
 | `rt_sigreturn` | ✅ | ✅ | **Full trap frame** on both arches via `signal/arch/` |
 | Integrated tests #08, #44 | ✅ | ✅ | delivery + SIG_DFL/SIG_IGN (2026-05-19 log) |
-| User-stack `rt_sigframe` | ❌ | ❌ | glibc needs layout + restorer |
+| User-stack `rt_sigframe` | ⚠️ | ⚠️ | Full Linux frame still missing; RX `sigreturn_page` stub when no `SA_RESTORER` |
 | Path B (fork first return) | ⚠️ | ⚠️ | `linux_deliver_pending_signals` called on child bootstrap TF in `sys_fork` |
 | Page-fault → SIGSEGV queue | ⚠️ | ⚠️ | `linux_page_fault_irq.c` (partial) |
 | SA_SIGINFO 3-arg handlers | ❌ | ❌ | Flag stored only |

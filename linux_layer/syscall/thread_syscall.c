@@ -81,8 +81,7 @@ void sys_exit(i64 exit_code)
                                                 &parent_ps->dispositions
                                                          [SIGCHLD - 1];
                                         if (!(chld_disp->sa_flags
-                                              & SA_NOCLDWAIT)) {
-                                                (void)linux_queue_signal(
+                                              & SA_NOCLDWAIT)) {                                                (void)linux_queue_signal(
                                                         parent_task,
                                                         SIGCHLD,
                                                         task->pid);

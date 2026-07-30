@@ -202,7 +202,7 @@ sys_kill / sys_tgkill
 | `kill` 只写进程 pending | 当前代码问题 | 线程级 pending + `tgkill` |
 | IPC 死锁 | 在 syscall 中 `send_msg` 到同步 server | 热路径不用 IPC；server 异步 |
 | SMP | pending 与 mask 并发 | append 与 registry 锁策略；参考 `INVARIANTS.md` |
-| 与 wait4 重复通知 | exit kmsg + SIGCHLD | 统一在 `sys_exit` 文档化顺序 |
+| 与 wait4 重复通知 | exit kmsg + SIGCHLD | **[`protocols/EXIT_CLEAN.md`](protocols/EXIT_CLEAN.md)**：EXIT_NOTIFY 唤醒 wait；SIGCHLD 只 pending，不 EINTR wait4 |
 
 ---
 

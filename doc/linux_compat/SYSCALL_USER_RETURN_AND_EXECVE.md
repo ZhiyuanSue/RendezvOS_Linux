@@ -133,7 +133,7 @@ arch_syscall_set_user_int_arg(tf, 0, (u64)sig);
 | 加载 | `load_elf_to_vs` |
 | 栈映射 | `generate_user_stack`（`thread_loader.h`） |
 | 栈内容 | linux：`argv` / `envp` / `auxv`（`exec_stack.c` 一类） |
-| 进用户 | **仅** `arch_syscall_set_user_return(syscall_ctx, &th->ctx, entry, user_sp, 0)` |
+| 进用户 | **仅** `arch_syscall_set_user_return(..., entry, user_sp, 0)`；**禁止**再 `set_user_int_arg(argc/argv)`。另：**x86 必须把 `rdx` 清 0**（glibc `_start` 把 `%rdx` 当 `rtld_fini`；否则会跳进旧 envp VA） |
 | 不要 | 路径 B、对 exec 使用 `set_user_int_arg`、再次 `register_process` |
 
 前置条件见 `INVARIANTS.md`：同 task **其它线程已结束**；`vs->tlb_cpu_mask == 0`。

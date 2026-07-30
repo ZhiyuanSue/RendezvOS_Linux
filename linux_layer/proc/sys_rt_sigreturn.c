@@ -13,8 +13,8 @@
  * rt_sigreturn — restore user context saved when a signal handler was entered.
  *
  * Phase 2B uses kernel-side linux_signal_restore_t (not a full user
- * rt_sigframe). User handlers must call rt_sigreturn() explicitly (or via a
- * test stub).
+ * rt_sigframe). Handlers return via SA_RESTORER or a per-process RX stub
+ * page planted by signal_deliver (issues this syscall).
  */
 
 static void signal_rt_sigreturn_fatal(linux_signal_thread_state_t* ts,
@@ -32,7 +32,6 @@ i64 sys_rt_sigreturn(struct trap_frame* tf)
 {
         Thread_Base* th = get_cpu_current_thread();
         linux_signal_thread_state_t* ts = linux_signal_thread_state(th);
-
         if (!tf) {
                 return -LINUX_EINVAL;
         }
@@ -44,6 +43,5 @@ i64 sys_rt_sigreturn(struct trap_frame* tf)
         if (!signal_restore_user_context(tf)) {
                 signal_rt_sigreturn_fatal(ts, "restore failed");
         }
-
         return 0;
 }

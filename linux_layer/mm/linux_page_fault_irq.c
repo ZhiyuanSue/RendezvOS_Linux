@@ -24,6 +24,7 @@
 #if defined(_X86_64_)
 #include <arch/x86_64/mm/pmm.h>
 #include <arch/x86_64/boot/arch_setup.h>
+#include <arch/x86_64/tcb_arch.h>
 #elif defined(_AARCH64_)
 #include <arch/aarch64/mm/pmm.h>
 #include <arch/aarch64/boot/arch_setup.h>
@@ -163,6 +164,47 @@ static error_t linux_handle_cow_fault(vaddr fault_addr, bool is_write,
         }
 
         return REND_SUCCESS;
+}
+
+static void linux_pf_log_user_context(struct trap_frame *tf, vaddr fault_addr,
+                                      bool is_write, bool is_present,
+                                      bool is_execute)
+{
+        Thread_Base *th = get_cpu_current_thread();
+        Tcb_Base *task = th ? th->belong_tcb : NULL;
+        vaddr user_pc = 0;
+        vaddr user_sp = 0;
+
+#if defined(_AARCH64_)
+        if (tf) {
+                user_pc = (vaddr)tf->ELR;
+                user_sp = (vaddr)tf->SP;
+        }
+#elif defined(_X86_64_)
+        if (tf) {
+                /*
+                 * #PF / iret-shaped frames use rip/rsp. Prefer rip; fall back
+                 * to rcx for syscall-shaped frames. SP may be in rsp or the
+                 * per-CPU syscall scratch.
+                 */
+                user_pc = tf->rip ? (vaddr)tf->rip : (vaddr)tf->rcx;
+                user_sp = (vaddr)tf->rsp;
+                if (!user_sp)
+                        user_sp = (vaddr)percpu(user_rsp_scratch);
+        }
+#endif
+
+        pr_error(
+                "[MM] fault context pid=%d tid=%d far=0x%lx pc=0x%lx sp=0x%lx "
+                "write=%d present=%d exec=%d\n",
+                task ? (int)task->pid : -1,
+                th ? (int)th->tid : -1,
+                (unsigned long)fault_addr,
+                (unsigned long)user_pc,
+                (unsigned long)user_sp,
+                is_write ? 1 : 0,
+                is_present ? 1 : 0,
+                is_execute ? 1 : 0);
 }
 
 static void linux_compat_deliver_segv_or_fatal(struct trap_frame *tf)
@@ -351,6 +393,12 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
                 pr_error("[MM] Access to unmapped address at 0x%lx\n",
                          fault_addr);
                 pr_error("[MM] Not in radix - true segfault\n");
+                if (!is_kernel)
+                        linux_pf_log_user_context(tf,
+                                                  fault_addr,
+                                                  is_write,
+                                                  is_present,
+                                                  is_execute);
                 goto unhandled_fault;
         }
 
@@ -366,6 +414,13 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
 fatal_fault:
 unhandled_fault:
         if (!is_kernel) {
+                /* Context already printed for the common "not in radix" case. */
+                if (in_radix)
+                        linux_pf_log_user_context(tf,
+                                                  fault_addr,
+                                                  is_write,
+                                                  is_present,
+                                                  is_execute);
                 linux_compat_deliver_segv_or_fatal(tf);
                 return;
         }

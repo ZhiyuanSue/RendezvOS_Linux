@@ -61,9 +61,10 @@ vaddr linux_exec_build_initial_stack(VSpace *vs, vaddr stack_top, i64 argc,
  * For static-glibc ELFs (busybox), rebuilds argc/argv/auxv via
  * linux_exec_build_initial_stack. Musl harness ELFs (one PT_NOTE) skip this.
  *
- * Temporary: argv hardcoded to busybox ash smoke
- *   {"sh","-c","/bin/ls /bin; echo SHELL_OK"}
- * (absolute /bin/ls — empty envp means no PATH). Next: PATH= or script.
+ * Temporary Path B ash smoke:
+ *   {"sh","-c","echo SHELL_OK; /bin/busybox ls /bin; echo AFTER_LS"}
+ * Absolute busybox path avoids PATH; exercises fork/wait/SIGCHLD + COW.
+ * Do not pass pending argv across gen_task (race with bootstrap).
  */
 error_t linux_exec_bootstrap_elf_spawn_stack(Thread_Base *thread, VSpace *vs,
                                              const elf_load_info_t *info);

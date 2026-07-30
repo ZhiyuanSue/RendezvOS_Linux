@@ -10,11 +10,9 @@
  * Contract (current stage):
  * - User space uses 4K pages only (no huge pages).
  * - For each mapped user page:
- *   - Child maps the same physical page at the same VA, but read-only if the
- *     parent's mapping was writable.
- *   - Parent's mapping is also downgraded to read-only for originally-writable
- *     pages (via map() remap of the same physical page with updated flags).
- * - Child radix metadata is populated by core clone_vspace (internal).
+ *   - Child and parent both map the same physical page at the same VA
+ *     **read-only** if the mapping was originally writable (COW prep).
+ *   - Radix retains writable intent + `PAGE_ENTRY_COW`; write faults split.
  *
  * This prepares COW semantics; the actual fault-time split is handled
  * elsewhere.

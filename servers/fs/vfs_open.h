@@ -4,6 +4,7 @@
 #include <common/types.h>
 #include <rendezvos/task/id.h>
 
+#include "vfs_backend_ops.h"
 #include "vfs_kstat.h"
 
 /* Linux open / openat flag bits (oscomp user headers + x86_64 Linux). */
@@ -31,5 +32,8 @@ i64 vfs_validate_dir(const char *path);
 i64 vfs_getdents64_handle(pid_t pid, u32 handle, u64 user_dirp, u64 count);
 i64 vfs_readlink_path(pid_t pid, const char *path, u64 user_buf, u64 bufsiz);
 i64 vfs_faccessat_path(pid_t pid, const char *path, u32 mode, u32 flags);
+
+/* Lookup @path into @out; follow one symlink level when @follow_symlink. */
+i64 vfs_lookup_path(const char *path, vfs_inode_t *out, bool follow_symlink);
 
 #endif /* _VFS_OPEN_H_ */

@@ -306,7 +306,7 @@ else if status != running
 
 | 场景 | 阻塞点 | 唤醒消息 | 消息是否「就是」事件本身 |
 |------|--------|----------|--------------------------|
-| `wait4` | `recv_msg(wait_port)` | `EXIT_NOTIFY` / `WAIT_INTERRUPT` | 否；reap 看 `exit_state` |
+| `wait4` | `recv_msg(wait_port)` | **`EXIT_NOTIFY`**（孩子退出权威）；`WAIT_INTERRUPT` 仅非 SIGCHLD | 否；reap 看 EXIT_NOTIFY / `exit_state`（见 EXIT_CLEAN） |
 | `nanosleep` | `recv_msg(sleep_port)` | `TIMER_EXPIRE` / `TIMER_CANCEL` | EXPIRE=到时；CANCEL=打断 sleep |
 | `ipc_rpc_call` | `recv_msg(reply_port)` | `IPC_RECV_INTERRUPT` | 否；返回 `-EINTR` |
 | 信号（通用） | 任意 / ready 队列 | （无 port） | pending 位图 + defer 投递 |

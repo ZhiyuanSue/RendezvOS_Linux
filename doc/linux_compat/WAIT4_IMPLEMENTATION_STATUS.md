@@ -127,12 +127,15 @@ if (pa->exit_state == 2) {
 3. 父进程 `wait4` 返回 `-EINTR`（libc 见 `-1`），**未 reap**（`exit_state` 仍为 1）
 4. `test_multiple_children` 的 `wait4(-1)` 先收到遗留 zombie（exit 42 或 0），非 10/20/30
 
-**修复** (`linux_layer/proc/sys_wait.c`, `signal_deliver.c`, `proc_wait_ipc.c`):
+**修复**（对齐 [`protocols/EXIT_CLEAN.md`](protocols/EXIT_CLEAN.md) SIGCHLD 边界）:
 
-- `linux_signal_wait4_should_return_eintr()` — `SIGCHLD` + `SIG_DFL`/`SIG_IGN` 不中断 wait4（对齐 Linux）
-- `WAIT_INTERRUPT` 处理：先 `wait4_reap_zombie_or`，再决定是否 `-EINTR`
+- `linux_signal_wait4_should_return_eintr()` — **SIGCHLD 一律不中断 wait4**
+- `WAIT_INTERRUPT`：仅非 SIGCHLD；处理时先 `wait4_try_pending`
+- 层 B：handler 返回路径（`SA_RESTORER` / trampoline）— 投递完整性，不改变收尸握手
 
 **x86_64 + aarch64 post-fix (2026-06-13)**: #49 stdout 3/3 PASS；reaped exit_code 10/20/30（PID 68/69/70）。
+
+**ash smoke (2026-07-30)**: Channel R（EXIT_NOTIFY）正确；层 B 用 `SA_RESTORER` 或 RX stub（禁止 RW 栈 EXEC）；spawn 失败走 pending+poke。`AFTER_LS` hang 根因是 core COW 子 PTE 曾可写（见 `protocols/WAIT_AND_SIGCHLD.md` §4）。
 
 Full paired log checklist: [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md).
 

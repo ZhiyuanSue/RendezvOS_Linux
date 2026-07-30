@@ -114,6 +114,14 @@ static i64 vfs_lookup_follow(const char *path, vfs_inode_t *out,
         return vfs_root_lookup(resolved, out);
 }
 
+i64 vfs_lookup_path(const char *path, vfs_inode_t *out, bool follow_symlink)
+{
+        if (!path || !out) {
+                return -LINUX_EINVAL;
+        }
+        return vfs_lookup_follow(path, out, follow_symlink);
+}
+
 static Tcb_Base *vfs_task_for_pid(pid_t pid)
 {
         Tcb_Base *task = find_task_by_pid(pid);

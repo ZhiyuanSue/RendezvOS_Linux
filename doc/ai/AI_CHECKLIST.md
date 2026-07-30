@@ -376,3 +376,28 @@ When a new bug pattern appears during review/debug:
   - **Atomicity**: Full rollback on failure (all-or-nothing) prevents inconsistent state.
   - Checklist: §1 (union type safety + field repurposing) + §4 (atomic updates) +
   `doc/ai/CODE_QUALITY_PATTERNS.md`.
+
+- 2026-07-29: **wait4 vs SIGCHLD (EXIT_CLEAN gap):**
+  - Protocol intent: EXIT_NOTIFY wakes wait; SIGCHLD is pending-only. Omitting
+    that boundary caused `WAIT_INTERRUPT`/`-EINTR` before EXIT_NOTIFY.
+  - Unsafe follow-up: RW-stack EXEC trampoline for sigreturn. Rule: SIGCHLD
+    never EINTR wait4; Layer B uses `SA_RESTORER` or per-process RX stub;
+    EXIT_NOTIFY spawn failure → `pending_exits` + poke.
+  - Checklist: §0 + `protocols/EXIT_CLEAN.md` / `WAIT_AND_SIGCHLD.md`.
+
+- 2026-07-30: **fork COW child PTE must be RO (core):**
+  - Symptom: ash printed `SHELL_OK` + `ls` then hung (no `AFTER_LS`); Channel R
+    fine. Misdiagnosis: SIGCHLD-on-wait-exit (defer did not help).
+  - Root cause: `clone_vspace` COW prep left **child PTE writable** while parent
+    was RO → child mutated shared `.data`/`.bss` without fault. Fix in core:
+    both sides map COW pages RO. Do not paper over with compat debug/defer.
+  - Checklist: §0 + `protocols/WAIT_AND_SIGCHLD.md` §4; core COW contract.
+
+- 2026-07-30: **execve must zero rtld_fini register (x86 rdx / aarch64 x0):**
+  - Symptom (x86 ash→`execve` busybox): `#PF` with `RIP=CR2=<old envp>` (e.g.
+    `0xcdca70`), error `e=0x14` (user insn fetch). `AFTER_LS` still prints.
+  - Cause: Path A `sysret` restores syscall arg regs; glibc `_start` does
+    `mov %rdx,%r9` (rtld_fini) / aarch64 uses `x0`. Leaving pre-exec envp/filename
+    there → later call into unmapped VA. aarch64 already gets `x0=0` via
+    `set_user_return`; x86 needs explicit `syscall_ctx->rdx = 0` after it.
+  - Checklist: §0 + `SYSCALL_USER_RETURN_AND_EXECVE.md` §5.1.
