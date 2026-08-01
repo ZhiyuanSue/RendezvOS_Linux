@@ -67,11 +67,15 @@ byte 8192 + fd×ent_size linux_fd_entry_t[fd]
 typedef struct linux_fd_entry {
     linux_fd_kind_t kind;       /* NONE, CONSOLE_*, VFS, PIPE */
     u32 vfs_handle;
+    u32 open_flags;             /* F_GETFL status/access (no O_CLOEXEC) */
+    u32 fd_flags;               /* FD_CLOEXEC for F_GETFD/F_SETFD */
     bool is_dir;
     bool pipe_read;
     char vfs_abs_path[LINUX_VFS_PATH_MAX];  /* openat 时的 abs path；目录 fd 的 dirfd base */
 } linux_fd_entry_t;
 ```
+
+`fcntl`：`linux_layer/fs/sys_fcntl.c`（常量 `include/linux_compat/fs/linux_fcntl.h`；`__NR_fcntl` = 72 x86_64 / 25 aarch64）支持 `F_GETFD`/`F_SETFD`/`F_GETFL`/`F_SETFL`/`F_DUPFD`/`F_DUPFD_CLOEXEC`。`dup`/`dup2` 清除新 fd 的 `FD_CLOEXEC`；`dup3`/`openat`/`pipe2` 可设 `O_CLOEXEC`。`poll`/`ppoll`：`linux_layer/misc/sys_poll.c` + `linux_poll.h`。
 
 - 初始容量 **`LINUX_FS_FD_INIT_CAP` = 128**；`linux_fd_alloc` 不足时 **+64** 扩容（`page_slice_set_size` + 新页 insert）。
 - **`LINUX_VFS_PATH_MAX`** = **`VFS_PATH_MAX`** (256)。

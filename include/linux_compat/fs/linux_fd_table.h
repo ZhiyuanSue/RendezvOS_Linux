@@ -31,6 +31,10 @@ typedef enum linux_fd_kind {
 typedef struct linux_fd_entry {
         linux_fd_kind_t kind;
         u32 vfs_handle;
+        /* File status/access flags for F_GETFL (not FD_CLOEXEC). */
+        u32 open_flags;
+        /* Descriptor flags: LINUX_FD_CLOEXEC (see linux_fcntl.h). */
+        u32 fd_flags;
         bool is_dir;
         bool pipe_read;
         char vfs_abs_path[LINUX_VFS_PATH_MAX];
@@ -63,7 +67,11 @@ i64 linux_vfs_resolve_path(Tcb_Base *task, i32 dirfd, const char *path,
 
 i32 linux_fd_alloc(Tcb_Base *task, const linux_fd_entry_t *ent);
 i32 linux_fd_lowest_free(Tcb_Base *task);
+/* Lowest free fd >= minfd (grows table if needed); -1 on failure. */
+i32 linux_fd_lowest_free_from(Tcb_Base *task, i32 minfd);
 linux_fd_entry_t *linux_fd_get(Tcb_Base *task, i32 fd);
+/* Persist a modified entry previously loaded via linux_fd_get / entry load. */
+error_t linux_fd_store(Tcb_Base *task, i32 fd, const linux_fd_entry_t *ent);
 i64 linux_fd_close(Tcb_Base *task, i32 fd);
 i64 linux_fd_dup2(Tcb_Base *task, i32 oldfd, i32 newfd);
 

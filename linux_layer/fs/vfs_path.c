@@ -4,6 +4,11 @@
  * Stack discipline: core kstack is 2 pages (8 KiB).  Collapse keeps only
  * (offset,len) metadata pointing into caller scratch — no names[][] pool.
  * Results go to caller-provided @out; one 256B scratch per normalize frame.
+ *
+ * x86-64: leaf locals must not live in the SysV red zone — kernel IRQ/NMI
+ * push below RSP and clobber it (seen as wild comp_off → #PF in collapse).
+ * Core x86_64 CFLAGS include -mno-red-zone (config_x86_64.json); keep a
+ * noinline touch so arrays stay framed even if a TU is built without it.
  */
 
 #include <linux_compat/fs/vfs_path.h>
@@ -18,6 +23,12 @@ static bool vfs_path_is_root_norm(const char *norm)
         return norm && norm[0] == '/' && norm[1] == '\0';
 }
 
+/* Escape leaf / red-zone placement of collapse temporaries (x86-64). */
+static void __attribute__((noinline)) vfs_path_stack_anchor(void *p)
+{
+        (void)p;
+}
+
 static void vfs_path_collapse(const char *raw, char *out, u64 out_cap)
 {
         u16 comp_off[VFS_PATH_MAX_COMPONENTS];
@@ -28,6 +39,8 @@ static void vfs_path_collapse(const char *raw, char *out, u64 out_cap)
         if (!raw || !out || out_cap == 0) {
                 return;
         }
+
+        vfs_path_stack_anchor(comp_off);
 
         src = raw;
         if (src[0] == '/') {

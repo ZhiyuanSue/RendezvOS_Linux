@@ -1,6 +1,6 @@
 # Initramfs 方案（Phase 4 bootstrap）
 
-> **Status**: 方案定稿（2026-06-13）  
+> **Status**: 方案定稿（2026-06-13）；落地后演进见 [`BOOT_PATH_EVOLUTION.md`](BOOT_PATH_EVOLUTION.md)  
 > **Index**: [`PROGRESS.md`](PROGRESS.md) · [`VFS_SERVER_IPC.md`](protocols/VFS_SERVER_IPC.md)  
 > **Audience**: maintainer + AI 实施 compat/server 前必读
 

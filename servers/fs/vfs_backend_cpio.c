@@ -5,6 +5,7 @@
 #include "vfs_page_cache.h"
 
 #include <common/string.h>
+#include <linux_compat/debug_trace.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/initcall.h>
 #include <linux_compat/ipc/rpc.h>
@@ -85,15 +86,43 @@ static i64 vfs_backend_cpio_readlink(vfs_backend_req_t *req)
 
 static i64 vfs_backend_cpio_read(vfs_backend_req_t *req)
 {
+        cpio_rofs_stat_t st;
+        i64 ret;
+
         if (!req || !req->ino || !req->buf) {
                 return -LINUX_EINVAL;
         }
         if (req->ino->is_dir) {
                 return -LINUX_EISDIR;
         }
+        if (req->offset >= req->ino->size) {
+                return 0;
+        }
 
-        return vfs_page_cache_read_inode(req->ino, req->offset, req->buf,
-                                         req->len);
+        /* Direct blob copy; page_slice cache fill under nested IPC hung bring-up. */
+        st.mode = req->ino->mode;
+        st.size = req->ino->size;
+        st.is_dir = req->ino->is_dir;
+        st.is_symlink = req->ino->is_symlink;
+        st.nlink = req->ino->nlink;
+        st.data = (const u8 *)req->ino->storage;
+
+#if LINUX_COMPAT_TRACE_VFS_IO
+        pr_info("[cpio] read path=%s off=%llu len=%llu\n",
+                req->ino->path,
+                (unsigned long long)req->offset,
+                (unsigned long long)req->len);
+#endif
+
+        ret = cpio_rofs_read(&st, req->offset, req->buf, req->len);
+        if (ret < 0) {
+                return -LINUX_EINVAL;
+        }
+
+#if LINUX_COMPAT_TRACE_VFS_IO
+        pr_info("[cpio] read done ret=%ld\n", (long)ret);
+#endif
+        return ret;
 }
 
 static i64 vfs_backend_cpio_write(vfs_backend_req_t *req)

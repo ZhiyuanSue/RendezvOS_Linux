@@ -132,7 +132,7 @@ def build_busybox_for_rootfs(
     )
     # build_busybox.sh caches under .cache/busybox-$ARCH and skips compile when
     # the stamp matches (survives make clean / config). FORCE_BUSYBOX=1 rebuilds.
-    print(f"INFO: ensuring busybox for {arch} → rootfs/bin/ ...")
+    print(f"INFO: ensuring busybox for {arch} → rootfs/bin/ (+ /init symlink) ...")
     status = os.system(f'{env} bash "{bb_script}"')
     if status != 0:
         print("ERROR: build_busybox.sh failed")

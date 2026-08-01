@@ -61,6 +61,9 @@ typedef struct clean_exit_notify_job {
 static struct list_entry clean_exit_notify_jobs;
 static bool clean_exit_notify_jobs_ready;
 
+static void clean_exit_notify_fallback_pending(pid_t ppid, pid_t child_pid,
+                                               i32 exit_code);
+
 static void clean_exit_notify_jobs_ensure(void)
 {
         if (clean_exit_notify_jobs_ready)
@@ -107,8 +110,16 @@ static void *clean_exit_notify_thread(void *arg)
         Thread_Base *self = get_cpu_current_thread();
 
         if (job) {
-                (void)linux_proc_post_exit_notify(
-                        job->ppid, job->child_pid, job->exit_code);
+                /*
+                 * Must not drop EXIT_NOTIFY: parent wait4 would hang on a
+                 * zombie. If blocking deliver fails after retries, fall back
+                 * to pending_exits + poke (same as spawn/alloc failure).
+                 */
+                if (!linux_proc_post_exit_notify(
+                            job->ppid, job->child_pid, job->exit_code)) {
+                        clean_exit_notify_fallback_pending(
+                                job->ppid, job->child_pid, job->exit_code);
+                }
                 job->finished = true;
         }
         if (self) {
@@ -256,9 +267,34 @@ static void clean_handle_thread_reap(const kmsg_t *km)
                 return;
         }
 
+        /*
+         * Exitor sets zombie only after THREAD_REAP send_msg returns. Listen
+         * runs the handler on the same thread that completed recv — so the
+         * exitor may already be thread_status_ready on another CPU (or this
+         * one) but not yet scheduled to store zombie. Busy-waiting solely on
+         * zombie then livelocks the single clean_listen (seen as hang right
+         * after "[PROC] sys_exit: clear_tid write failed", which is only a
+         * warn before send). Once IPC is done (not block_on_*), promote a
+         * ready exitor to zombie here so delete_thread can proceed.
+         */
         if (target->flags & THREAD_FLAG_EXIT_REQUESTED) {
-                while (thread_get_status(target) != thread_status_zombie)
+                for (;;) {
+                        u64 st = thread_get_status(target);
+
+                        if (st == thread_status_zombie) {
+                                break;
+                        }
+                        if (st != thread_status_block_on_send
+                            && st != thread_status_block_on_receive) {
+                                if (st == thread_status_ready) {
+                                        (void)thread_set_status(
+                                                target, thread_status_zombie);
+                                        break;
+                                }
+                                /* running on another CPU — yield */
+                        }
                         schedule(percpu(core_tm));
+                }
         }
 
         if (thread_get_status(target) != thread_status_zombie) {

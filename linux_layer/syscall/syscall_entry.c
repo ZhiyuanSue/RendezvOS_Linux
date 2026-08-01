@@ -206,6 +206,27 @@ void syscall(struct trap_frame *syscall_ctx)
                                (i32)syscall_ctx->ARCH_SYSCALL_ARG_2,
                                (i32)syscall_ctx->ARCH_SYSCALL_ARG_3);
                 break;
+        /* __NR_fcntl: 72 (x86_64), 25 (aarch64) — via arch syscall_ids.h */
+        case __NR_fcntl:
+                ret = sys_fcntl((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                (i32)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_3);
+                break;
+#if defined(_X86_64_)
+        /* __NR_poll = 7 on x86_64; aarch64 uses ppoll only */
+        case __NR_poll:
+                ret = sys_poll((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                               (u32)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                               (i32)syscall_ctx->ARCH_SYSCALL_ARG_3);
+                break;
+#endif
+        case __NR_ppoll:
+                ret = sys_ppoll((u64)syscall_ctx->ARCH_SYSCALL_ARG_1,
+                                (u32)syscall_ctx->ARCH_SYSCALL_ARG_2,
+                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_3,
+                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_4,
+                                (u64)syscall_ctx->ARCH_SYSCALL_ARG_5);
+                break;
         case __NR_fstat:
                 ret = sys_fstat((i32)syscall_ctx->ARCH_SYSCALL_ARG_1,
                                 (u64)syscall_ctx->ARCH_SYSCALL_ARG_2);

@@ -1,39 +1,111 @@
 # Busybox 启动 — 临时妥协与待修项
 
-> **Status**: demo 已通；妥协项分批回收中（更新 2026-07-28）  
-> **目标**: initramfs 内 static busybox 能跑 `ls` / shell；再迁到脚本编排测例  
+> **Status**: 正规 boot 路径进行中（更新 2026-08-01）  
+> **目标**: `/init`→busybox；用户态 `run_all.sh`；回收 Path B/incbin 妥协  
+> **演进叙事（从前到后）**: [`BOOT_PATH_EVOLUTION.md`](BOOT_PATH_EVOLUTION.md)  
 > **相关**: [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) · [`VFS_DYNAMIC_STORAGE.md`](VFS_DYNAMIC_STORAGE.md) · [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md) · [`USER_TESTS.md`](USER_TESTS.md) · [`SYSCALLS.md`](SYSCALLS.md)
 
 本文记录 **为尽快跑通 busybox demo 而做的妥协**。每一项都应在 demo 稳定后回收或正规化。
 
 ---
 
-## 剩余开放项一览（2026-07-28）
-
-对照「快速修通 busybox」路径，**仍未正规化** 的项如下。已回收项见各节「✅」。
+## 剩余开放项一览（2026-07-31）
 
 | 优先级 | 项 | 现状 | 应改为 / 备注 |
 |--------|-----|------|----------------|
-| **P0** | demo argv | 🔧 Path B：`sh -c '/bin/ls /bin; echo SHELL_OK'`（须绝对路径；空 envp 无 PATH） | 再 → `PATH=`/`run_all.sh`；fork 前注意物理内存（默认 QEMU `MEM_SIZE=512M`） |
-| **P0** | Demo spawn 非 execve | `gen_task_from_elf` + Path B bootstrap | 统一 **execve**（较大，见下「run_all」） |
-| **P0** | fake return + append hook 栈 | core + `linux_thread_append_init` | 去掉二次 bootstrap |
+| **P0** | boot argv | 🔧 Path B bootstrap：`sh /tests/run_all.sh` | **内核 cmdline** 覆盖 |
+| **P0** | `/init` | ✅ symlink → `bin/busybox`（`build_busybox.sh`） | — |
+| **P0** | 测例编排 | ✅ 默认 **pack 生成的 `run_all.sh`**（显式 `run_one`；非内核 for 循环，也非 ash `while read`） | 失败策略 / SMP 并行另议 |
+| **P0** | **IPC reply 会合楔死** | ✅ 子项 **2–4**；`run_all` 已跑完（2026-08-01：41 pass / 11 fail，未再卡 FS） | 余量见子项 **5**（`#PF` 139） |
+| **P0** | VFS client RPC | ✅ uninterruptible + ops gate + post-send 不弃 recv | — |
+| **P0** | fake return + append hook 栈 | busybox PID1 仍 Path B（glibc auxv bootstrap） | cmdline 后可再谈统一协议 |
 | **P1** | 用户 pathname 逐字节读 | `linux_mm_load_cstring_from_user` | `strnlen_user` / 按页探测 bulk |
 | **P1** | auxv 长尾 | 缺 `AT_HWCAP` / `AT_EXECFN`；`AT_RANDOM` 占位 | 真随机 + 完整 auxv |
-| **P1** | syscall stub 深度 | `getrandom`/`prlimit64`/`ioctl`/`rseq` 等够 demo | 按 applet 需求加深（非阻塞 `ls`） |
-| **P2** | busybox 构建妥协 | `CONFIG_STATIC`、applet 子集、`AUTO_FETCH` | 可选 `BUSYBOX_FULL`；工具链文档化 |
-| **P3** | harness 仍内核编排 | `user_test_runner` + manifest + `test_cookie` | **`busybox sh /tests/run_all.sh`**（阶段 A→B） |
-| **P3** | 无 `/init`、设备节点 | 无 PID1；`/dev/null` 等未做 | 真 initramfs 形态 |
-| **P3** | `_num_app` / embedded `program_map` | 与 cpio 路径并存 | 测例/exec **全走 cpio** 后删除 incbin app 表 |
-| **P3** | 共享头文件抽象 | server 与 compat 部分头交叉 | 抽公共抽象层（结构整理，非功能阻塞） |
-| — | **VFS 定长 BSS / 栈炸弹** | — | ✅ **已回收** → [`VFS_DYNAMIC_STORAGE.md`](VFS_DYNAMIC_STORAGE.md) |
+| **P1** | syscall stub 深度 | poll：CONSOLE_IN=EOF/`POLLHUP`；有限等走 sleep_port；编排不再依赖 `while read` | 按 FAIL 加深；UART RX 真唤醒 |
+| **P1** | clone/fork/exit `#PF` @ `0x57f485` | status=139 主簇（x86 `run_all` 约 9/11 fail） | 另案；见 [`BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md`](BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md) |
+| **P1** | aarch64 相对 incbin harness **体感变慢** | busybox/`run_all` 路径；原因未定性 | 先观察；工作区盘点见 [`PROGRESS.md`](PROGRESS.md) §8.4 |
+| **P2** | busybox 构建妥协 | `CONFIG_STATIC`、applet 子集 | 可选 `BUSYBOX_FULL` |
+| **P3** | `_num_app` / embedded | ✅ **exec 路径已去掉** embedded fallback；stub `link_app.o` 仍链进镜像 | 可删 stub 目标若链接允许 |
+| **P3** | `/dev/*` | 未做 | 真 initramfs 形态 |
+| — | **VFS 定长 BSS / 栈炸弹** | — | ✅ |
+| — | **x86-64 red zone** | — | ✅ `-mno-red-zone` |
 
-**建议下一步顺序**
+**建议下一步**
 
-1. Demo / harness 改走 **execve**（收 P0 Path B）  
-2. 阶段 A：`run_all.sh` + 单次 `busybox sh`（收 P3 编排）  
-3. 正规化 pathname 拷贝 + auxv 长尾（P1）  
-4. 全量迁 cpio 后清 `_num_app` / `program_map`  
-5. VFS 扩展性（readdir O(n²)、tombstone、ramfs body）— 见动态存储文档「建议后续」，**不阻塞** busybox
+1. ✅ IPC 楔死：`run_all` 已完整跑完（不再卡在 `oscomp_munmap`/FS）  
+2. **子项 5**：`#PF @ 0x57f485`（fork/clone/wait/exit/pipe/yield…）— 优先于 mount stub  
+3. cmdline → argv；pathname/auxv；`MEM_SIZE` 日志里曾是 256M（建议 ≥512M）
+
+---
+
+## P0 — IPC request–reply 偶发卡死（busybox `run_all`，2026-08-01）
+
+> 与 Path B 共存的 **协议/生命周期缺口**；调度器空转是表象。权威协议：[`protocols/IPC_RPC_FRAMEWORK.md`](protocols/IPC_RPC_FRAMEWORK.md) §6–§8。  
+> **推进方式**：下面子项 **一个一个** 对齐再改，不打包一次改完。
+
+### 现象（已用三件套确认）
+
+| 观察 | 含义 |
+|------|------|
+| 串口停在 `=== /tests/oscomp_munmap ===` → INFO 后无 open 结果 | 卡在该测例的 FS 路径（常为 `open`→VFS RPC） |
+| DUMP 后期几乎只有 `schedule` / `round_robin` / `idle` / `ebr_*` | 干活线程在 IPC `block_on_*`；CPU 上 idle 合法反复 `schedule` |
+| 偶发、前面 fork/clone/exit 139 多时更易出现 | 与「进程 teardown ↔ reply `send_msg`」时序竞态一致 |
+| VFS 已 `ipc_rpc_call_va_uninterruptible` | 堵住「pending SIGCHLD → `-EINTR` 弃 recv」；**仍不够** |
+
+调度侧曾修「current 查找时仍是 `running` → RR 空转」；修好后 DUMP **仍可**满是 schedule——那是 **全员堵在协议上** 的正常表象，不是又回到 RR while 死循环。
+
+### 协议楔形（一句话）
+
+单线程 VFS listen：`handler` 后 **`send_msg(reply)` 阻塞会合**。Client 侧 reply port 若在会合完成前被 **unregister / 进程退出**，而 server 仍握着 lookup ref 卡在 `block_on_send`，则 listen **永不再 `recv`** → 后续所有 FS RPC 全堵。
+
+### 待推进子项（按序）
+
+| # | 子项 | 状态 | 说明 |
+|---|------|------|------|
+| **1** | VFS / TASK_REAP 等走 uninterruptible | ✅ | 防 commit 前误用 interruptible 路径 |
+| **2** | **unregister 时唤醒 port 等待者** | ✅ 2026-08-01 | per-port **ops gate**（见下） |
+| **3** | interruptible RPC：`send` 成功后禁止弃 recv | ✅ 2026-08-01 | `ipc_rpc_call_va_flags`：EINTR 仅 commit 前；之后 drain interrupt / 重试 recv |
+| **4** | reply / EXIT_NOTIFY 勿静默丢消息 | ✅ 2026-08-01 | `ipc_rpc_send_reply` 分配失败重试；EXIT_NOTIFY OOM 重试 + 失败走 pending+poke；`PORT_CLOSED` 视为已处理 |
+| **5** | clone/fork `#PF` 0x57f485 | ⏳ 主剩余 | `run_all` 11 fail 中约 9 个 status=139，同一 `pc=far=0x57f485`（用户取指、不在测例 `.text`）；见 [`BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md`](BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md) |
+
+### 子项 2 说明：为什么说「unregister 时就要 clean」，会不会「每次减 ref 都 clean」？
+
+**不是**「无论何时、每次 `ref_put` 都调用 `port_clean_thread_queue`」。  
+**是**：「**unregister（从全局名表摘掉 = 协议上关闭该 port）时** 就必须 drain 等待队列」，**不要等到** refcount 归零才 clean。
+
+**修复前**的楔形（为何不能绑 `ref_put→0`）：
+
+```text
+unregister_port  →  摘表 + ref_put(表档)     ← 旧：这里不 clean
+ref_put → 0      →  delete → port_clean       ← 旧：只在最后 free
+```
+
+`ipc_rpc_send_reply` 在整个 `send_msg` 期间 **lookup 持 ref**。若此时 client `ipc_rpc_unregister_port_by_pid`：表 ref 放掉但 server 仍握 lookup → **refcount > 0** → **不 free** → **不 clean** → server `block_on_send` 永醒不来 → listen 楔死。
+
+| 问题 | 答案 |
+|------|------|
+| clean 绑在什么事件上？ | **unregister / close（语义关闭）一次**，不是每个 `ref_put` |
+| 为什么不能等 refcount==0？ | 归零只表示「没有指针还握着结构体」；**关闭名表项**时等待者就该醒，哪怕还有 in-flight lookup |
+| 多次 `ref_put` 会多次 clean 吗？ | **不会**——clean 在 `unregister_port`（每注册生命周期至多一次）；`delete` 再 drain 一次只是幂等空转 |
+
+**已落地（ops gate，命名以源码为准）**：
+
+```text
+unregister_port
+  → name_index_unregister（on_unregister: REGISTERED→CLOSING）
+  → 等 ops_count==0（阻塞路径在 schedule 前 port_ops_end）
+  → port_clean_thread_queue（醒等待者 + PORT_CLOSED / kmsg）
+  → CLOSING→CLOSED
+  → ref_put(表档)
+```
+
+send/recv/try 包在 `port_ops_begin/end`；醒来认 `THREAD_FLAG_IPC_PORT_CLOSED`（send 另 drop orphan）。`ipc_rpc_send_reply` 认 `-E_REND_PORT_CLOSED`。`delete` 仍防御性 drain。
+
+### 诊断（卡在 FS 测例时）
+
+1. `LOG=true DUMP=true`；忽略 Ctrl-A+X 过晚的时钟尾噪声  
+2. 看卡死前是否有 `#PF` / 进程退出与 FS RPC 交错  
+3. 卡死后采样：无 `vfs_*` / `send_msg` 进度、只有 schedule → 优先查 reply 会合 / teardown，而不是再改 RR
 
 ---
 
@@ -403,6 +475,19 @@ done < /tests/manifest
 
 | 日期 | 变更 |
 |------|------|
+| 2026-08-01 | **工作区盘点**：[`PROGRESS.md`](PROGRESS.md) §8（core ops gate / compat IPC / boot·FS stub 切分）；aarch64 相对 incbin 体感变慢记入开放项 |
+| 2026-08-01 | **验证**：busybox `run_all` 跑完 `pass=41 fail=11`，IPC 楔死不再出现；失败簇为 `#PF 0x57f485` + mount -19 + ch2b_exit 255 |
+| 2026-08-01 | **子项 3–4 + EXIT_NOTIFY**：RPC post-send 不弃 recv；reply/EXIT_NOTIFY 分配重试；notify 失败 fallback pending+poke；`PORT_CLOSED` 不当事故丢消息 |
+| 2026-08-01 | **子项 2 审阅对齐**：life 仅 REGISTERED 可 begin；`ops_count` 命名；doc 去掉「今天不 clean」过时叙述；手写并发注释不动 |
+| 2026-08-01 | **子项 2（ops gate）**：`port_ops_begin/end` + unregister `CLOSING`/等 `ops_count`/`port_clean`/`CLOSED`；阻塞 `end` 在 `schedule` 前；醒来 `PORT_CLOSED`+drop orphan；取代「到处查 registered / 自 drain」丑方案 |
+| 2026-08-01 | **IPC reply 会合楔死**：记入 P0 开放项与专节；VFS uninterruptible 不足；澄清 unregister-time `port_clean` ≠ 每次 `ref_put` |
+| 2026-07-31 | **run_all 编排模型**：pack 时展开 `run_all.sh`（显式 `run_one`），禁止 ash `while read` manifest；CONSOLE_IN=EOF 设备（poll→POLLHUP）；cpio READ 直读 blob（绕开嵌套 IPC 下 page_slice 填充挂死） |
+| 2026-07-31 | **poll IPC 模型**：禁止 `timeout<0` 直接 return 0（ash `poll(…,-1)` 空转；DUMP 见 RAX=7/RDX=-1）。有限等 → `linux_time_sleep_until_count`；CONSOLE_IN 无限等 → `POLLHUP`（无 UART RX 生产者前）；`ppoll(NULL tsp)`=无限 |
+| 2026-07-31 | **poll 空转**：CONSOLE_IN 上 always-POLLIN + `read`→0 → ash spin（`run_all start` 后挂，RIP 在 syscall/schedule）；CONSOLE_IN 不再报 POLLIN |
+| 2026-07-31 | **poll/ppoll stub**：`run_all.sh` `while read` 曾 ENOSYS id=7（x86 `__NR_poll`）→ 空跑完；乐观 always-ready |
+| 2026-07-31 | **正规 boot**：`/init`→`bin/busybox`；argv=`sh /tests/run_all.sh`；去掉 freestanding init 与 exec embedded `program_map` fallback |
+| 2026-07-31 | **阶段 B**（已回收）：曾用 freestanding `/init` + execve busybox；现改回 symlink 模型 |
+| 2026-07-31 | **阶段 A**：`linux_boot` Path B `/bin/busybox` + `boot_smoke.sh`；跳过内核 manifest 套件 |
 | 2026-07-30 | ash `AFTER_LS` hang：根因 core COW 子 PTE 可写（父子共享页应两侧 RO）；兼容层 Channel R/S + RX stub 保留 |
 | 2026-07-29 | ash `SHELL_OK` 前：SIGCHLD 曾 EINTR wait4；现 SIGCHLD 不打断 wait；禁止 RW 栈 EXEC trampoline |
 | 2026-07-28 | ash smoke：裸 `ls`→not found（空 envp）；改 `/bin/ls`；默认 `MEM_SIZE` 256→512M（仅 QEMU `-m`，无需 reconfig） |

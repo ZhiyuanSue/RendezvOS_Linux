@@ -159,7 +159,7 @@ install_busybox_applets() {
 			done
 		else
 			for applet in ls sh ash cat echo pwd true false test mkdir mount umount \
-				readlink stat ln cp mv rm clear uname env sleep; do
+				readlink stat ln cp mv rm clear uname env sleep sed; do
 				ln -sf busybox "$applet"
 			done
 		fi
@@ -167,6 +167,10 @@ install_busybox_applets() {
 
 	echo "Installed busybox to $ROOTFS_DIR/bin/"
 	echo "  $(find "$ROOTFS_DIR/bin" -maxdepth 1 | wc -l | tr -d ' ') entries (busybox + applets)"
+
+	# Stage-B-regular: /init is busybox (Linux initramfs style), not a stub ELF.
+	ln -sfn bin/busybox "$ROOTFS_DIR/init"
+	echo "Installed $ROOTFS_DIR/init -> bin/busybox"
 }
 
 if ! command -v "${CC}" >/dev/null 2>&1; then

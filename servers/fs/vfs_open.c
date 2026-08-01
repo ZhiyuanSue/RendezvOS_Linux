@@ -13,10 +13,12 @@
 
 #include <common/string.h>
 #include <common/mm.h>
+#include <linux_compat/debug_trace.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/fs/vfs_protocol.h>
 #include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/proc_registry.h>
+#include <modules/log/log.h>
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/mm/vmm.h>
 #include <rendezvos/smp/percpu.h>
@@ -254,6 +256,15 @@ i64 vfs_read_handle(pid_t pid, u32 handle, u64 user_buf, u64 count)
                 return -LINUX_EBADF;
         }
 
+#if LINUX_COMPAT_TRACE_VFS_IO
+        pr_info("[vfs] read_handle enter pid=%d h=%u path=%s off=%llu cnt=%llu\n",
+                (int)pid,
+                handle,
+                file->ino.path,
+                (unsigned long long)file->offset,
+                (unsigned long long)count);
+#endif
+
         if (file->ino.is_dir) {
                 return -LINUX_EISDIR;
         }
@@ -274,7 +285,15 @@ i64 vfs_read_handle(pid_t pid, u32 handle, u64 user_buf, u64 count)
                         chunk_len = VFS_READ_CHUNK;
                 }
 
+#if LINUX_COMPAT_TRACE_VFS_IO
+                pr_info("[vfs] read_handle ->root_read off=%llu len=%llu\n",
+                        (unsigned long long)file->offset,
+                        (unsigned long long)chunk_len);
+#endif
                 n = vfs_root_read(&file->ino, file->offset, chunk, chunk_len);
+#if LINUX_COMPAT_TRACE_VFS_IO
+                pr_info("[vfs] read_handle <-root_read n=%ld\n", (long)n);
+#endif
                 if (n < 0) {
                         return n;
                 }
@@ -282,9 +301,15 @@ i64 vfs_read_handle(pid_t pid, u32 handle, u64 user_buf, u64 count)
                         break;
                 }
 
+#if LINUX_COMPAT_TRACE_VFS_IO
+                pr_info("[vfs] read_handle store_to_user n=%ld\n", (long)n);
+#endif
                 if (linux_mm_store_to_user(
                             task->vs, user_buf + total, chunk, (size_t)n)
                     != REND_SUCCESS) {
+#if LINUX_COMPAT_TRACE_VFS_IO
+                        pr_info("[vfs] read_handle store_to_user FAIL\n");
+#endif
                         return -LINUX_EFAULT;
                 }
 
@@ -297,6 +322,10 @@ i64 vfs_read_handle(pid_t pid, u32 handle, u64 user_buf, u64 count)
                 }
         }
 
+#if LINUX_COMPAT_TRACE_VFS_IO
+        pr_info("[vfs] read_handle done total=%llu\n",
+                (unsigned long long)total);
+#endif
         return (i64)total;
 }
 

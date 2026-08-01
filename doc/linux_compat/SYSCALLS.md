@@ -197,7 +197,7 @@ After Phase 2 proc/signal/wait work, record **paired** runs here:
 
 | Syscall 组 | 示例 | 测例 stdout FAIL |
 |------------|------|------------------|
-| fd / IO | open, openat, read, close, dup, dup2 | #10–#11, #23, #25–#26, #37, #50–#51 |
+| fd / IO | open, openat, read, close, dup, dup2, **fcntl**, **poll/ppoll** | #10–#11, #23, #25–#26, #37, #50–#51 |
 | path | mkdir, chdir, unlink, mount | #15, #28, #45, #48 |
 | stat | fstat, getdents | #14, #25 |
 | 文件 mmap | MAP_PRIVATE file | #13, #40（依赖 open） |

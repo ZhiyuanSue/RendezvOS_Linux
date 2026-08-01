@@ -13,17 +13,17 @@
 | Area | x86_64 | aarch64 | Notes |
 |------|--------|---------|-------|
 | Syscall wired | ✅ | ✅ | `syscall_entry.c` → `sys_execve` |
-| Phase 3a embedded ELF | ✅ | ✅ | Hardcoded `program_map` (5 names) — **待清**（迁全 cpio 后） |
+| Phase 3a embedded ELF | ❌ | ❌ | **Removed** — exec load is cpio / VFS only |
 | argv on user stack | ✅ | ✅ | `build_initial_stack` / Path B bootstrap |
 | aarch64 x0/x1 at exec | ✅ | ✅ | **必须为 0 / 勿塞 argc**：glibc `_start` 把 x0 当 `rtld_fini`；argc/argv 只在栈上 |
 | envp | ❌ | ❌ | `user_envp` ignored（syscall 路径） |
-| auxv（syscall execve） | ❌ | ❌ | 正规化不足 |
-| auxv（busybox Path B spawn） | ⚠️ | ⚠️ | `linux_exec_bootstrap_elf_spawn_stack`；缺 HWCAP/EXECFN/真随机 |
+| auxv（syscall execve） | ⚠️ | ⚠️ | 与 Path B 共用 builder；缺 HWCAP/EXECFN/真随机 |
+| auxv（busybox Path B spawn） | ⚠️ | ⚠️ | `/init`→busybox PID1 |
 | de_thread before exec | ❌ | ❌ | Multi-thread exec unsafe |
 | Full post-exec reset | ⚠️ | ⚠️ | Only brk/mmap_hint/pending; not dispositions/altstack |
-| FS path (open + load) | ✅ | ✅ | CPIO slice + initramfs execve `#8` stdout PASS（2026-07-09） |
+| FS path (open + load) | ✅ | ✅ | CPIO slice + initramfs |
 | shebang / PT_INTERP | ❌ | ❌ | Out of scope (no dynamic linking) |
-| Demo spawn = execve | ❌ | ❌ | 仍 `gen_task_from_elf` + Path B（见 deferrals） |
+| Boot orchestration | ✅ | ✅ | Path B `/init` + `run_all.sh`（非内核 for-manifest） |
 
 ---
 
@@ -78,8 +78,8 @@
 
 ## Next steps
 
-1. **Busybox / harness**: demo 与测例 spawn 改走 execve；阶段 A `run_all.sh`（[`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md)）  
-2. envp + 正规化 auxv（含 Path B 已有项的合并）  
+1. ✅ Boot: `/init`→busybox + `run_all.sh`；exec 去掉 embedded fallback  
+2. envp + 正规化 auxv  
 3. de_thread + complete signal/MM reset  
-4. 全量迁 cpio 后删除 `_num_app` / `program_map`（`linux_exec_image.c`）  
+4. 可选：去掉 stub `link_app.o` 链接依赖  
 5. Verification gate entry in [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md)

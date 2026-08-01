@@ -54,14 +54,22 @@ i64 vfs_ipc_request_response(u16 opcode, const char* fmt, ...)
                 return -LINUX_ENOSYS;
         }
 
+        /*
+         * Uninterruptible: VFS listen is a single-threaded blocking rendezvous.
+         * If the client returns -EINTR after send and abandons recv on
+         * vfs_cli_<pid>, the server wedges forever in send_msg(reply) and every
+         * later open/read hangs. Seen as: last [vfs-be] LOOKUP leave, then idle
+         * schedule (e.g. mid /tests/oscomp_munmap after SIGCHLD-heavy tests).
+         * Port teardown only unsticks when the client process exits.
+         */
         va_start(ap, fmt);
-        ret = ipc_rpc_call_va(vfs_port,
-                              client_port,
-                              opcode,
-                              fmt,
-                              KMSG_OP_VFS_RESP,
-                              VFS_KMSG_FMT_RESP,
-                              ap);
+        ret = ipc_rpc_call_va_uninterruptible(vfs_port,
+                                              client_port,
+                                              opcode,
+                                              fmt,
+                                              KMSG_OP_VFS_RESP,
+                                              VFS_KMSG_FMT_RESP,
+                                              ap);
         va_end(ap);
 
         ref_put(&vfs_port->refcount, free_message_port_ref);

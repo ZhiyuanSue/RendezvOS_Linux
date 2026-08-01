@@ -391,6 +391,15 @@ static i64 ipc_rpc_call_va_flags(Message_Port_t* server_port,
                 return -LINUX_EINVAL;
         }
 
+        /*
+         * Interruptible only before the request is committed. After send_msg
+         * succeeds, the server (often single-threaded) may already hold work
+         * and will block in send_msg(reply); abandoning recv wedges listen.
+         */
+        if (interruptible && linux_signal_has_deliverable_pending()) {
+                return -LINUX_EINTR;
+        }
+
         module = server_port->service_id;
         ipc_rpc_drain_recv_queue();
 
@@ -401,6 +410,8 @@ static i64 ipc_rpc_call_va_flags(Message_Port_t* server_port,
         }
 
         msg = create_message_with_msg(msg_data);
+        /* Drop creator ref; message holds its own (see create_message_with_msg). */
+        ref_put(&msg_data->refcount, free_msgdata_ref_default);
         if (!msg) {
                 return -LINUX_ENOMEM;
         }
@@ -413,43 +424,35 @@ static i64 ipc_rpc_call_va_flags(Message_Port_t* server_port,
 
         err = send_msg(server_port);
         if (err != REND_SUCCESS) {
+                /* Includes -E_REND_PORT_CLOSED if listen/reply port was closed. */
                 return -LINUX_EIO;
         }
 
-        /*
-         * After the request is handed to the server, abandoning recv leaves
-         * the server blocked forever on send_msg(reply). Internal completion
-         * RPCs (TASK_REAP_SYNC) must ignore pending SIGCHLD etc.
-         */
+        /* Committed: wait for reply or reply-port close. Never -EINTR here. */
         for (;;) {
-                if (interruptible && linux_signal_has_deliverable_pending()) {
-                        return -LINUX_EINTR;
-                }
-
                 err = recv_msg(reply_port);
-                if (err != REND_SUCCESS) {
+                if (err == -E_REND_PORT_CLOSED) {
                         ipc_rpc_drain_recv_queue();
-                        if (interruptible
-                            && linux_signal_has_deliverable_pending()) {
-                                return -LINUX_EINTR;
-                        }
                         return -LINUX_EIO;
+                }
+                if (err != REND_SUCCESS) {
+                        /*
+                         * Transient recv failure must not abandon the
+                         * rendezvous — retry. Drain stale delivers first.
+                         */
+                        ipc_rpc_drain_recv_queue();
+                        schedule(percpu(core_tm));
+                        continue;
                 }
 
                 msg = dequeue_recv_msg();
                 if (!msg) {
-                        if (interruptible
-                            && linux_signal_has_deliverable_pending()) {
-                                return -LINUX_EINTR;
-                        }
-                        return -LINUX_EIO;
+                        continue;
                 }
 
                 if (ipc_rpc_recv_is_interrupt(reply_port, msg)) {
+                        /* Signal wake only; reply still owed after commit. */
                         ref_put(&msg->ms_queue_node.refcount, free_message_ref);
-                        if (interruptible)
-                                return -LINUX_EINTR;
-                        /* Uninterruptible: discard wake and wait for reply. */
                         continue;
                 }
 
@@ -458,18 +461,14 @@ static i64 ipc_rpc_call_va_flags(Message_Port_t* server_port,
                         return -LINUX_EIO;
                 }
 
-                if (interruptible && linux_signal_has_deliverable_pending()) {
-                        ref_put(&msg->ms_queue_node.refcount, free_message_ref);
-                        return -LINUX_EINTR;
-                }
-
                 {
                         const kmsg_t* resp_kmsg = kmsg_from_msg(msg);
                         if (!resp_kmsg || resp_kmsg->hdr.module != module
                             || resp_kmsg->hdr.opcode != resp_opcode) {
+                                /* Stale/unexpected; keep waiting for reply. */
                                 ref_put(&msg->ms_queue_node.refcount,
                                         free_message_ref);
-                                return -LINUX_EIO;
+                                continue;
                         }
 
                         err = ipc_serial_decode(resp_kmsg->payload,
@@ -614,9 +613,15 @@ i64 ipc_rpc_call_named_uninterruptible(const char* server_port_name,
 
 /*
  * Blocking rendezvous reply. Live clients are on (or soon on) recv in
- * ipc_rpc_call*. Abandoned clients: reply-port teardown wakes block_on_send
- * (core port_clean_thread_queue). Do not use bare try_send on this path —
- * it races "server replies before client recv" (boot: vfs_backend_caller).
+ * ipc_rpc_call*. Abandoned clients: unregister_port → port_clean wakes
+ * block_on_send with THREAD_FLAG_IPC_PORT_CLOSED; send_msg returns
+ * -E_REND_PORT_CLOSED and drops the orphan send payload. Listen must treat
+ * that as success-of-abandon and continue (not wedge). Do not use bare
+ * try_send — races "server replies before client recv".
+ *
+ * Alloc/enqueue failures retry until the reply port disappears — giving up
+ * would leave the client blocked forever in recv. After enqueue+send_msg
+ * starts, do not retry (would duplicate the reply).
  */
 bool ipc_rpc_send_reply(u16 module, u16 resp_opcode, const char* resp_fmt,
                         const char* reply_port_name, i64 result)
@@ -631,34 +636,55 @@ bool ipc_rpc_send_reply(u16 module, u16 resp_opcode, const char* resp_fmt,
                 return false;
         }
 
-        reply_port = thread_lookup_port(reply_port_name);
-        if (!reply_port) {
-                return false;
-        }
+        for (;;) {
+                reply_port = thread_lookup_port(reply_port_name);
+                if (!reply_port) {
+                        /* Unregistered — peer gone; listen must continue. */
+                        return true;
+                }
 
-        resp_data = kmsg_create(module, resp_opcode, rfmt, result);
-        if (!resp_data) {
+                resp_data = kmsg_create(module, resp_opcode, rfmt, result);
+                if (!resp_data) {
+                        ref_put(&reply_port->refcount, free_message_port_ref);
+                        schedule(percpu(core_tm));
+                        continue;
+                }
+
+                resp_msg = create_message_with_msg(resp_data);
+                ref_put(&resp_data->refcount, resp_data->free_data);
+                if (!resp_msg) {
+                        ref_put(&reply_port->refcount, free_message_port_ref);
+                        schedule(percpu(core_tm));
+                        continue;
+                }
+
+                send_err = enqueue_msg_for_send(resp_msg);
+                if (send_err != REND_SUCCESS) {
+                        ref_put(&resp_msg->ms_queue_node.refcount,
+                                free_message_ref);
+                        ref_put(&reply_port->refcount, free_message_port_ref);
+                        schedule(percpu(core_tm));
+                        continue;
+                }
+
+                /*
+                 * Payload is on this thread's send slot — send once.
+                 * PORT_CLOSED: client tore down while we blocked; core dropped
+                 * the orphan — treat as handled so listen continues.
+                 */
+                send_err = send_msg(reply_port);
                 ref_put(&reply_port->refcount, free_message_port_ref);
+                if (send_err == REND_SUCCESS
+                    || send_err == -E_REND_PORT_CLOSED) {
+                        return true;
+                }
+                pr_error("[IPC-RPC] reply send failed port='%s' err=%d "
+                         "result=%ld (client may still be in recv)\n",
+                         reply_port_name,
+                         (int)send_err,
+                         result);
                 return false;
         }
-
-        resp_msg = create_message_with_msg(resp_data);
-        ref_put(&resp_data->refcount, resp_data->free_data);
-        if (!resp_msg) {
-                ref_put(&reply_port->refcount, free_message_port_ref);
-                return false;
-        }
-
-        send_err = enqueue_msg_for_send(resp_msg);
-        if (send_err != REND_SUCCESS) {
-                ref_put(&resp_msg->ms_queue_node.refcount, free_message_ref);
-                ref_put(&reply_port->refcount, free_message_port_ref);
-                return false;
-        }
-
-        send_err = send_msg(reply_port);
-        ref_put(&reply_port->refcount, free_message_port_ref);
-        return send_err == REND_SUCCESS;
 }
 
 void ipc_rpc_reply(const kmsg_t* km, const char* reply_port_name, u16 module,
@@ -682,7 +708,11 @@ void ipc_rpc_reply(const kmsg_t* km, const char* reply_port_name, u16 module,
 
         if (!ipc_rpc_send_reply(
                     module, resp_opcode, resp_fmt, reply_copy, result)) {
-                pr_error("[IPC-RPC] reply failed port='%s' result=%ld\n",
+                /*
+                 * Post-send failure only (pre-send retries until port gone).
+                 * Still return to server_loop so listen is not wedged.
+                 */
+                pr_error("[IPC-RPC] reply incomplete port='%s' result=%ld\n",
                          reply_copy,
                          result);
         }

@@ -6,6 +6,7 @@
 #   ARCH=x86_64 script/rootfs/build_cpio.sh
 #
 # Optional: run script/rootfs/build_busybox.sh first to populate rootfs/bin/.
+# Boot expects rootfs/init → bin/busybox (symlink).
 
 set -euo pipefail
 
@@ -17,6 +18,24 @@ OUT_CPIO="${OUT_CPIO:-$OUT_DIR/rootfs.cpio}"
 if [[ ! -d "$ROOTFS_DIR" ]]; then
 	echo "ERROR: rootfs directory missing: $ROOTFS_DIR" >&2
 	exit 1
+fi
+
+# Ensure /init → busybox (Path B PID1). Prefer existing symlink from build_busybox.
+if [[ ! -e "$ROOTFS_DIR/init" ]]; then
+	if [[ -x "$ROOTFS_DIR/bin/busybox" ]]; then
+		ln -sfn bin/busybox "$ROOTFS_DIR/init"
+		echo "Created $ROOTFS_DIR/init -> bin/busybox"
+	else
+		cat >&2 <<EOF
+ERROR: rootfs/init missing and rootfs/bin/busybox not found.
+
+Run:
+  make user ARCH=x86_64
+  # or: ARCH=… script/rootfs/build_busybox.sh
+
+EOF
+		exit 1
+	fi
 fi
 
 mkdir -p "$OUT_DIR"
@@ -48,5 +67,8 @@ echo "Contents (first 32 paths):"
 head -32 "$listing_file"
 if [[ "$path_count" -gt 32 ]]; then
 	echo "... (truncated, $path_count entries total)"
+fi
+if ! grep -E -q '^\./init$' "$listing_file"; then
+	echo "WARNING: packed cpio has no ./init" >&2
 fi
 rm -f "$listing_file"

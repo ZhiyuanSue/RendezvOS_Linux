@@ -4,6 +4,7 @@
  */
 
 #include <linux_compat/fs/linux_fd_table.h>
+#include <linux_compat/fs/linux_fcntl.h>
 #include <linux_compat/fs/fs_ipc.h>
 #include <linux_compat/fs/linux_pipe.h>
 #include <linux_compat/fs/vfs_protocol.h>
@@ -972,15 +973,49 @@ i32 linux_fd_alloc(Tcb_Base *task, const linux_fd_entry_t *ent_in)
 
 i32 linux_fd_lowest_free(Tcb_Base *task)
 {
+        return linux_fd_lowest_free_from(task, 0);
+}
+
+static i32 linux_fd_find_free_from(linux_fs_state_t *fs, i32 minfd)
+{
+        u32 cap;
+        u32 fd;
+        linux_fd_entry_t ent;
+
+        if (!fs || !fs->table || minfd < 0) {
+                return -1;
+        }
+
+        cap = linux_fs_fd_capacity(fs);
+        for (fd = (u32)minfd; fd < cap; fd++) {
+                if (linux_fs_entry_load(fs, (i32)fd, &ent) != REND_SUCCESS) {
+                        continue;
+                }
+                if (ent.kind == LINUX_FD_NONE) {
+                        return (i32)fd;
+                }
+        }
+        return -1;
+}
+
+i32 linux_fd_lowest_free_from(Tcb_Base *task, i32 minfd)
+{
         linux_fs_state_t *fs = linux_fs_state(task);
         i32 fd;
         error_t err;
 
-        if (!fs) {
+        if (!fs || minfd < 0) {
                 return -1;
         }
 
-        fd = linux_fd_find_free(fs);
+        if ((u32)minfd >= linux_fs_fd_capacity(fs)) {
+                err = linux_fs_grow_fd_cap(fs, (u32)minfd + 1u);
+                if (err != REND_SUCCESS) {
+                        return -1;
+                }
+        }
+
+        fd = linux_fd_find_free_from(fs, minfd);
         if (fd >= 0) {
                 return fd;
         }
@@ -992,7 +1027,23 @@ i32 linux_fd_lowest_free(Tcb_Base *task)
                 return -1;
         }
 
-        return linux_fd_find_free(fs);
+        return linux_fd_find_free_from(fs, minfd);
+}
+
+error_t linux_fd_store(Tcb_Base *task, i32 fd, const linux_fd_entry_t *ent)
+{
+        linux_fs_state_t *fs;
+
+        if (!task || !ent || fd < 0) {
+                return -E_IN_PARAM;
+        }
+
+        fs = linux_fs_state(task);
+        if (!fs || !fs->table || (u32)fd >= linux_fs_fd_capacity(fs)) {
+                return -E_IN_PARAM;
+        }
+
+        return linux_fs_entry_store(fs, fd, ent);
 }
 
 i64 linux_fd_close(Tcb_Base *task, i32 fd)
@@ -1028,6 +1079,8 @@ i64 linux_fd_close(Tcb_Base *task, i32 fd)
                 }
                 ent.kind = LINUX_FD_NONE;
                 ent.vfs_handle = 0;
+                ent.open_flags = 0;
+                ent.fd_flags = 0;
                 ent.is_dir = false;
                 ent.pipe_read = false;
                 ent.vfs_abs_path[0] = '\0';
@@ -1040,6 +1093,8 @@ i64 linux_fd_close(Tcb_Base *task, i32 fd)
 
         ent.kind = LINUX_FD_NONE;
         ent.vfs_handle = 0;
+        ent.open_flags = 0;
+        ent.fd_flags = 0;
         ent.is_dir = false;
         ent.pipe_read = false;
         ent.vfs_abs_path[0] = '\0';
@@ -1097,6 +1152,8 @@ i64 linux_fd_dup2(Tcb_Base *task, i32 oldfd, i32 newfd)
                 replaced_handle = newent.vfs_handle;
         }
 
+        /* dup/dup2: new fd does not inherit FD_CLOEXEC (Linux). */
+        oldent.fd_flags &= ~(u32)LINUX_FD_CLOEXEC;
         if (linux_fs_entry_store(fs, newfd, &oldent) != REND_SUCCESS) {
                 return -LINUX_EBADF;
         }

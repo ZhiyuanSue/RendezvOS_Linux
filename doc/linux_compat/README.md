@@ -12,7 +12,7 @@
 
 | 文档 | 内容 |
 |------|------|
-| [`PROGRESS.md`](PROGRESS.md) | **进展索引**：阶段状态、缺口、文档追溯链 |
+| [`PROGRESS.md`](PROGRESS.md) | **进展索引**：阶段状态、缺口、文档追溯链；**§8 未提交工作区盘点** |
 | [`GOALS_AND_CORE_CONTRACT.md`](GOALS_AND_CORE_CONTRACT.md) | **总目标、compat 政策、对 core 契约、维护者审阅包** |
 | [`ARCHITECTURE.md`](ARCHITECTURE.md) | 边界、数据流、IPC vs 直接调 core |
 | [`CODE_STRUCTURE.md`](CODE_STRUCTURE.md) | **目录与模块职责（现行）** |
@@ -42,6 +42,7 @@
 | [`DIRECTORY_PHASE.md`](DIRECTORY_PHASE.md) | **下一目标：chdir / openat / getdents（无新 inode 层）** |
 | [`FILE_LOADING.md`](FILE_LOADING.md) | page_slice 统一文件加载（CPIO / IPC / embedded） |
 | [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) | cpio initramfs 方案 |
+| [`BOOT_PATH_EVOLUTION.md`](BOOT_PATH_EVOLUTION.md) | **启动路径演进叙事**（incbin 测例 → cpio → busybox → `run_all` → 正规 PID1） |
 | [`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md) | busybox demo 临时妥协与**剩余开放项**（容量已迁动态表） |
 | [`VFS_DYNAMIC_STORAGE.md`](VFS_DYNAMIC_STORAGE.md) | **VFS page_slice 可增长表（S0–S3 已落地）** |
 | [`ROOTFS.md`](ROOTFS.md) | **rootfs/ 目录、Git 策略、fixtures vs generated** |

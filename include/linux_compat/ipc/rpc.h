@@ -47,16 +47,19 @@ void ipc_rpc_unregister_port_by_pid(const char* prefix, pid_t pid);
 /*
  * Blocking RPC: variadic args match @req_fmt; reply port TLV 't' appended.
  * Response uses @resp_opcode + @resp_fmt (VFS passes KMSG_OP_VFS_RESP / "q").
- * Interruptible: pending signals / IPC_RECV_INTERRUPT → -EINTR (VFS).
+ *
+ * Interruptible: -EINTR only if a deliverable signal is pending *before*
+ * send_msg(server). After the request is committed, the call always waits for
+ * the reply (or reply-port close); IPC_RECV_INTERRUPT is drained, never used
+ * to abandon recv (that wedges single-threaded send_msg(reply) servers).
  */
 i64 ipc_rpc_call_va(Message_Port_t* server_port, Message_Port_t* reply_port,
                     u16 req_opcode, const char* req_fmt, u16 resp_opcode,
                     const char* resp_fmt, va_list ap);
 
 /*
- * Same as ipc_rpc_call_va but ignores deliverable signals and interrupt
- * kmsgs — for kernel-internal completion RPCs (e.g. TASK_REAP_SYNC) that
- * must not abandon the reply port while the server still holds work.
+ * Same post-commit wait as ipc_rpc_call_va, but never returns -EINTR even
+ * before send (kernel-internal completion RPCs, e.g. TASK_REAP_SYNC / VFS).
  */
 i64 ipc_rpc_call_va_uninterruptible(Message_Port_t* server_port,
                                     Message_Port_t* reply_port, u16 req_opcode,

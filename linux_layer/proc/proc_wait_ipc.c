@@ -42,9 +42,15 @@ static error_t linux_proc_wait_deliver_message(Message_t *msg,
         }
 
         err = send_msg(port);
+        ref_put(&port->refcount, free_message_port_ref);
+        /*
+         * PORT_CLOSED: peer tore down wait/kernel port; core dropped orphan.
+         * Treat as delivered-from-sender (no live waiter).
+         */
+        if (err == -E_REND_PORT_CLOSED)
+                return REND_SUCCESS;
         if (err != REND_SUCCESS)
                 pr_error("[PROC/wait_ipc] send_msg failed e=%d\n", (int)err);
-        ref_put(&port->refcount, free_message_port_ref);
         return err;
 }
 
@@ -230,34 +236,38 @@ bool linux_proc_post_exit_notify(pid_t parent_pid, pid_t child_pid,
         if (parent_pid <= 0 || child_pid <= 0)
                 return false;
 
-        wait_port = proc_get_or_create_wait_port(parent_pid);
-        if (!wait_port)
-                return false;
-
-        md = kmsg_create(wait_port->service_id,
-                         KMSG_OP_PROC_EXIT_NOTIFY,
-                         LINUX_KMSG_FMT_EXIT_NOTIFY,
-                         (i64)child_pid,
-                         exit_code);
-        if (!md) {
-                ref_put(&wait_port->refcount, free_message_port_ref);
-                return false;
-        }
-
-        msg = create_message_with_msg(md);
-        ref_put(&md->refcount, free_msgdata_ref_default);
-        if (!msg) {
-                ref_put(&wait_port->refcount, free_message_port_ref);
-                return false;
-        }
-
         /*
-         * Blocking send is OK: clean_server runs this from a per-message
-         * worker thread, so the listen loop stays available for other
-         * THREAD_REAP / TASK_REAP messages.
+         * Retry alloc until we can hand the notify to the wait port. Dropping
+         * EXIT_NOTIFY leaves the parent blocked in wait4 with a zombie child.
+         * Blocking send is OK: clean runs this from an EXIT_NOTIFY worker.
          */
-        err = linux_proc_wait_deliver_message(msg, wait_port);
-        return err == REND_SUCCESS;
+        for (;;) {
+                wait_port = proc_get_or_create_wait_port(parent_pid);
+                if (!wait_port)
+                        return false;
+
+                md = kmsg_create(wait_port->service_id,
+                                 KMSG_OP_PROC_EXIT_NOTIFY,
+                                 LINUX_KMSG_FMT_EXIT_NOTIFY,
+                                 (i64)child_pid,
+                                 exit_code);
+                if (!md) {
+                        ref_put(&wait_port->refcount, free_message_port_ref);
+                        schedule(percpu(core_tm));
+                        continue;
+                }
+
+                msg = create_message_with_msg(md);
+                ref_put(&md->refcount, free_msgdata_ref_default);
+                if (!msg) {
+                        ref_put(&wait_port->refcount, free_message_port_ref);
+                        schedule(percpu(core_tm));
+                        continue;
+                }
+
+                err = linux_proc_wait_deliver_message(msg, wait_port);
+                return err == REND_SUCCESS;
+        }
 }
 
 bool linux_proc_post_kernel_exit_notify(pid_t child_pid, i32 exit_code)
@@ -270,32 +280,36 @@ bool linux_proc_post_kernel_exit_notify(pid_t child_pid, i32 exit_code)
         if (child_pid <= 0)
                 return false;
 
-        kernel_port = thread_lookup_port(KERNEL_PORT_NAME);
-        if (!kernel_port) {
-                pr_error("[PROC/wait_ipc] kernel port '%s' not found\n",
-                         KERNEL_PORT_NAME);
-                return false;
-        }
+        for (;;) {
+                kernel_port = thread_lookup_port(KERNEL_PORT_NAME);
+                if (!kernel_port) {
+                        pr_error("[PROC/wait_ipc] kernel port '%s' not found\n",
+                                 KERNEL_PORT_NAME);
+                        return false;
+                }
 
-        md = kmsg_create(kernel_port->service_id,
-                         KMSG_OP_PROC_EXIT_NOTIFY,
-                         LINUX_KMSG_FMT_EXIT_NOTIFY,
-                         (i64)child_pid,
-                         exit_code);
-        if (!md) {
-                ref_put(&kernel_port->refcount, free_message_port_ref);
-                return false;
-        }
+                md = kmsg_create(kernel_port->service_id,
+                                 KMSG_OP_PROC_EXIT_NOTIFY,
+                                 LINUX_KMSG_FMT_EXIT_NOTIFY,
+                                 (i64)child_pid,
+                                 exit_code);
+                if (!md) {
+                        ref_put(&kernel_port->refcount, free_message_port_ref);
+                        schedule(percpu(core_tm));
+                        continue;
+                }
 
-        msg = create_message_with_msg(md);
-        ref_put(&md->refcount, free_msgdata_ref_default);
-        if (!msg) {
-                ref_put(&kernel_port->refcount, free_message_port_ref);
-                return false;
-        }
+                msg = create_message_with_msg(md);
+                ref_put(&md->refcount, free_msgdata_ref_default);
+                if (!msg) {
+                        ref_put(&kernel_port->refcount, free_message_port_ref);
+                        schedule(percpu(core_tm));
+                        continue;
+                }
 
-        err = linux_proc_wait_deliver_message(msg, kernel_port);
-        return err == REND_SUCCESS;
+                err = linux_proc_wait_deliver_message(msg, kernel_port);
+                return err == REND_SUCCESS;
+        }
 }
 
 bool linux_proc_reap_zombie_by_pid(pid_t child_pid)

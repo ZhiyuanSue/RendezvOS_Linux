@@ -58,10 +58,17 @@ static error_t linux_clean_deliver_message(Message_t* msg, Message_Port_t* port)
         }
 
         e = send_msg(port);
+        ref_put(&port->refcount, free_message_port_ref);
+        /*
+         * Listen port closed is unexpected; still treat PORT_CLOSED as
+         * "payload not owed" so the exitor is not left believing deliver
+         * is in flight (core already dropped the orphan).
+         */
+        if (e == -E_REND_PORT_CLOSED)
+                return REND_SUCCESS;
         if (e != REND_SUCCESS) {
                 pr_error("[clean_ipc] send_msg failed e=%d\n", (int)e);
         }
-        ref_put(&port->refcount, free_message_port_ref);
         return e;
 }
 

@@ -77,20 +77,20 @@ static bool linux_exec_elf_needs_spawn_stack(struct page_slice *slice)
 }
 
 /*
- * Temporary Path B demo argv (busybox multi-call).
+ * Temporary Path B boot argv for busybox multi-call (/init → busybox).
  * Must live in bootstrap itself: append.init runs in run_elf_program on the
- * *new* thread after gen_task_from_elf returns — a "set before / clear after"
- * pending buffer on the caller is racy and was clearing before bootstrap.
+ * *new* thread after gen_task_from_elf returns — a caller-side pending argv
+ * buffer races with bootstrap (cleared too early → BusyBox Usage).
  *
- * Smoke: ash + echo / ls / AFTER_LS (Channel R + fork/COW + SIGCHLD).
+ * Default: run /tests/run_all.sh (manifest orchestration). Absolute paths;
+ * empty envp has no PATH. TODO: kernel cmdline override.
  */
 static u8 linux_exec_spawn_default_argv(const char *kargv[LINUX_EXEC_SPAWN_MAX_ARGC + 1])
 {
         kargv[0] = "sh";
-        kargv[1] = "-c";
-        kargv[2] = "echo SHELL_OK; /bin/busybox ls /bin; echo AFTER_LS";
-        kargv[3] = NULL;
-        return 3;
+        kargv[1] = "/tests/run_all.sh";
+        kargv[2] = NULL;
+        return 2;
 }
 
 typedef struct {

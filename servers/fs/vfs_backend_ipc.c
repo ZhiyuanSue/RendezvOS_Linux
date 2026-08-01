@@ -2,10 +2,12 @@
 
 #include <common/refcount.h>
 #include <common/string.h>
+#include <linux_compat/debug_trace.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/fs/vfs_protocol.h>
 #include <linux_compat/ipc/port_naming.h>
 #include <linux_compat/ipc/rpc.h>
+#include <modules/log/log.h>
 #include <rendezvos/error.h>
 #include <rendezvos/ipc/ipc_serial.h>
 #include <rendezvos/ipc/port.h>
@@ -280,52 +282,68 @@ i64 vfs_backend_ipc_call(vfs_backend_req_t *req)
                 return -LINUX_ENOMEM;
         }
 
+#if LINUX_COMPAT_TRACE_VFS_IO
+        pr_info("[vfs-be] ipc_call enter port=%s op=%d\n", port, (int)req->op);
+#endif
+
+        /*
+         * Nested VFS→backend: uninterruptible so a signal cannot abort mid-I/O
+         * and wedge the single listen thread relative to the backend.
+         */
         switch (req->op) {
         case VFS_BACKEND_OP_LOOKUP:
-                ret = ipc_rpc_call_named(port, reply, opc, "sp", req->path,
-                                         req->ino_out);
+                ret = ipc_rpc_call_named_uninterruptible(
+                        port, reply, opc, "sp", req->path, req->ino_out);
                 break;
         case VFS_BACKEND_OP_READ:
-                ret = ipc_rpc_call_named(port, reply, opc, "pqqp", req->ino,
-                                         req->offset, req->len, req->buf);
+                ret = ipc_rpc_call_named_uninterruptible(port, reply, opc,
+                                                         "pqqp", req->ino,
+                                                         req->offset, req->len,
+                                                         req->buf);
                 break;
         case VFS_BACKEND_OP_WRITE:
-                ret = ipc_rpc_call_named(port, reply, opc, "pqqp", req->ino,
-                                         req->offset, req->len, req->wbuf);
+                ret = ipc_rpc_call_named_uninterruptible(port, reply, opc,
+                                                         "pqqp", req->ino,
+                                                         req->offset, req->len,
+                                                         req->wbuf);
                 break;
         case VFS_BACKEND_OP_TRUNCATE:
-                ret = ipc_rpc_call_named(port, reply, opc, "pq", req->ino,
-                                         req->size_arg);
+                ret = ipc_rpc_call_named_uninterruptible(
+                        port, reply, opc, "pq", req->ino, req->size_arg);
                 break;
         case VFS_BACKEND_OP_FLUSH:
-                ret = ipc_rpc_call_named(port, reply, opc, "p", req->ino);
+                ret = ipc_rpc_call_named_uninterruptible(port, reply, opc, "p",
+                                                         req->ino);
                 break;
         case VFS_BACKEND_OP_READDIR:
-                ret = ipc_rpc_call_named(port, reply, opc, "sqp", req->path,
-                                         req->dir_index, req->dirent_out);
+                ret = ipc_rpc_call_named_uninterruptible(
+                        port, reply, opc, "sqp", req->path, req->dir_index,
+                        req->dirent_out);
                 break;
         case VFS_BACKEND_OP_READLINK:
-                ret = ipc_rpc_call_named(port, reply, opc, "spq", req->path,
-                                         req->readlink_buf, req->readlink_cap);
+                ret = ipc_rpc_call_named_uninterruptible(
+                        port, reply, opc, "spq", req->path, req->readlink_buf,
+                        req->readlink_cap);
                 break;
         case VFS_BACKEND_OP_MKDIR:
-                ret = ipc_rpc_call_named(port, reply, opc, "su", req->path,
-                                         (u64)req->mode_arg);
+                ret = ipc_rpc_call_named_uninterruptible(
+                        port, reply, opc, "su", req->path, (u64)req->mode_arg);
                 break;
         case VFS_BACKEND_OP_CREATE:
-                ret = ipc_rpc_call_named(port, reply, opc, "su", req->path,
-                                         (u64)req->mode_arg);
+                ret = ipc_rpc_call_named_uninterruptible(
+                        port, reply, opc, "su", req->path, (u64)req->mode_arg);
                 break;
         case VFS_BACKEND_OP_UNLINK:
-                ret = ipc_rpc_call_named(port, reply, opc, "s", req->path);
+                ret = ipc_rpc_call_named_uninterruptible(port, reply, opc, "s",
+                                                         req->path);
                 break;
         case VFS_BACKEND_OP_RENAME:
-                ret = ipc_rpc_call_named(port, reply, opc, "ss", req->path,
-                                         req->path2);
+                ret = ipc_rpc_call_named_uninterruptible(
+                        port, reply, opc, "ss", req->path, req->path2);
                 break;
         case VFS_BACKEND_OP_LINK:
-                ret = ipc_rpc_call_named(port, reply, opc, "ss", req->path,
-                                         req->path2);
+                ret = ipc_rpc_call_named_uninterruptible(
+                        port, reply, opc, "ss", req->path, req->path2);
                 break;
         default:
                 ret = -LINUX_EINVAL;
@@ -334,6 +352,12 @@ i64 vfs_backend_ipc_call(vfs_backend_req_t *req)
 
         ref_put(&reply->refcount, free_message_port_ref);
         req->result = ret;
+#if LINUX_COMPAT_TRACE_VFS_IO
+        pr_info("[vfs-be] ipc_call leave port=%s op=%d ret=%ld\n",
+                port,
+                (int)req->op,
+                (long)ret);
+#endif
         return ret;
 }
 
@@ -371,14 +395,15 @@ i64 vfs_backend_ipc_register(const char *port_name, const char *fstype,
                 return -LINUX_ENOMEM;
         }
 
-        ret = ipc_rpc_call_named(VFS_SERVER_PORT_NAME,
-                                 reply,
-                                 KMSG_OP_VFS_BACKEND_REGISTER,
-                                 VFS_KMSG_FMT_BACKEND_REGISTER,
-                                 port_name,
-                                 fstype ? fstype : "",
-                                 (u64)caps,
-                                 (u64)reg_flags);
+        /* VFS listen is single-threaded; never abandon after send. */
+        ret = ipc_rpc_call_named_uninterruptible(VFS_SERVER_PORT_NAME,
+                                                 reply,
+                                                 KMSG_OP_VFS_BACKEND_REGISTER,
+                                                 VFS_KMSG_FMT_BACKEND_REGISTER,
+                                                 port_name,
+                                                 fstype ? fstype : "",
+                                                 (u64)caps,
+                                                 (u64)reg_flags);
 
         ref_put(&reply->refcount, free_message_port_ref);
         return ret;

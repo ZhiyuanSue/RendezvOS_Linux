@@ -42,13 +42,16 @@ void sys_exit(i64 exit_code)
                     && linux_vspace_is_user_table(task->vs)) {
                         i32 zero = 0;
 
-                        if (linux_mm_store_to_user(task->vs,
-                                                   ta->clear_tid,
-                                                   &zero,
-                                                   sizeof(zero))
-                            != REND_SUCCESS) {
-                                pr_warn("[PROC] sys_exit: clear_tid write failed\n");
-                        }
+                        /*
+                         * Best-effort CLEARTID (musl set_tid_address). Failure
+                         * is common on partial maps; must not be mistaken for
+                         * the hang point — THREAD_REAP / wait follows this.
+                         */
+                        (void)linux_mm_store_to_user(task->vs,
+                                                     ta->clear_tid,
+                                                     &zero,
+                                                     sizeof(zero));
+                        ta->clear_tid = 0;
                 }
         }
 

@@ -401,3 +401,93 @@ When a new bug pattern appears during review/debug:
     there → later call into unmapped VA. aarch64 already gets `x0=0` via
     `set_user_return`; x86 needs explicit `syscall_ctx->rdx = 0` after it.
   - Checklist: §0 + `SYSCALL_USER_RETURN_AND_EXECVE.md` §5.1.
+
+- 2026-07-31: **Path-dependent syscalls (`sh -c` vs `sh script`):**
+  - Symptom: Stage A `sh /tests/boot_smoke.sh` → `unimplemented id=72` /
+    ENOSYS before any script output; earlier `sh -c '…'` ash smoke worked.
+  - Cause: script path opens the file and uses `fcntl(F_SETFD, CLOEXEC)`;
+    `-c` does not. id 72 is `__NR_fcntl` on **x86_64** (aarch64 `__NR_fcntl`
+    is 25). Dispatch via arch `syscall_ids.h` + shared `sys_fcntl`.
+  - Checklist: §0; `FD_TABLE.md` fd_flags/open_flags.
+
+- 2026-07-31: **x86-64 kernel must use `-mno-red-zone`:**
+  - Symptom: Path B boot → `#PF` in `vfs_path_collapse` (`mov (%r11,%r9),%bl`),
+    CR2 = garbage `raw + comp_off[]`; e=0 (kernel not-present).
+  - Cause: leaf `comp_off`/`comp_len` lived in SysV **red zone** (below RSP);
+    IRQ/trap entry clobbers it → wild offset. aarch64 has no red zone.
+  - Fix: bake `-mno-red-zone` into `core/script/config/config_x86_64.json`
+    (flows to `Makefile.env` `CFLAGS`; root `linux_layer` already compiles with
+    `$(CFLAGS)`). `vfs_path_stack_anchor` keeps collapse non-leaf as belt.
+    Not needed on aarch64/riscv/loongarch (no SysV red zone; flag is x86-only).
+  - Checklist: §0 + stack discipline.
+
+- 2026-07-31: **poll must block via IPC, never busy-return 0 on timeout < 0:**
+  - Symptom: after `=== run_all start ===`, apparent hang; DUMP mostly
+    `round_robin_schedule`, occasional RIP at `syscall` with
+    `RAX=__NR_poll(7)`, `RSI=nfds=1`, `RDX=timeout=-1`.
+  - Cause: stub returned 0 when nothing ready (including infinite timeout).
+    Ash retries `poll` forever. Related: CONSOLE_IN always-POLLIN +
+    `read`→0 is the same busy-loop family.
+  - Architecture: local readiness scan → if wait needed, `recv_msg` on
+    per-thread `sleep_port` (timer EXPIRE / signal CANCEL / future UART|pipe
+    wake kmsg) — same model as `linux_time_sleep.c`. Until UART RX exists,
+    console-only infinite wait synthesizes `POLLHUP` (no producer to wake).
+  - Checklist: §0 + `TIME_SUBSYSTEM_PLAN.md` §10; do not invent a parallel
+    wait queue outside IPC.
+
+- 2026-07-31: **Bring-up orchestration ≠ ash `while read` + nested VFS READ:**
+  - Symptom: after `=== run_all start ===`, idle in `schedule`; syscall trail
+    `write` → `newfstatat` → `openat` → `poll(1,-1)` then stuck; samples in
+    `vfs_read_handle` / `vfs_backend_ipc_call` / `vfs_pcache_fill_slice_from_kva`
+    (not a tight poll spin).
+  - Model: ash always `poll`+byte-`read`s. Console without UART is an **EOF
+    device** (`read`→0, `poll(POLLIN)`→`POLLHUP`). File reads go
+    user→vfs_server→cpio nested IPC; page_slice populate on that path hung.
+  - Fix: (1) pack-time expand `run_all.sh` (explicit `run_one`, no manifest
+    line-read); (2) console EOF poll semantics; (3) cpio READ = direct blob
+    copy; (4) nested backend RPC uninterruptible.
+  - Checklist: §0; do not paper over by returning 0 from infinite poll.
+
+- 2026-08-01: **THREAD_REAP zombie wait vs ready-but-not-scheduled exitor:**
+  - Symptom: intermittent hang after first `run_all` test exit; last line often
+    `clear_tid write failed` (red herring — warn before `THREAD_REAP` send).
+  - Cause: listen waits for `thread_status_zombie` while exitor may already be
+    `ready` (recv completed send) but not yet scheduled to store zombie;
+    single `clean_listen` livelocks in that wait.
+  - Fix: after IPC unfinished states clear, promote `ready` → zombie in
+    `clean_handle_thread_reap`; drop noisy clear_tid warn.
+  - Checklist: §0 + EXIT_CLEAN (send returns before exitor stores zombie).
+
+- 2026-08-01: **VFS client RPC must be uninterruptible (rendezvous wedge):**
+  - Symptom: suite progresses; hang at `/tests/oscomp_munmap` after
+    `[vfs-be] … LOOKUP … leave ret=0`; DUMP mostly `schedule` (blocked).
+  - Cause: `vfs_ipc_request_response` used interruptible `ipc_rpc_call_va`.
+    After send, `-EINTR` abandons `recv` on `vfs_cli_<pid>` while VFS listen
+    (single-threaded) blocks forever in `send_msg(reply)` — same class as
+    `TASK_REAP_SYNC` / nested backend. Prior fork/clone noise makes SIGCHLD
+    more likely mid-OPEN.
+  - Fix: `ipc_rpc_call_va_uninterruptible` in `fs_ipc.c`.
+  - Checklist: §0 + IPC_RPC_FRAMEWORK §8; single-threaded reply rendezvous
+    cannot tolerate client abandon without port teardown.
+
+- 2026-08-01: **unregister_port must wake waiters (not only final free):**
+  - Symptom: same FS hang after uninterruptible VFS; DUMP schedule-only after
+    INFO; intermittent around process death / `#PF` teardown.
+  - Cause: `port_clean_thread_queue` only ran at refcount→0, while
+    `ipc_rpc_send_reply` holds a lookup ref across `send_msg` — unregister
+    did not wake `block_on_send`. Late enqueue after clean was also possible.
+  - Fix: per-port ops gate (`port_ops_begin/end`, `ops_life`/`ops_count`).
+    Unregister: CLOSING → wait inflight==0 → `port_clean` → CLOSED. Blocking
+    send/recv `end` before `schedule`; wake checks `PORT_CLOSED` (+ drop
+    orphan send). RPC reply treats `-E_REND_PORT_CLOSED` as handled.
+  - Checklist: §0 + IPC_RPC_FRAMEWORK §6; BUSYBOX_BOOT_DEFERRALS IPC P0 §2.
+
+- 2026-08-01: **RPC / EXIT_NOTIFY must not abandon after commit or drop notify:**
+  - Symptom: intermittent FS wedge or parent stuck in wait4 after child exit.
+  - Cause: (1) interruptible RPC returned `-EINTR` after `send_msg(server)`
+    while listen blocked in `send_msg(reply)`; (2) reply/EXIT_NOTIFY gave up
+    on OOM or treated `PORT_CLOSED` as hard failure without fallback.
+  - Fix: EINTR only before request commit; post-commit drain interrupt and
+    wait; `ipc_rpc_send_reply` / `post_exit_notify` retry alloc; EXIT_NOTIFY
+    worker falls back to `pending_exits`+poke; `PORT_CLOSED` = handled.
+  - Checklist: §0 + IPC_RPC_FRAMEWORK §7–8; EXIT_CLEAN; BUSYBOX IPC P0 §3–4.

@@ -47,6 +47,7 @@ i64 sys_getcwd(u64 user_buf, u64 size);
 i64 sys_dup(i32 fd);
 i64 sys_dup2(i32 oldfd, i32 newfd);
 i64 sys_dup3(i32 oldfd, i32 newfd, i32 flags);
+i64 sys_fcntl(i32 fd, i32 cmd, u64 arg);
 i64 sys_openat(i32 dirfd, u64 user_pathname, i32 flags, u64 mode);
 i64 sys_close(i32 fd);
 i64 sys_read(i32 fd, u64 user_buf, u64 count);
@@ -73,6 +74,9 @@ i64 sys_pipe2(u64 user_pipefd, i32 flags);
 i64 sys_mount(u64 user_source, u64 user_target, u64 user_fstype, u64 flags,
               u64 user_data);
 i64 sys_umount2(u64 user_target, i32 flags);
+i64 sys_poll(u64 ufds, u32 nfds, i32 timeout_ms);
+i64 sys_ppoll(u64 ufds, u32 nfds, u64 user_tsp, u64 user_sigmask,
+              u64 sigsetsize);
 
 /* Time syscalls */
 i64 sys_gettimeofday(u64 user_tv, u64 user_tz);

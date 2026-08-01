@@ -23,7 +23,6 @@
 |-----------|-----|--------|----------|
 | **CPIO middle layer** | `vfs_kern_read_file_slice` | `ino.u.cpio_data` 连续 kva | `servers/fs/vfs_kern_load.c` |
 | **IPC VFS server** | `linux_vfs_read_file_for_exec_slice` | 用户 scratch + VFS READ IPC | `linux_layer/fs/vfs_exec_load.c` |
-| **Embedded payload** | `linux_page_slice_copy_from_kva` | `_num_app` 表区间 | `linux_layer/fs/linux_exec_image.c` |
 
 三条路径最终都是 **`page_slice`**，再交给 core `load_elf_to_vs` / `page_slice_copy_to_*`。
 
@@ -48,33 +47,33 @@ sys_execve
   → linux_exec_load_elf_slice        (linux_layer/fs/linux_exec_image.c)
        ① vfs_kern_read_file_slice     (CPIO)
        ② linux_vfs_read_file_for_exec_slice (IPC, /tests 回退)
-       ③ linux_page_slice_copy_from_kva (embedded program_map)
   → linux_exec_elf_slice_valid
   → load_elf_to_vs (core)
   → page_slice_destroy (compat policy)
 ```
+
+（曾有 ③ embedded `_num_app` / `program_map`；已删除，测例只在 cpio。）
 
 brk / mmap_hint：`linux_proc_set_heap_from_elf_load`（`linux_layer/proc/linux_exec_proc.c`）。
 
 ### 用户测例 harness
 
 ```text
+默认 boot（LINUX_COMPAT_BOOT_BUSYBOX_ONLY=1）:
+  Path B /init (=busybox) → sh /tests/run_all.sh → 逐行 exec manifest
+
+旧内核编排（=0）:
 linux_user_test_load_manifest
   → vfs_kern_read_file_slice("/tests/manifest")
-  → 在 slice 上逐行解析（不整文件 kmalloc）
-
 linux_spawn_and_wait_test_path
   → vfs_kern_read_file_slice(path)
-  → gen_task_from_elf(..., &linux_task_append_hooks, &linux_thread_append_hooks, slice)
-  → run_elf_program → thread.append_hooks.init (brk, register, drop slice)
+  → gen_task_from_elf(..., slice)
 ```
 
-### spawn / task_test（embedded）
+### spawn（仅 stub link_app；不再作测例源）
 
 ```text
-linux_page_slice_copy_from_kva(_num_app range)
-  → gen_task_from_elf(..., &linux_task_append_hooks, &linux_thread_append_hooks, slice)
-  → run_elf_program → thread.append_hooks.init
+filesystem:true → stub link_app.o (_num_app=0)；ELF 只从 initramfs 加载
 ```
 
 ---

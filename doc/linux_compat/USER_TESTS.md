@@ -15,9 +15,9 @@ integrated harness（`filesystem:true`）下：
 
 测例**数据文件**（`./text.txt`、`./mnt/`）是 `rootfs/` 里的 fixtures，由用户态 `open/read` 经 VFS 访问，不走上述 slice 路径。
 
-**演进（尚未做）**：把「内核 for 循环跑 manifest」换成用户态 **`busybox sh /tests/run_all.sh`**——内核只启动一次 shell，由脚本跑测例。白话与阶段见 [`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md) §「白话：run_all.sh」。  
+**默认 boot**：`linux_boot` Path B 起 **`/init`（→ busybox）**，bootstrap argv=`sh /tests/run_all.sh`（读 `/tests/manifest`）。恢复旧内核 for-manifest：`LINUX_COMPAT_BOOT_BUSYBOX_ONLY=0`。见 [`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md)。
 
-**Path B 栈**：与 `sys_execve` 共用 `linux_exec_build_initial_stack`；busybox demo argv 现为 `sh -c 'ls /bin; echo SHELL_OK'`（验证 ash）。跨 `gen_task_from_elf` 传 pending argv **不可行**。下一步：`sh /tests/run_all.sh`。VFS 定长表已回收：[`VFS_DYNAMIC_STORAGE.md`](VFS_DYNAMIC_STORAGE.md)。
+**Path B 栈**：与 `sys_execve` 共用 `linux_exec_build_initial_stack`（busybox glibc 需 auxv）。VFS 定长表已回收：[`VFS_DYNAMIC_STORAGE.md`](VFS_DYNAMIC_STORAGE.md)。
 
 ## 为什么需要 single / smp 分层
 

@@ -3,6 +3,7 @@
  */
 
 #include <linux_compat/errno.h>
+#include <linux_compat/fs/linux_fcntl.h>
 #include <linux_compat/fs/linux_fd_table.h>
 #include <linux_compat/fs/linux_pipe.h>
 #include <linux_compat/linux_mm_radix.h>
@@ -117,8 +118,18 @@ i64 linux_pipe_create2(Tcb_Base *task, u64 user_pipefd, i32 flags)
         u32 pipe_id;
         i32 fds[2];
         error_t e;
+        u32 fd_flags = 0;
+        u32 open_flags = 0;
 
-        (void)flags;
+        if ((flags & ~(LINUX_O_CLOEXEC | LINUX_O_NONBLOCK)) != 0) {
+                return -LINUX_EINVAL;
+        }
+        if ((flags & LINUX_O_CLOEXEC) != 0) {
+                fd_flags = LINUX_FD_CLOEXEC;
+        }
+        if ((flags & LINUX_O_NONBLOCK) != 0) {
+                open_flags |= LINUX_O_NONBLOCK;
+        }
 
         if (!task || !task->vs) {
                 return -LINUX_EFAULT;
@@ -133,11 +144,15 @@ i64 linux_pipe_create2(Tcb_Base *task, u64 user_pipefd, i32 flags)
         read_ent.kind = LINUX_FD_PIPE;
         read_ent.vfs_handle = pipe_id;
         read_ent.pipe_read = true;
+        read_ent.open_flags = open_flags;
+        read_ent.fd_flags = fd_flags;
 
         memset(&write_ent, 0, sizeof(write_ent));
         write_ent.kind = LINUX_FD_PIPE;
         write_ent.vfs_handle = pipe_id;
         write_ent.pipe_read = false;
+        write_ent.open_flags = open_flags;
+        write_ent.fd_flags = fd_flags;
 
         read_fd = linux_fd_alloc(task, &read_ent);
         if (read_fd < 0) {

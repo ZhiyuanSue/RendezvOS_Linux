@@ -28,9 +28,9 @@ core 仍只提供 `send_msg` / `recv_msg` / `kmsg_create` / `ipc_serial`；**不
 3. `kmsg.hdr.module` = **server port 的 `service_id`**（非硬编码常量）。
 4. 响应：默认 `opcode=0` + `"q"`（单 `i64`）；VFS 使用 `KMSG_OP_VFS_RESP`。
 5. Server **必须** `ipc_rpc_reply`（阻塞 `send_msg`）。Client 在 `ipc_rpc_call*` 的 `recv` 上会合；裸 `try_send` 会与「server 先于 client recv」竞态（曾出现 `reply best-effort failed port='vfs_backend_caller'`）。
-6. 遗弃 client：进程 teardown 注销 reply port → core `port_clean_thread_queue` 唤醒仍在 `block_on_send` 的 server，listen 不永久楔死。
-7. **Signal EINTR**：`ipc_rpc_call*` 在 `recv_msg(reply_port)` 上阻塞；可投递信号时 `signal_queue` 向 reply port 投 `KMSG_OP_IPC_RECV_INTERRUPT`（见 `include/linux_compat/ipc/block_wake.h`），RPC 返回 `-LINUX_EINTR`。
-8. **不可中断 RPC**：`ipc_rpc_call_named_uninterruptible`（`TASK_REAP_SYNC`）。子进程 exit 会挂 pending `SIGCHLD`；若在 `send` 之后因 pending 信号直接 `-EINTR` 离开 reply port，server 会卡死在 `send_msg(reply)`。收尸完成类 RPC **禁止**走可中断路径。
+6. 遗弃 client：进程 teardown 调 `unregister_port(reply)` → 名表摘掉后 port **ops gate** 进入 `CLOSING`，等所有 `port_ops_begin` 临界段结束（阻塞路径在 `schedule` 前 `port_ops_end`），再 `port_clean_thread_queue` 唤醒 `block_on_send`；`send_msg` 见 `THREAD_FLAG_IPC_PORT_CLOSED` → `-E_REND_PORT_CLOSED` 并丢弃未送出 payload；`ipc_rpc_send_reply` 视为已处理，listen 继续。`recv` 侧另收 `KMSG_OP_SYSTEM_PORT_CLOSED` 或同 flag。
+7. **Signal EINTR（仅 commit 前）**：`ipc_rpc_call*`（interruptible）仅在 **`send_msg(server)` 之前** 若有可投递信号则返回 `-LINUX_EINTR`。请求已交给 server 后必须等 reply（或 reply-port close）；`KMSG_OP_IPC_RECV_INTERRUPT` 只作 wake，**不得**弃 recv。
+8. **不可中断 RPC**：`ipc_rpc_call_*_uninterruptible`（`TASK_REAP_SYNC`、**VFS 客户端**、VFS→backend）在 send 前也不因信号返回。单线程 listen 的 reply rendezvous 不能容忍 client 弃 recv。
 
 ---
 
@@ -49,7 +49,7 @@ ref_put(...);
 i64 ret = ipc_rpc_call_named(VFS_SERVER_PORT_NAME, reply, MY_OP, "pu", ptr, size);
 ```
 
-VFS 封装：`vfs_ipc_request_response()` → `ipc_rpc_call_va(..., KMSG_OP_VFS_RESP, "q", ap)`。
+VFS 封装：`vfs_ipc_request_response()` → `ipc_rpc_call_va_uninterruptible(..., KMSG_OP_VFS_RESP, "q", ap)`。
 
 内核侧 VFS↔backend：`vfs_cli_k_srv` / `vfs_cli_k_reg_<fstype>`（见 `vfs_backend_ipc.c`）。
 

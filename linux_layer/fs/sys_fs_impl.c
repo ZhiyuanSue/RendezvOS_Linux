@@ -1,16 +1,20 @@
 /*
  * File system syscalls — per-process fd table + VFS IPC (scheme B).
+ * fcntl(2) lives in sys_fcntl.c; poll/ppoll in misc/sys_poll.c.
  * See doc/linux_compat/FD_TABLE.md
  */
 
 #include <common/string.h>
 #include <common/types.h>
+#include <linux_compat/debug_trace.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/fs/fs_ipc.h>
+#include <linux_compat/fs/linux_fcntl.h>
 #include <linux_compat/fs/linux_fd_table.h>
 #include <linux_compat/fs/linux_pipe.h>
 #include <linux_compat/fs/vfs_protocol.h>
 #include <linux_compat/linux_mm_radix.h>
+#include <modules/log/log.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/tcb.h>
 #include <syscall.h>
@@ -30,20 +34,12 @@ static i64 sys_fs_load_pathname(VSpace *vs, u64 user_pathname, char *pathname,
         return -LINUX_EFAULT;
 }
 
-#define LINUX_O_CREAT     0x40
-#define LINUX_O_DIRECTORY 0x10000
-#if defined(_AARCH64_)
-#define LINUX_O_DIRECTORY_AARCH64 0x4000
-#endif
-
 static i32 linux_open_flags_normalize(i32 flags)
 {
         i32 out = flags;
 
-        if ((out & LINUX_O_CREAT) == 0 && (out & 0x40) != 0) {
-                out |= LINUX_O_CREAT;
-        }
 #if defined(_AARCH64_)
+        /* Fold aarch64 UAPI O_DIRECTORY into the canonical compat bit. */
         if ((out & LINUX_O_DIRECTORY) == 0
             && (out & LINUX_O_DIRECTORY_AARCH64) != 0) {
                 out |= LINUX_O_DIRECTORY;
@@ -158,6 +154,10 @@ i64 sys_openat(i32 dirfd, u64 user_pathname, i32 flags, u64 mode)
         memset(&ent, 0, sizeof(ent));
         ent.kind = LINUX_FD_VFS;
         ent.vfs_handle = (u32)(handle & VFS_OPEN_RET_HANDLE_MASK);
+        ent.open_flags = (u32)flags & ~(u32)LINUX_O_CLOEXEC;
+        if ((flags & LINUX_O_CLOEXEC) != 0) {
+                ent.fd_flags = LINUX_FD_CLOEXEC;
+        }
         strncpy(ent.vfs_abs_path, abs, sizeof(ent.vfs_abs_path) - 1);
         ent.vfs_abs_path[sizeof(ent.vfs_abs_path) - 1] = '\0';
         if ((handle & VFS_OPEN_RET_IS_DIR_BIT) != 0
@@ -185,32 +185,51 @@ i64 sys_read(i32 fd, u64 user_buf, u64 count)
 {
         Tcb_Base *current = sys_fs_current();
         linux_fd_entry_t *ent;
+        i64 ret;
 
         ent = linux_fd_get(current, fd);
         if (!ent) {
                 return -LINUX_EBADF;
         }
 
+#if LINUX_COMPAT_TRACE_VFS_IO
+        pr_info("[read] enter fd=%d kind=%d count=%llu\n",
+                fd,
+                (int)ent->kind,
+                (unsigned long long)count);
+#endif
+
         switch (ent->kind) {
         case LINUX_FD_CONSOLE_IN:
-                return 0;
+                ret = 0;
+                break;
         case LINUX_FD_CONSOLE_OUT:
         case LINUX_FD_CONSOLE_ERR:
-                return -LINUX_EBADF;
+                ret = -LINUX_EBADF;
+                break;
         case LINUX_FD_PIPE:
                 if (!ent->pipe_read) {
-                        return -LINUX_EBADF;
+                        ret = -LINUX_EBADF;
+                        break;
                 }
-                return linux_pipe_read(current, ent->vfs_handle, user_buf, count);
+                ret = linux_pipe_read(current, ent->vfs_handle, user_buf, count);
+                break;
         case LINUX_FD_VFS:
-                return vfs_ipc_request_response(KMSG_OP_VFS_READ,
-                                                VFS_KMSG_FMT_READ,
-                                                ent->vfs_handle,
-                                                user_buf,
-                                                count);
+                ret = vfs_ipc_request_response(KMSG_OP_VFS_READ,
+                                               VFS_KMSG_FMT_READ,
+                                               ent->vfs_handle,
+                                               user_buf,
+                                               count);
+                break;
         default:
-                return -LINUX_EBADF;
+                ret = -LINUX_EBADF;
+                break;
         }
+
+#if LINUX_COMPAT_TRACE_VFS_IO
+        pr_info("[read] leave fd=%d ret=%ld\n", fd, (long)ret);
+#endif
+        return ret;
 }
 
 i64 sys_write(i32 fd, u64 user_buf, u64 count)
@@ -650,6 +669,32 @@ i64 sys_faccessat(i32 dirfd, u64 user_pathname, i32 mode, i32 flags)
 
 i64 sys_dup3(i32 oldfd, i32 newfd, i32 flags)
 {
-        (void)flags;
-        return linux_fd_dup2(sys_fs_current(), oldfd, newfd);
+        Tcb_Base *current = sys_fs_current();
+        linux_fd_entry_t *ent;
+        i64 ret;
+
+        if ((flags & ~LINUX_O_CLOEXEC) != 0) {
+                return -LINUX_EINVAL;
+        }
+        if (oldfd == newfd) {
+                return -LINUX_EINVAL;
+        }
+
+        ret = linux_fd_dup2(current, oldfd, newfd);
+        if (ret < 0) {
+                return ret;
+        }
+
+        if ((flags & LINUX_O_CLOEXEC) != 0) {
+                ent = linux_fd_get(current, newfd);
+                if (!ent) {
+                        return -LINUX_EBADF;
+                }
+                ent->fd_flags |= LINUX_FD_CLOEXEC;
+                if (linux_fd_store(current, newfd, ent) != REND_SUCCESS) {
+                        return -LINUX_EBADF;
+                }
+        }
+
+        return ret;
 }
