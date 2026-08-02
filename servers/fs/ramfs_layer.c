@@ -531,8 +531,8 @@ i64 ramfs_readdir(const char *dirpath, u64 index, vfs_dirent_t *out)
                 if (!ent || !ent->alive) {
                         continue;
                 }
-                if (!vfs_path_direct_child_name(norm, ent->path, child_name,
-                                                sizeof(child_name))) {
+                if (!vfs_path_direct_child_name(
+                            norm, ent->path, child_name, sizeof(child_name))) {
                         continue;
                 }
                 if (!vfs_dir_names_insert(&names, child_name)) {

@@ -12,8 +12,8 @@
 #include "vfs_kstat.h"
 #include "vfs_slice_table.h"
 
-#define CPIO_NEWC_MAGIC       "070701"
-#define CPIO_NEWC_HDR_LEN     110
+#define CPIO_NEWC_MAGIC   "070701"
+#define CPIO_NEWC_HDR_LEN 110
 
 #define CPIO_S_IFMT  0170000u
 #define CPIO_S_IFDIR 0040000u
@@ -198,8 +198,8 @@ error_t cpio_rofs_init(const void *image, u64 image_len)
         error_t err;
 
         vfs_slice_table_destroy(&cpio_entry_tab);
-        err = vfs_slice_table_init(&cpio_entry_tab, sizeof(cpio_rofs_entry_t),
-                                   64);
+        err = vfs_slice_table_init(
+                &cpio_entry_tab, sizeof(cpio_rofs_entry_t), 64);
         if (err != REND_SUCCESS) {
                 return err;
         }
@@ -267,9 +267,13 @@ error_t cpio_rofs_init(const void *image, u64 image_len)
                 is_symlink = ((mode & CPIO_S_IFMT) == CPIO_S_IFLNK);
                 is_dir = ((mode & CPIO_S_IFMT) == CPIO_S_IFDIR);
 
-                err = cpio_rofs_add_entry(
-                        name, (u32)mode, nlink, filesize, data, is_dir,
-                        is_symlink);
+                err = cpio_rofs_add_entry(name,
+                                          (u32)mode,
+                                          nlink,
+                                          filesize,
+                                          data,
+                                          is_dir,
+                                          is_symlink);
                 if (err != REND_SUCCESS) {
                         vfs_slice_table_destroy(&cpio_entry_tab);
                         return err;
@@ -462,8 +466,8 @@ i64 cpio_rofs_readdir(const char *dirpath, u64 index, vfs_dirent_t *out)
                 if (!ent) {
                         continue;
                 }
-                if (!vfs_path_direct_child_name(norm, ent->path, child_name,
-                                                sizeof(child_name))) {
+                if (!vfs_path_direct_child_name(
+                            norm, ent->path, child_name, sizeof(child_name))) {
                         continue;
                 }
                 if (!vfs_dir_names_insert(&names, child_name)) {

@@ -12,8 +12,7 @@ Two layers in the tree:
   1. Test PROGRAMS (static ELF64)
      Built by `make user` → copied to rootfs/tests/ + manifest
      Started by /tests/run_all.sh (not by the kernel loop).
-     link_app.o is a stub (_num_app=0); see script/config/user.json
-     "filesystem": true.
+     ELFs are packed into rootfs.cpio (see script/config/user.json).
 
   2. Test DATA FILES (fixtures)
      e.g. ./text.txt, ./mnt/

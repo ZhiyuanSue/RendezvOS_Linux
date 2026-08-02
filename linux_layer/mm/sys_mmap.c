@@ -50,8 +50,7 @@ static u64 linux_mmap_map_range(Tcb_Base *tcb, linux_proc_append_t *pa,
 
         const int max_probes = 256;
         for (int i = 0; i < max_probes; i++) {
-                if (hint >= USER_SPACE_TOP
-                    || (vaddr)(hint + len_aligned) < hint
+                if (hint >= USER_SPACE_TOP || (vaddr)(hint + len_aligned) < hint
                     || (vaddr)(hint + len_aligned) > USER_SPACE_TOP) {
                         break;
                 }
@@ -107,12 +106,8 @@ static u64 linux_mmap_file(Tcb_Base *tcb, linux_proc_append_t *pa, u64 addr,
                 return (u64)(-LINUX_EINVAL);
         }
 
-
-        file_size = vfs_ipc_request_response(KMSG_OP_VFS_LSEEK,
-                                             VFS_KMSG_FMT_LSEEK,
-                                             ent->vfs_handle,
-                                             0,
-                                             2);
+        file_size = vfs_ipc_request_response(
+                KMSG_OP_VFS_LSEEK, VFS_KMSG_FMT_LSEEK, ent->vfs_handle, 0, 2);
         if (file_size < 0) {
                 return (u64)file_size;
         }
@@ -122,13 +117,8 @@ static u64 linux_mmap_file(Tcb_Base *tcb, linux_proc_append_t *pa, u64 addr,
         }
 
         hint = fixed ? (vaddr)addr : linux_mmap_pick_hint(pa, addr);
-        map_addr = linux_mmap_map_range(tcb,
-                                        pa,
-                                        hint,
-                                        len_aligned,
-                                        page_num,
-                                        page_flags,
-                                        fixed);
+        map_addr = linux_mmap_map_range(
+                tcb, pa, hint, len_aligned, page_num, page_flags, fixed);
         if ((i64)map_addr < 0) {
                 return map_addr;
         }

@@ -9,7 +9,7 @@
 #include <rendezvos/sync/cas_lock.h>
 #include <rendezvos/task/tcb.h>
 
-#define LINUX_VFS_PATH_MAX   VFS_PATH_MAX
+#define LINUX_VFS_PATH_MAX VFS_PATH_MAX
 
 /*
  * Initial fd slot count when a process fs table is created. The table lives in

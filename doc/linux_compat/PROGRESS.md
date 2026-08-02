@@ -1,7 +1,7 @@
 # Linux 兼容层 — 进展与追溯索引
 
 > **Purpose**: 单一入口，把 **路线图 → 实现状态 → 验证证据 → 决策** 串起来。  
-> **Last updated**: 2026-08-01（含未提交工作区盘点 §8）
+> **Last updated**: 2026-08-02（busybox `run_all` 52/52；RPC coop 框架落地）
 
 ---
 
@@ -45,9 +45,11 @@ doc/ai/DECISIONS.md      非显然设计选择（ADR-lite）
 
 **Cross-arch gate (最新正式)**: 2026-07-09 — x86_64 + aarch64 **52/52 harness PASS**（**incbin / 内核 harness**）→ [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md) §2026-07-09
 
-**busybox / run_all（工作区，未正式 gate）**: 2026-08-01 x86_64 `run_all` **跑完** `pass=41 fail=11`（IPC FS 楔死已消）；开放项见 deferrals。aarch64 busybox 路径相对旧 incbin harness **体感明显变慢**（原因未定性，见 §8.4）。
+**busybox / run_all（工作区）**: 2026-08-02 x86_64 `x86_64_run.log` → **`pass=52 fail=0`**（`#PF @ 0x57f485` 簇已消；与迁移 busybox 前 harness 全绿对齐）。aarch64 多核墙钟慢：偏 **idle busy-`schedule` × QEMU**（`SMP=1` 很快）；见 deferrals。
 
-**core**: 工作区 `core/` 子模块另有 **port ops gate + RR schedule 小修**（需维护者审阅/单独提交）；见 §8.1。
+**RPC coop 框架**: `ipc_rpc_coop_*` 已落地（park reply / nested）；**VFS 仍用** `ipc_rpc_server_loop`（下一刀迁 server）。见 [`protocols/IPC_RPC_FRAMEWORK.md`](protocols/IPC_RPC_FRAMEWORK.md)。
+
+**core**: port ops gate 等若仍在子模块工作区，需维护者单独审阅。
 
 ---
 
@@ -68,8 +70,9 @@ doc/ai/DECISIONS.md      非显然设计选择（ADR-lite）
 | `ls /bin` demo | ✅ |
 | 用户态 `run_all.sh` 编排（替代内核 manifest 循环） | ✅ 默认；pack 生成显式 `run_one` |
 | spawn 仍 `gen_task_from_elf` + Path B 二次 bootstrap | ⬜ 应改 `execve("/init")` / cmdline |
-| IPC reply 会合楔死（VFS uninterruptible + ops gate + post-send 不弃 recv） | ✅ x86 `run_all` 已跑完；协议见 deferrals / `IPC_RPC_FRAMEWORK` §6–§8 |
-| fork/clone `#PF` @ `0x57f485`（status=139 主簇） | ⏳ 另案；见 deferrals 子项 5 |
+| IPC reply 会合楔死（VFS uninterruptible + ops gate + post-send 不弃 recv） | ✅ |
+| fork/clone `#PF` @ `0x57f485`（status=139） | ✅ 2026-08-02 x86 `run_all` 52/52（`linux_signal_proc_reset`） |
+| RPC reply-aware coop 框架 | ✅ API；⬜ VFS/backends 改用 `ipc_rpc_coop_server_loop` |
 
 详见 [`BOOT_PATH_EVOLUTION.md`](BOOT_PATH_EVOLUTION.md)、[`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md)。
 
@@ -79,9 +82,9 @@ doc/ai/DECISIONS.md      非显然设计选择（ADR-lite）
 |----|------|
 | 内嵌 ELF + argv | ✅ #03/#43/#52 |
 | initramfs / VFS execve | ✅ #8 stdout `execve success`（2026-07-09） |
-| envp / auxv | 部分（busybox Path B 有；正规化不足） |
+| envp / auxv | ✅ busybox：`HWCAP`/`EXECFN`/`RANDOM`（伪随机）；envp 仍空 |
 | de_thread + 完整 post-exec 清理 | ❌ |
-| 缩小 embedded program_map / `_num_app` | ✅ exec 已无 embedded；stub link_app 仍可链 |
+| 缩小 embedded program_map / `_num_app` | ✅ **整套删除**（仅留 rootfs.cpio `.incbin`） |
 
 详见 [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md)。
 
@@ -115,9 +118,11 @@ doc/ai/DECISIONS.md      非显然设计选择（ADR-lite）
 2. ~~VFS Phase 4 bootstrap（initramfs, open/read, execve, page_slice）~~ — ✅ 2026-07-09
 3. ~~busybox ls /bin demo~~ — ✅ 2026-07-13+
 4. ~~VFS 定长表 → vfs_slice_table（S0–S3）~~ — ✅ 2026-07-27
-5. ~~run_all 编排 + IPC 楔死修复~~ — ✅ x86 已跑完；待：审阅/提交工作区（§8）+ aarch64 体感变慢观察
-6. fork/clone `#PF` 0x57f485（deferrals 子项 5）— 下一轮 bug
-7. cmdline + `execve("/init")`；pathname/auxv；清 stub `link_app.o`
+5. ~~run_all 编排 + IPC 楔死修复~~ — ✅
+6. ~~fork/clone `#PF` 0x57f485~~ — ✅ x86 52/52
+7. ~~RPC coop 框架（park reply/nested）~~ — ✅；下一刀：**VFS listen 迁** `ipc_rpc_coop_server_loop`
+8. cmdline + `execve("/init")`（需 core bootargs）；VFS→coop listen；aarch64 日常 `SMP=1`
+9. ~~pathname/auxv；清除 link_app/`_num_app` 整套~~ — ✅ 2026-08-02
 ```
 
 ---
@@ -131,7 +136,8 @@ doc/ai/DECISIONS.md      非显然设计选择（ADR-lite）
 | Exec | [`SYSCALL_USER_RETURN_AND_EXECVE.md`](SYSCALL_USER_RETURN_AND_EXECVE.md) | [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md) | log §2026-07-09 #8 execve |
 | Time | [`TIME_SUBSYSTEM_PLAN.md`](TIME_SUBSYSTEM_PLAN.md) | §0 已落地 checklist | #16–#20 |
 | VFS | [`VFS_ARCHITECTURE.md`](VFS_ARCHITECTURE.md) · [`VFS_DYNAMIC_STORAGE.md`](VFS_DYNAMIC_STORAGE.md) | [`VFS_IMPLEMENTATION_STATUS.md`](VFS_IMPLEMENTATION_STATUS.md) | log §2026-07-09；busybox §deferrals |
-| Busybox / boot | [`BOOT_PATH_EVOLUTION.md`](BOOT_PATH_EVOLUTION.md) · [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) | [`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md) | x86 `run_all` 41/11；工作区 §8 |
+| Busybox / boot | [`BOOT_PATH_EVOLUTION.md`](BOOT_PATH_EVOLUTION.md) · [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) | [`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md) | x86 `run_all` **52/52**（2026-08-02） |
+| IPC RPC | [`protocols/IPC_RPC_FRAMEWORK.md`](protocols/IPC_RPC_FRAMEWORK.md) | coop API ✅；VFS 迁移 ⬜ | — |
 | MM | [`MM_AND_COW.md`](MM_AND_COW.md) | 分散在 Phase 1 文档 | #35 brk 等 |
 
 ---
@@ -155,71 +161,29 @@ doc/ai/DECISIONS.md      非显然设计选择（ADR-lite）
 
 ---
 
-## 8. 工作区盘点（未提交，2026-08-01）
+## 8. 工作区盘点（未提交，2026-08-02）
 
-> 分支：`busybox-support`。下列按主题归类；**以 `git status` 为准**。  
-> 协议细节：[`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md) IPC 专节 · [`protocols/IPC_RPC_FRAMEWORK.md`](protocols/IPC_RPC_FRAMEWORK.md) §6–§8。  
-> Pattern Log：[`doc/ai/AI_CHECKLIST.md`](../ai/AI_CHECKLIST.md)。  
-> **不在此提交**；维护者审阅后再分批 commit。`ASSIST_HISTORY` 仅在批准提交后追加。
+> **以 `git status` 为准**。协议：[`IPC_RPC_FRAMEWORK.md`](protocols/IPC_RPC_FRAMEWORK.md)。Pattern Log：[`AI_CHECKLIST.md`](../ai/AI_CHECKLIST.md)。  
+> **不在此自动提交**；维护者审阅后分批 commit。
 
-### 8.1 core 子模块（需维护者确认）
-
-| 主题 | 文件（core 内） | 要点 |
-|------|-----------------|------|
-| **Port ops gate** | `include/rendezvos/ipc/port.h`, `kernel/ipc/port.c`, `kernel/ipc/ipc.c` | `ops_life` / `ops_count`；仅 `REGISTERED` 可 `begin`；unregister：`CLOSING`→等 count→`port_clean`→`CLOSED`；阻塞路径 `schedule` 前 `end`；`PORT_CLOSED` + orphan drop |
-| **测例** | `modules/test/single_ipc_test.c`, `smp_ipc_test.c`, `single_timer_test.c` | 指针直传路径 `ACTIVE→REGISTERED` 伪造 |
-| **调度** | `kernel/task/task_manager.c` | RR：查找前 current `running→ready`（防自扫空转） |
-| **配置** | `script/config/config_x86_64.json` | 随子模块 staged |
-
-父仓显示 `core (modified content)`；子模块内变更目前为 **staged**。
-
-### 8.2 兼容层 — IPC / 进程生命周期（本轮主线）
+### 8.1 本轮 compat 要点
 
 | 主题 | 文件 | 要点 |
 |------|------|------|
-| RPC 框架 | `linux_layer/ipc/rpc.c`, `include/linux_compat/ipc/rpc.h` | `-EINTR` 仅 commit 前；commit 后等 reply；reply 分配失败重试；`PORT_CLOSED` 已处理；请求 `msg_data` `ref_put` |
-| VFS 客户端 | `linux_layer/fs/fs_ipc.c` | `ipc_rpc_call_va_uninterruptible` |
-| Backend | `servers/fs/vfs_backend_ipc.c` | 嵌套 / register 走 uninterruptible |
-| EXIT_NOTIFY | `linux_layer/proc/proc_wait_ipc.c`, `servers/clean_server.c`, `linux_layer/proc/clean_ipc.c` | notify OOM 重试；失败 fallback pending+poke；one-way `PORT_CLOSED` 已处理 |
-| 文档 | `BUSYBOX_BOOT_DEFERRALS.md`, `protocols/IPC_RPC_FRAMEWORK.md`, `AI_CHECKLIST.md` | 子项 2–4 ✅；x86 `run_all` 41/11 |
+| **RPC coop 框架** | `linux_layer/ipc/rpc.c`, `include/linux_compat/ipc/rpc.h` | `ipc_rpc_coop_queue` / `job` / `nested_call` / `coop_server_loop`；listen **单 send 槽**；VFS **未切** |
+| clean coop 收紧 | `servers/clean_server.c` | poll=`void`；zombie before finished；EXIT_NOTIFY 仍 one-shot |
+| 文档 | `IPC_RPC_FRAMEWORK.md`, `EXIT_CLEAN.md`, `DECISIONS.md`, deferrals, 本文 | 成熟度表与进度对齐 |
 
-### 8.3 兼容层 — busybox boot / 编排 / FS stub（同工作区，非仅 IPC）
-
-| 主题 | 文件 | 要点 |
-|------|------|------|
-| **Boot 叙事** | `doc/linux_compat/BOOT_PATH_EVOLUTION.md`（**untracked**） | incbin→cpio→busybox→`/init`+`run_all` |
-| **pack / run_all** | `script/config/pack_user_rootfs.py`, `script/rootfs/*`, `rootfs/init`（untracked） | pack 时展开显式 `run_one`；禁 ash `while read` manifest |
-| **poll / fcntl** | `misc/sys_poll.c` + `fs/linux_poll.h`；`fs/sys_fcntl.c` + `fs/linux_fcntl.h`；`syscall_entry.c` | 已从 `sys_fs_impl` 拆出；CONSOLE_IN=`POLLHUP` 见 deferrals |
-| **fd / pipe / open** | `linux_fd_table.*`, `linux_pipe.c`, `vfs_open.c`, `vfs_path.c`, `vfs_backend_cpio.c` | busybox 路径加深 |
-| **exec** | `linux_exec_image.c`, `linux_exec_stack.c`, `user_test_runner.c` | 去掉 exec embedded fallback；Path B argv/`run_all` |
-| **其它文档** | `ROOTFS.md`, `FILE_LOADING.md`, `USER_TESTS.md`, `EXECVE_*`, `FD_TABLE.md`, … | 与 boot/FS 对齐 |
-| **debug** | `include/linux_compat/debug_trace.h`（untracked） | 可选跟踪宏 |
-
-### 8.4 验证快照与开放观察
+### 8.2 验证快照
 
 | 项 | 结果 |
 |----|------|
-| x86_64 busybox `run_all` | ✅ 跑完；`pass=41 fail=11`；**不再卡 FS/IPC** |
-| fail 主簇 | `#PF pc=far=0x57f485` status=139（fork/clone/wait/…）；另 mount `-19`、`ch2b_exit` 255 |
-| aarch64 | 相对 **旧 incbin harness 全绿时代**，busybox/`run_all` 路径 **体感慢一大截**（未定性：路径更重 vs 模拟器 vs 其它；**先不修**） |
-| 成功路径开销（预期） | ops gate / RPC 成功路径仅原子与分支；重试环仅失败/OOM |
+| x86_64 busybox `run_all` | ✅ **`pass=52 fail=0`**（`x86_64_run.log` 2026-08-02） |
+| `#PF` 0x57f485 / status=139 | ✅ 未见 |
+| aarch64 SMP 墙钟 | idle×QEMU；日常 `SMP=1`；非 VFS RPC 本体 |
 
-### 8.5 代码布局整理（本轮，相对 §8.2–§8.3 语义不变）
+### 8.3 建议下一刀
 
-| 动作 | 说明 |
-|------|------|
-| 拆出 `sys_fcntl.c` | 不再塞在 `sys_fs_impl.c` |
-| `linux_fcntl.h` / `linux_poll.h` | open/fcntl/poll 常量集中 |
-| `misc/sys_poll.c` | 用 `linux_poll.h`；跟踪走 `debug_trace.h` |
-| 删除误导性 `script/rootfs/run_all.sh` | `run_all` **仅**由 `pack_user_rootfs.py` 生成到 `rootfs/tests/` |
-| `.gitignore` | 增加 `rootfs/init`（busybox symlink） |
-| `CODE_STRUCTURE.md` | 同步现行树 |
-
-### 8.6 建议提交切分（供审阅，未执行）
-
-1. **core**：ops gate + RR（维护者单独审 / 提交）  
-2. **compat IPC 生命周期**：`rpc.c` / `fs_ipc` / wait notify / clean / 协议文档 + checklist  
-3. **busybox boot 编排**：pack `run_all`、`boot_smoke.sh`、ROOTFS/BOOT 文档  
-4. **FS/syscall stub**：`sys_fcntl` / `sys_poll` / fd/pipe/open 加深  
-
-提交前再 `git status` 核对；**勿**把 core 与 compat 糊成一个 commit。
+1. VFS listen → `ipc_rpc_coop_server_loop`（先单飞 FS 突变 + park 嵌套/reply）  
+2. cmdline / `execve("/init")` 正规化  
+3. （可选）core idle → WFI（需维护者批准）

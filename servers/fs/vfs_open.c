@@ -91,7 +91,7 @@ static void vfs_join_symlink_target(const char *base, const char *target,
 }
 
 static i64 vfs_lookup_follow(const char *path, vfs_inode_t *out,
-                              bool follow_symlink)
+                             bool follow_symlink)
 {
         char target[VFS_PATH_MAX];
         char resolved[VFS_PATH_MAX];
@@ -503,11 +503,13 @@ i64 vfs_readlink_path(pid_t pid, const char *path, u64 user_buf, u64 bufsiz)
         }
 
         if (vfs_mount_view_for_path(path, &mount_view)) {
-                ret = vfs_backend_readlink(mount_view.backend_port, path, linkbuf,
+                ret = vfs_backend_readlink(mount_view.backend_port,
+                                           path,
+                                           linkbuf,
                                            sizeof(linkbuf));
         } else if (ino.backend_port) {
-                ret = vfs_backend_readlink(ino.backend_port, path, linkbuf,
-                                           sizeof(linkbuf));
+                ret = vfs_backend_readlink(
+                        ino.backend_port, path, linkbuf, sizeof(linkbuf));
         } else if (vfs_inode_symlink_target(&ino, linkbuf, sizeof(linkbuf))) {
                 ret = (i64)strlen(linkbuf);
         } else {
@@ -525,8 +527,8 @@ i64 vfs_readlink_path(pid_t pid, const char *path, u64 user_buf, u64 bufsiz)
                         copy_len = bufsiz - 1;
                 }
 
-                e = linux_mm_store_to_user(task->vs, user_buf, linkbuf,
-                                           (size_t)copy_len + 1);
+                e = linux_mm_store_to_user(
+                        task->vs, user_buf, linkbuf, (size_t)copy_len + 1);
                 if (e != REND_SUCCESS) {
                         return -LINUX_EFAULT;
                 }

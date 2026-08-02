@@ -37,7 +37,8 @@ bool linux_signal_thread_has_deliverable_pending(Thread_Base *thread);
 /**
  * @return true if a pending signal should interrupt wait4/nanosleep with EINTR.
  *         Per protocols/EXIT_CLEAN.md: SIGCHLD never interrupts wait4
- *         (EXIT_NOTIFY is the wait wake; SIGCHLD is delivered after wait returns).
+ *         (EXIT_NOTIFY is the wait wake; SIGCHLD is delivered after wait
+ * returns).
  */
 bool linux_signal_wait4_should_return_eintr(Thread_Base *thread);
 

@@ -26,7 +26,8 @@ error_t linux_task_append_copy(Tcb_Base *dst, Tcb_Base *src);
 /* clone(2): CLONE_VM uses signal attach + shared fs; else same as fork copy */
 error_t linux_task_append_clone(Tcb_Base *dst, Tcb_Base *src, u64 clone_flags);
 
-/* thread append: init on first ELF exec; copy from copy_thread; fini on thread delete */
+/* thread append: init on first ELF exec; copy from copy_thread; fini on thread
+ * delete */
 void linux_thread_append_fini(Thread_Base *thread);
 error_t linux_thread_append_copy(Thread_Base *dst, Thread_Base *src);
 error_t linux_thread_append_init(Thread_Base *thread,

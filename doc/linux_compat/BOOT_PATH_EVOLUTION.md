@@ -45,7 +45,7 @@
 
 **证据**：verification log §2026-07-09（Phase 4 bootstrap，含 #8 execve）；设计见 `INITRAMFS_PLAN.md`、`VFS_ARCHITECTURE.md`、`FILE_LOADING.md`。
 
-**双轨**：`filesystem:true` 时测例进 cpio；`link_app` 仍可嵌入——过渡期刻意保留。
+**双轨（已结束）**：曾 `filesystem:true` 进 cpio 同时保留 stub `link_app`；现仅 cpio。
 
 ---
 
@@ -71,7 +71,7 @@
 - 默认 spawn **`/init`**（symlink → `bin/busybox`）
 - Path B argv：`sh /tests/run_all.sh`（硬编码于 bootstrap，非 cmdline）
 - `pack_user_rootfs.py` **生成**显式 `run_one` 列表的 `run_all.sh`（**禁止** ash `while read` 读 manifest——会 `poll`+逐字节 `read`，在缺 UART / 嵌套 VFS 时易卡死）
-- exec 路径去掉 embedded `program_map` fallback；stub `link_app.o`（`_num_app=0`）仍可链接
+- exec / 构建：`link_app` / `_num_app` / 测例 ELF `.incbin` **已删除**；仅 `rootfs.cpio` `.incbin`
 - poll：CONSOLE_IN 按 EOF/`POLLHUP`；等待走 `sleep_port`（与 nanosleep 同族）
 
 **目的**：测例由 **PID1 shell** 拉起，接近「init → 脚本 → 子进程」的 Linux 形态。
@@ -86,8 +86,8 @@
 |----|------|
 | 用户态 `run_all.sh` 编排 | ✅ 默认路径 |
 | 嵌入测例 exec fallback | ✅ 已删 |
-| stub `link_app.o` | ⬜ 仍链进镜像时可删则删 |
-| cmdline → argv | ⬜ |
+| stub `link_app.o` / `_num_app` | ✅ **已删除**（构建与源码） |
+| cmdline → argv | ⬜（需 core 读 bootargs；见下） |
 | PID1 改 `execve("/init")`（非 `gen_task_from_elf`） | ⬜ |
 | VFS 客户端 RPC 不可中断 | 🔧 2026-08-01 已改代码，**待复跑验证**（见 §3） |
 

@@ -64,7 +64,8 @@ void* linux_mm_map_user_range_search(VSpace* vs, vaddr search_start,
                                      size_t page_num, ENTRY_FLAGS_t flags,
                                      int max_probes);
 
-/** Unmap + drop radix + pmm_free; coalesces contiguous PPN runs (chunked maps). */
+/** Unmap + drop radix + pmm_free; coalesces contiguous PPN runs (chunked maps).
+ */
 error_t linux_mm_unmap_user_range(VSpace* vs, vaddr start, size_t page_num);
 
 /** Query one page: radix shadow flags; @p out_start is the page base. */

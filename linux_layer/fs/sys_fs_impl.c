@@ -132,7 +132,8 @@ i64 sys_openat(i32 dirfd, u64 user_pathname, i32 flags, u64 mode)
                 return -LINUX_EFAULT;
         }
 
-        ret = sys_fs_load_pathname(vs, user_pathname, pathname, sizeof(pathname));
+        ret = sys_fs_load_pathname(
+                vs, user_pathname, pathname, sizeof(pathname));
         if (ret < 0) {
                 return ret;
         }
@@ -167,9 +168,7 @@ i64 sys_openat(i32 dirfd, u64 user_pathname, i32 flags, u64 mode)
         fd = linux_fd_alloc(current, &ent);
         if (fd < 0) {
                 (void)vfs_ipc_request_response(
-                        KMSG_OP_VFS_CLOSE,
-                        VFS_KMSG_FMT_CLOSE,
-                        ent.vfs_handle);
+                        KMSG_OP_VFS_CLOSE, VFS_KMSG_FMT_CLOSE, ent.vfs_handle);
                 return -LINUX_EMFILE;
         }
 
@@ -212,7 +211,8 @@ i64 sys_read(i32 fd, u64 user_buf, u64 count)
                         ret = -LINUX_EBADF;
                         break;
                 }
-                ret = linux_pipe_read(current, ent->vfs_handle, user_buf, count);
+                ret = linux_pipe_read(
+                        current, ent->vfs_handle, user_buf, count);
                 break;
         case LINUX_FD_VFS:
                 ret = vfs_ipc_request_response(KMSG_OP_VFS_READ,
@@ -251,7 +251,8 @@ i64 sys_write(i32 fd, u64 user_buf, u64 count)
                 if (ent->pipe_read) {
                         return -LINUX_EBADF;
                 }
-                return linux_pipe_write(current, ent->vfs_handle, user_buf, count);
+                return linux_pipe_write(
+                        current, ent->vfs_handle, user_buf, count);
         case LINUX_FD_VFS:
                 return vfs_ipc_request_response(KMSG_OP_VFS_WRITE,
                                                 VFS_KMSG_FMT_WRITE,
@@ -334,7 +335,8 @@ i64 sys_chdir(u64 user_pathname)
                 return -LINUX_EFAULT;
         }
 
-        ret = sys_fs_load_pathname(vs, user_pathname, pathname, sizeof(pathname));
+        ret = sys_fs_load_pathname(
+                vs, user_pathname, pathname, sizeof(pathname));
         if (ret < 0) {
                 return ret;
         }
@@ -415,7 +417,8 @@ i64 sys_mkdirat(i32 dirfd, u64 user_pathname, u32 mode)
                 return -LINUX_EFAULT;
         }
 
-        ret = sys_fs_load_pathname(vs, user_pathname, pathname, sizeof(pathname));
+        ret = sys_fs_load_pathname(
+                vs, user_pathname, pathname, sizeof(pathname));
         if (ret < 0) {
                 return ret;
         }
@@ -447,7 +450,8 @@ i64 sys_unlinkat(i32 dirfd, u64 user_pathname, i32 flags)
                 return -LINUX_EFAULT;
         }
 
-        ret = sys_fs_load_pathname(vs, user_pathname, pathname, sizeof(pathname));
+        ret = sys_fs_load_pathname(
+                vs, user_pathname, pathname, sizeof(pathname));
         if (ret < 0) {
                 return ret;
         }
@@ -462,8 +466,8 @@ i64 sys_unlinkat(i32 dirfd, u64 user_pathname, i32 flags)
                 KMSG_OP_VFS_UNLINKAT, VFS_KMSG_FMT_UNLINKAT, abs, flags);
 }
 
-i64 sys_renameat(i32 olddirfd, u64 user_oldpath, i32 newdirfd,
-                 u64 user_newpath, u32 flags)
+i64 sys_renameat(i32 olddirfd, u64 user_oldpath, i32 newdirfd, u64 user_newpath,
+                 u32 flags)
 {
         Tcb_Base *current = sys_fs_current();
         VSpace *vs;
@@ -579,7 +583,8 @@ i64 sys_newfstatat(i32 dirfd, u64 user_pathname, u64 user_statbuf, i32 flags)
                 return -LINUX_EFAULT;
         }
 
-        ret = sys_fs_load_pathname(vs, user_pathname, pathname, sizeof(pathname));
+        ret = sys_fs_load_pathname(
+                vs, user_pathname, pathname, sizeof(pathname));
         if (ret < 0) {
                 return ret;
         }
@@ -614,7 +619,8 @@ i64 sys_readlinkat(i32 dirfd, u64 user_pathname, u64 user_buf, u64 bufsiz)
                 return -LINUX_EFAULT;
         }
 
-        ret = sys_fs_load_pathname(vs, user_pathname, pathname, sizeof(pathname));
+        ret = sys_fs_load_pathname(
+                vs, user_pathname, pathname, sizeof(pathname));
         if (ret < 0) {
                 return ret;
         }
@@ -649,7 +655,8 @@ i64 sys_faccessat(i32 dirfd, u64 user_pathname, i32 mode, i32 flags)
                 return -LINUX_EFAULT;
         }
 
-        ret = sys_fs_load_pathname(vs, user_pathname, pathname, sizeof(pathname));
+        ret = sys_fs_load_pathname(
+                vs, user_pathname, pathname, sizeof(pathname));
         if (ret < 0) {
                 return ret;
         }

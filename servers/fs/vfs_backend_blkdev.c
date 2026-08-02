@@ -95,12 +95,14 @@ static i64 vfs_blkdev_rw(u64 offset, void *buf, u64 len, bool is_write)
                         chunk = (size_t)(len - done);
                 }
                 if (is_write) {
-                        memcpy((void *)(entry->kernel_virtual_address + in_page),
+                        memcpy((void *)(entry->kernel_virtual_address
+                                        + in_page),
                                (const u8 *)buf + done,
                                chunk);
                 } else {
                         memcpy((u8 *)buf + done,
-                               (void *)(entry->kernel_virtual_address + in_page),
+                               (void *)(entry->kernel_virtual_address
+                                        + in_page),
                                chunk);
                 }
                 done += chunk;
@@ -120,8 +122,8 @@ static i64 vfs_backend_blkdev_service(vfs_backend_req_t *req)
         case VFS_BACKEND_OP_READ:
                 return vfs_blkdev_rw(req->offset, req->buf, req->len, false);
         case VFS_BACKEND_OP_WRITE:
-                return vfs_blkdev_rw(req->offset, (void *)req->wbuf, req->len,
-                                     true);
+                return vfs_blkdev_rw(
+                        req->offset, (void *)req->wbuf, req->len, true);
         case VFS_BACKEND_OP_TRUNCATE:
                 return -LINUX_ENOSYS;
         case VFS_BACKEND_OP_FLUSH:
@@ -134,8 +136,8 @@ static i64 vfs_backend_blkdev_service(vfs_backend_req_t *req)
 static i64 vfs_blkdev_rpc_handler(u16 opcode, const kmsg_t *km,
                                   char **reply_port_out)
 {
-        return vfs_backend_ipc_rpc_handler(opcode, km, reply_port_out,
-                                           vfs_backend_blkdev_service);
+        return vfs_backend_ipc_rpc_handler(
+                opcode, km, reply_port_out, vfs_backend_blkdev_service);
 }
 
 static void vfs_blkdev_thread_entry(void)

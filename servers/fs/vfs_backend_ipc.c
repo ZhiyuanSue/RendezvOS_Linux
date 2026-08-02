@@ -113,8 +113,12 @@ i64 vfs_backend_ipc_rpc_handler(u16 opcode, const kmsg_t *km,
 
         switch (opcode) {
         case VFS_BACKEND_IPC_OPC_LOOKUP:
-                err = ipc_serial_decode(km->payload, km->hdr.payload_len, "spt",
-                                        &path, &req.ino_out, reply_port_out);
+                err = ipc_serial_decode(km->payload,
+                                        km->hdr.payload_len,
+                                        "spt",
+                                        &path,
+                                        &req.ino_out,
+                                        reply_port_out);
                 if (err != REND_SUCCESS) {
                         return -LINUX_EINVAL;
                 }
@@ -122,8 +126,13 @@ i64 vfs_backend_ipc_rpc_handler(u16 opcode, const kmsg_t *km,
                 req.path = path;
                 break;
         case VFS_BACKEND_IPC_OPC_READ:
-                err = ipc_serial_decode(km->payload, km->hdr.payload_len, "pqqpt",
-                                        &req.ino, &req.offset, &req.len, &req.buf,
+                err = ipc_serial_decode(km->payload,
+                                        km->hdr.payload_len,
+                                        "pqqpt",
+                                        &req.ino,
+                                        &req.offset,
+                                        &req.len,
+                                        &req.buf,
                                         reply_port_out);
                 if (err != REND_SUCCESS) {
                         return -LINUX_EINVAL;
@@ -131,33 +140,49 @@ i64 vfs_backend_ipc_rpc_handler(u16 opcode, const kmsg_t *km,
                 req.op = VFS_BACKEND_OP_READ;
                 break;
         case VFS_BACKEND_IPC_OPC_WRITE:
-                err = ipc_serial_decode(km->payload, km->hdr.payload_len, "pqqpt",
-                                        &req.ino, &req.offset, &req.len,
-                                        (void **)&req.wbuf, reply_port_out);
+                err = ipc_serial_decode(km->payload,
+                                        km->hdr.payload_len,
+                                        "pqqpt",
+                                        &req.ino,
+                                        &req.offset,
+                                        &req.len,
+                                        (void **)&req.wbuf,
+                                        reply_port_out);
                 if (err != REND_SUCCESS) {
                         return -LINUX_EINVAL;
                 }
                 req.op = VFS_BACKEND_OP_WRITE;
                 break;
         case VFS_BACKEND_IPC_OPC_TRUNCATE:
-                err = ipc_serial_decode(km->payload, km->hdr.payload_len, "pqt",
-                                        &req.ino, &req.size_arg, reply_port_out);
+                err = ipc_serial_decode(km->payload,
+                                        km->hdr.payload_len,
+                                        "pqt",
+                                        &req.ino,
+                                        &req.size_arg,
+                                        reply_port_out);
                 if (err != REND_SUCCESS) {
                         return -LINUX_EINVAL;
                 }
                 req.op = VFS_BACKEND_OP_TRUNCATE;
                 break;
         case VFS_BACKEND_IPC_OPC_FLUSH:
-                err = ipc_serial_decode(km->payload, km->hdr.payload_len, "pt",
-                                        &req.ino, reply_port_out);
+                err = ipc_serial_decode(km->payload,
+                                        km->hdr.payload_len,
+                                        "pt",
+                                        &req.ino,
+                                        reply_port_out);
                 if (err != REND_SUCCESS) {
                         return -LINUX_EINVAL;
                 }
                 req.op = VFS_BACKEND_OP_FLUSH;
                 break;
         case VFS_BACKEND_IPC_OPC_READDIR:
-                err = ipc_serial_decode(km->payload, km->hdr.payload_len, "sqpt",
-                                        &path, &req.dir_index, &req.dirent_out,
+                err = ipc_serial_decode(km->payload,
+                                        km->hdr.payload_len,
+                                        "sqpt",
+                                        &path,
+                                        &req.dir_index,
+                                        &req.dirent_out,
                                         reply_port_out);
                 if (err != REND_SUCCESS) {
                         return -LINUX_EINVAL;
@@ -166,9 +191,13 @@ i64 vfs_backend_ipc_rpc_handler(u16 opcode, const kmsg_t *km,
                 req.path = path;
                 break;
         case VFS_BACKEND_IPC_OPC_READLINK:
-                err = ipc_serial_decode(km->payload, km->hdr.payload_len, "spt",
-                                        &path, &req.readlink_buf,
-                                        &req.readlink_cap, reply_port_out);
+                err = ipc_serial_decode(km->payload,
+                                        km->hdr.payload_len,
+                                        "spt",
+                                        &path,
+                                        &req.readlink_buf,
+                                        &req.readlink_cap,
+                                        reply_port_out);
                 if (err != REND_SUCCESS) {
                         return -LINUX_EINVAL;
                 }
@@ -176,8 +205,12 @@ i64 vfs_backend_ipc_rpc_handler(u16 opcode, const kmsg_t *km,
                 req.path = path;
                 break;
         case VFS_BACKEND_IPC_OPC_MKDIR:
-                err = ipc_serial_decode(km->payload, km->hdr.payload_len, "sut",
-                                        &path, &req.mode_arg, reply_port_out);
+                err = ipc_serial_decode(km->payload,
+                                        km->hdr.payload_len,
+                                        "sut",
+                                        &path,
+                                        &req.mode_arg,
+                                        reply_port_out);
                 if (err != REND_SUCCESS) {
                         return -LINUX_EINVAL;
                 }
@@ -185,8 +218,12 @@ i64 vfs_backend_ipc_rpc_handler(u16 opcode, const kmsg_t *km,
                 req.path = path;
                 break;
         case VFS_BACKEND_IPC_OPC_CREATE:
-                err = ipc_serial_decode(km->payload, km->hdr.payload_len, "sut",
-                                        &path, &req.mode_arg, reply_port_out);
+                err = ipc_serial_decode(km->payload,
+                                        km->hdr.payload_len,
+                                        "sut",
+                                        &path,
+                                        &req.mode_arg,
+                                        reply_port_out);
                 if (err != REND_SUCCESS) {
                         return -LINUX_EINVAL;
                 }
@@ -194,8 +231,11 @@ i64 vfs_backend_ipc_rpc_handler(u16 opcode, const kmsg_t *km,
                 req.path = path;
                 break;
         case VFS_BACKEND_IPC_OPC_UNLINK:
-                err = ipc_serial_decode(km->payload, km->hdr.payload_len, "st",
-                                        &path, reply_port_out);
+                err = ipc_serial_decode(km->payload,
+                                        km->hdr.payload_len,
+                                        "st",
+                                        &path,
+                                        reply_port_out);
                 if (err != REND_SUCCESS) {
                         return -LINUX_EINVAL;
                 }
@@ -205,8 +245,12 @@ i64 vfs_backend_ipc_rpc_handler(u16 opcode, const kmsg_t *km,
         case VFS_BACKEND_IPC_OPC_RENAME: {
                 const char *path2;
 
-                err = ipc_serial_decode(km->payload, km->hdr.payload_len, "sst",
-                                        &path, &path2, reply_port_out);
+                err = ipc_serial_decode(km->payload,
+                                        km->hdr.payload_len,
+                                        "sst",
+                                        &path,
+                                        &path2,
+                                        reply_port_out);
                 if (err != REND_SUCCESS) {
                         return -LINUX_EINVAL;
                 }
@@ -218,8 +262,12 @@ i64 vfs_backend_ipc_rpc_handler(u16 opcode, const kmsg_t *km,
         case VFS_BACKEND_IPC_OPC_LINK: {
                 const char *path2;
 
-                err = ipc_serial_decode(km->payload, km->hdr.payload_len, "sst",
-                                        &path, &path2, reply_port_out);
+                err = ipc_serial_decode(km->payload,
+                                        km->hdr.payload_len,
+                                        "sst",
+                                        &path,
+                                        &path2,
+                                        reply_port_out);
                 if (err != REND_SUCCESS) {
                         return -LINUX_EINVAL;
                 }
@@ -332,7 +380,6 @@ i64 vfs_backend_ipc_call(vfs_backend_req_t *req)
                 return -LINUX_ENOMEM;
         }
 
-
         /*
          * Nested VFS→backend: uninterruptible so a signal cannot abort mid-I/O
          * and wedge the single listen thread relative to the backend.
@@ -343,15 +390,23 @@ i64 vfs_backend_ipc_call(vfs_backend_req_t *req)
                         port, reply, opc, "sp", req->path, req->ino_out);
                 break;
         case VFS_BACKEND_OP_READ:
-                ret = ipc_rpc_call_named_uninterruptible(port, reply, opc,
-                                                         "pqqp", req->ino,
-                                                         req->offset, req->len,
+                ret = ipc_rpc_call_named_uninterruptible(port,
+                                                         reply,
+                                                         opc,
+                                                         "pqqp",
+                                                         req->ino,
+                                                         req->offset,
+                                                         req->len,
                                                          req->buf);
                 break;
         case VFS_BACKEND_OP_WRITE:
-                ret = ipc_rpc_call_named_uninterruptible(port, reply, opc,
-                                                         "pqqp", req->ino,
-                                                         req->offset, req->len,
+                ret = ipc_rpc_call_named_uninterruptible(port,
+                                                         reply,
+                                                         opc,
+                                                         "pqqp",
+                                                         req->ino,
+                                                         req->offset,
+                                                         req->len,
                                                          req->wbuf);
                 break;
         case VFS_BACKEND_OP_TRUNCATE:
@@ -359,18 +414,26 @@ i64 vfs_backend_ipc_call(vfs_backend_req_t *req)
                         port, reply, opc, "pq", req->ino, req->size_arg);
                 break;
         case VFS_BACKEND_OP_FLUSH:
-                ret = ipc_rpc_call_named_uninterruptible(port, reply, opc, "p",
-                                                         req->ino);
+                ret = ipc_rpc_call_named_uninterruptible(
+                        port, reply, opc, "p", req->ino);
                 break;
         case VFS_BACKEND_OP_READDIR:
-                ret = ipc_rpc_call_named_uninterruptible(
-                        port, reply, opc, "sqp", req->path, req->dir_index,
-                        req->dirent_out);
+                ret = ipc_rpc_call_named_uninterruptible(port,
+                                                         reply,
+                                                         opc,
+                                                         "sqp",
+                                                         req->path,
+                                                         req->dir_index,
+                                                         req->dirent_out);
                 break;
         case VFS_BACKEND_OP_READLINK:
-                ret = ipc_rpc_call_named_uninterruptible(
-                        port, reply, opc, "spq", req->path, req->readlink_buf,
-                        req->readlink_cap);
+                ret = ipc_rpc_call_named_uninterruptible(port,
+                                                         reply,
+                                                         opc,
+                                                         "spq",
+                                                         req->path,
+                                                         req->readlink_buf,
+                                                         req->readlink_cap);
                 break;
         case VFS_BACKEND_OP_MKDIR:
                 ret = ipc_rpc_call_named_uninterruptible(
@@ -381,8 +444,8 @@ i64 vfs_backend_ipc_call(vfs_backend_req_t *req)
                         port, reply, opc, "su", req->path, (u64)req->mode_arg);
                 break;
         case VFS_BACKEND_OP_UNLINK:
-                ret = ipc_rpc_call_named_uninterruptible(port, reply, opc, "s",
-                                                         req->path);
+                ret = ipc_rpc_call_named_uninterruptible(
+                        port, reply, opc, "s", req->path);
                 break;
         case VFS_BACKEND_OP_RENAME:
                 ret = ipc_rpc_call_named_uninterruptible(

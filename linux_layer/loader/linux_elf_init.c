@@ -138,8 +138,8 @@ void linux_thread_append_fini(Thread_Base *thread)
         if (plen < sizeof(kport)) {
                 memcpy(kport, pfx, plen);
                 i = plen;
-                if (proc_format_pid(kport + i, sizeof(kport) - i,
-                                    (pid_t)thr->tid)
+                if (proc_format_pid(
+                            kport + i, sizeof(kport) - i, (pid_t)thr->tid)
                     != 0) {
                         ipc_rpc_unregister_port_name(kport);
                 }

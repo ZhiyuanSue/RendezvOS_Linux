@@ -9,7 +9,7 @@
 #define PROC_PID_STR_MAX        16
 #define PROC_WAIT_PORT_NAME_MAX 32
 /** Linear scan cap for reparent / zombie lookup (TODO: reverse index). */
-#define PROC_PID_SCAN_MAX       4096
+#define PROC_PID_SCAN_MAX 4096
 
 /*
  * Process registry for PID lookup.

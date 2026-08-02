@@ -47,22 +47,22 @@ void sys_exit(i64 exit_code)
                          * is common on partial maps; must not be mistaken for
                          * the hang point — THREAD_REAP / wait follows this.
                          */
-                        (void)linux_mm_store_to_user(task->vs,
-                                                     ta->clear_tid,
-                                                     &zero,
-                                                     sizeof(zero));
+                        (void)linux_mm_store_to_user(
+                                task->vs, ta->clear_tid, &zero, sizeof(zero));
                         ta->clear_tid = 0;
                 }
         }
 
         /*
          * Protocol: doc/linux_compat/protocols/EXIT_CLEAN.md
-         * Default ZOMBIE so wait4 can collect; orphans upgraded to REAPED below.
+         * Default ZOMBIE so wait4 can collect; orphans upgraded to REAPED
+         * below.
          */
         if (task) {
                 linux_proc_append_t* pa = linux_proc_append(task);
                 if (pa) {
-                        /* Linux exit status is 8-bit (see wait4 WEXITSTATUS). */
+                        /* Linux exit status is 8-bit (see wait4 WEXITSTATUS).
+                         */
                         pa->exit_code = (i32)(exit_code & 0xff);
                         pa->exit_state = LINUX_EXIT_ZOMBIE;
                 }
@@ -82,10 +82,11 @@ void sys_exit(i64 exit_code)
 
                                 if (parent_ps) {
                                         chld_disp =
-                                                &parent_ps->dispositions
-                                                         [SIGCHLD - 1];
+                                                &parent_ps->dispositions[SIGCHLD
+                                                                         - 1];
                                         if (!(chld_disp->sa_flags
-                                              & SA_NOCLDWAIT)) {                                                (void)linux_queue_signal(
+                                              & SA_NOCLDWAIT)) {
+                                                (void)linux_queue_signal(
                                                         parent_task,
                                                         SIGCHLD,
                                                         task->pid);
@@ -123,8 +124,9 @@ void sys_exit(i64 exit_code)
 
         /*
          * Link B: do not send a separate TASK_REAP from the exiting thread.
-         * That raced THREAD_REAP (listen can run TASK_REAP before delete_thread).
-         * Protocol: THREAD_REAP listen finishes claim+delete_task when REAPED.
+         * That raced THREAD_REAP (listen can run TASK_REAP before
+         * delete_thread). Protocol: THREAD_REAP listen finishes
+         * claim+delete_task when REAPED.
          */
 
         /*

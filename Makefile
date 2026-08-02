@@ -30,13 +30,13 @@ else
 ROOT_SOURCES :=
 endif
 ROOT_OBJECTS := $(patsubst $(ROOT_DIR)/%.c,$(ROOT_OBJ_DIR)/%.o,$(ROOT_SOURCES))
-ROOT_USER_OBJECT := $(ROOT_BUILD_DIR)/link_app.o
-ROOT_USER_ARCH_FILE := $(ROOT_BUILD_DIR)/link_app.arch
+ROOT_USER_ARCH_FILE := $(ROOT_BUILD_DIR)/user.arch
 ROOT_ROOTFS_CPIO := $(ROOT_BUILD_DIR)/rootfs.cpio
 ROOT_ROOTFS_CPIO_S := $(ROOT_BUILD_DIR)/rootfs_cpio.S
 ROOT_ROOTFS_CPIO_O := $(ROOT_BUILD_DIR)/rootfs_cpio.o
 ROOTFS_FILES := $(shell find $(ROOT_DIR)/rootfs -type f 2>/dev/null)
-ROOT_EXTRA_OBJECTS := $(abspath $(ROOT_OBJECTS)) $(abspath $(ROOT_USER_OBJECT)) $(abspath $(ROOT_ROOTFS_CPIO_O))
+# Initramfs only: rootfs.cpio is .incbin'd into the kernel (not link_app ELFs).
+ROOT_EXTRA_OBJECTS := $(abspath $(ROOT_OBJECTS)) $(abspath $(ROOT_ROOTFS_CPIO_O))
 
 ROOT_COMMON_CFLAGS := -Werror -Wall -Wextra -Werror=return-type -Werror=format -Wmissing-field-initializers -Wunused-result -Os -nostdlib -nostdinc -fno-builtin -fno-stack-protector -std=c11 -DNR_CPUS=$(SMP)
 ROOT_COMMON_CFLAGS += -I $(ROOT_DIR)/include -I $(CORE_DIR)/include
@@ -72,9 +72,8 @@ user: root_dirs
 	@if [ -z "$(ARCH)" ]; then echo "ARCH is required, for example: make ARCH=x86_64 user"; exit 1; fi
 	@export RENDEZVOS_USER_SKIP_GIT="$(USER_SKIP_GIT)"; \
 	python3 $(SCRIPT_CONFIG_DIR)/user.py $(ARCH) $(ROOT_DIR) $(SCRIPT_CONFIG_DIR)/user.json
-	@cp user_payload/link_app.o $(ROOT_USER_OBJECT)
 	@echo "$(ARCH)" > $(ROOT_USER_ARCH_FILE)
-	@echo "User payload generated at $(ROOT_USER_OBJECT)"
+	@echo "User payload stamped at $(ROOT_USER_ARCH_FILE) (ELFs in rootfs/)"
 
 .PHONY: rootfs_pack
 
@@ -104,13 +103,9 @@ $(ROOT_ROOTFS_CPIO_O): $(ROOT_ROOTFS_CPIO_S)
 	@$(CC) $(CFLAGS) $(ROOT_COMMON_CFLAGS) $(ROOT_EXTRA_CFLAGS) -c $< -o $@
 
 have_user_payload:
-	@if [ ! -f "$(ROOT_USER_OBJECT)" ]; then \
-		echo "No user payload found, please run 'make user ARCH=$(ARCH)' first"; \
-		exit 2; \
-	fi
 	@if [ ! -f "$(ROOT_USER_ARCH_FILE)" ]; then \
 		echo "User payload arch file missing: $(ROOT_USER_ARCH_FILE)"; \
-		echo "Please re-generate user payload: make user ARCH=$(ARCH)"; \
+		echo "Please run 'make user ARCH=$(ARCH)' first"; \
 		exit 2; \
 	fi
 	@if [ "$$(cat "$(ROOT_USER_ARCH_FILE)")" != "$(ARCH)" ]; then \

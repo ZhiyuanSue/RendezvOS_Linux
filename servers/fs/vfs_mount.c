@@ -177,7 +177,9 @@ i64 vfs_mount_register(const char *target, const char *fstype, u64 flags)
         memset(slot, 0, sizeof(*slot));
         strncpy(slot->target, norm, sizeof(slot->target) - 1);
         strncpy(slot->fstype, fstype, sizeof(slot->fstype) - 1);
-        strncpy(slot->backend_port, backend_port, sizeof(slot->backend_port) - 1);
+        strncpy(slot->backend_port,
+                backend_port,
+                sizeof(slot->backend_port) - 1);
         slot->flags = flags;
         slot->active = true;
 

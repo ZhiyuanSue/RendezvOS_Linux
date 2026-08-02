@@ -63,8 +63,8 @@ static i64 vfs_backend_ramfs_read(vfs_backend_req_t *req)
                 return -LINUX_EISDIR;
         }
 
-        return vfs_page_cache_read_inode(req->ino, req->offset, req->buf,
-                                         req->len);
+        return vfs_page_cache_read_inode(
+                req->ino, req->offset, req->buf, req->len);
 }
 
 static i64 vfs_backend_ramfs_write(vfs_backend_req_t *req)
@@ -94,8 +94,8 @@ static i64 vfs_backend_ramfs_write(vfs_backend_req_t *req)
         if (req->ino->size > old_size) {
                 vfs_page_cache_drop(req->ino->path);
         } else if (ret > 0) {
-                vfs_page_cache_sync_write(req->ino, req->offset, req->wbuf,
-                                          (u64)ret);
+                vfs_page_cache_sync_write(
+                        req->ino, req->offset, req->wbuf, (u64)ret);
         }
         return ret;
 }
@@ -233,7 +233,8 @@ static i64 vfs_backend_ramfs_service(vfs_backend_req_t *req)
                 if (!req->path || !req->dirent_out) {
                         return -LINUX_EINVAL;
                 }
-                return ramfs_readdir(req->path, req->dir_index, req->dirent_out);
+                return ramfs_readdir(
+                        req->path, req->dir_index, req->dirent_out);
         case VFS_BACKEND_OP_READLINK:
                 return -LINUX_EINVAL;
         case VFS_BACKEND_OP_MKDIR:
@@ -254,8 +255,8 @@ static i64 vfs_backend_ramfs_service(vfs_backend_req_t *req)
 static i64 vfs_ramfs_rpc_handler(u16 opcode, const kmsg_t *km,
                                  char **reply_port_out)
 {
-        return vfs_backend_ipc_rpc_handler(opcode, km, reply_port_out,
-                                           vfs_backend_ramfs_service);
+        return vfs_backend_ipc_rpc_handler(
+                opcode, km, reply_port_out, vfs_backend_ramfs_service);
 }
 
 static void vfs_ramfs_thread_entry(void)

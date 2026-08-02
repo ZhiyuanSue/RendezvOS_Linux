@@ -30,7 +30,8 @@
  * This implements basic fork() semantics:
  * - Creates child process with copied address space
  * - Child returns 0, parent returns child PID
- * - File descriptor table: linux_fs_proc_fork (page_slice clone + handle RETAIN)
+ * - File descriptor table: linux_fs_proc_fork (page_slice clone + handle
+ * RETAIN)
  * - Does NOT implement:
  *   - COW (full page table copy instead)
  *   - Signal handler inheritance (partial via append copy hook)
@@ -124,8 +125,7 @@ i64 sys_fork(void)
 
         parent_thread = get_cpu_current_thread();
 
-        child_thread =
-                copy_thread(parent_thread, child, 0);
+        child_thread = copy_thread(parent_thread, child, 0);
         if (!child_thread) {
                 pr_error("[PROC] fork: Failed to create child thread\n");
                 ret = -LINUX_ENOMEM;
@@ -154,7 +154,6 @@ i64 sys_fork(void)
          */
         linux_mm_cow_break_user_stack(
                 parent->vs, arch_get_thread_user_sp(&parent_thread->ctx));
-
 
         return (i64)child->pid;
 

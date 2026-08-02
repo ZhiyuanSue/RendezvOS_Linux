@@ -75,8 +75,8 @@ error_t vfs_slice_table_init(vfs_slice_table_t *t, u32 elem_size,
                 return -E_IN_PARAM;
         }
 
-        initial_cap = ((initial_cap + t->per_page - 1u) / t->per_page)
-                      * t->per_page;
+        initial_cap =
+                ((initial_cap + t->per_page - 1u) / t->per_page) * t->per_page;
         bytes = vfs_st_bytes_for_cap(t, initial_cap);
 
         t->slice = page_slice_create(0, (size_t)bytes);

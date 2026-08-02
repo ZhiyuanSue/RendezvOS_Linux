@@ -170,10 +170,7 @@ i64 linux_pipe_create2(Tcb_Base *task, u64 user_pipefd, i32 flags)
         fds[0] = read_fd;
         fds[1] = write_fd;
 
-        e = linux_mm_store_to_user(task->vs,
-                                   user_pipefd,
-                                   fds,
-                                   sizeof(fds));
+        e = linux_mm_store_to_user(task->vs, user_pipefd, fds, sizeof(fds));
         if (e != REND_SUCCESS) {
                 (void)linux_fd_close(task, write_fd);
                 (void)linux_fd_close(task, read_fd);

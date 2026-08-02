@@ -15,8 +15,8 @@
 #include <rendezvos/mm/page_slice_copy.h>
 #include <rendezvos/smp/percpu.h>
 
-#define VFS_PCACHE_SOFT_MAX    64u
-#define VFS_PCACHE_MAX_CACHED  (256u * 1024u)
+#define VFS_PCACHE_SOFT_MAX   64u
+#define VFS_PCACHE_MAX_CACHED (256u * 1024u)
 
 /* Upper-layer page_slice entry flag (not in core PAGE_SLICE_FLAG_*). */
 #define VFS_PCACHE_PAGE_DIRTY (1ULL << 2)
@@ -123,21 +123,23 @@ static void vfs_pcache_clear_page_lru(vfs_pcache_entry_t *ent)
 
         if (list_node_is_valid(&ent->pages_active)
             && !list_empty(&ent->pages_active)) {
-                list_for_each_safe(pos, n, &ent->pages_active) {
+                list_for_each_safe(pos, n, &ent->pages_active)
+                {
                         struct page_slice_entry *pe;
 
-                        pe = list_entry(pos, struct page_slice_entry,
-                                        page_list_node);
+                        pe = list_entry(
+                                pos, struct page_slice_entry, page_list_node);
                         list_del_init(&pe->page_list_node);
                 }
         }
         if (list_node_is_valid(&ent->pages_inactive)
             && !list_empty(&ent->pages_inactive)) {
-                list_for_each_safe(pos, n, &ent->pages_inactive) {
+                list_for_each_safe(pos, n, &ent->pages_inactive)
+                {
                         struct page_slice_entry *pe;
 
-                        pe = list_entry(pos, struct page_slice_entry,
-                                        page_list_node);
+                        pe = list_entry(
+                                pos, struct page_slice_entry, page_list_node);
                         list_del_init(&pe->page_list_node);
                 }
         }
@@ -271,7 +273,8 @@ static void vfs_pcache_destroy_entry(vfs_pcache_entry_t *ent)
         INIT_LIST_HEAD(&ent->lru_node);
 }
 
-/* Best-effort flush then free (used by drop/reset). Eviction uses careful path. */
+/* Best-effort flush then free (used by drop/reset). Eviction uses careful path.
+ */
 static void vfs_pcache_free_entry(vfs_pcache_entry_t *ent)
 {
         if (!ent) {
@@ -290,8 +293,8 @@ static void vfs_pcache_evict_one(void)
         if (!list_empty(&vfs_pcache_inactive)) {
                 node = vfs_pcache_inactive.prev;
         } else if (!list_empty(&vfs_pcache_active)) {
-                ent = list_entry(vfs_pcache_active.prev, vfs_pcache_entry_t,
-                                 lru_node);
+                ent = list_entry(
+                        vfs_pcache_active.prev, vfs_pcache_entry_t, lru_node);
                 list_del_init(&ent->lru_node);
                 list_add_head(&ent->lru_node, &vfs_pcache_inactive);
                 node = vfs_pcache_inactive.prev;
@@ -301,7 +304,8 @@ static void vfs_pcache_evict_one(void)
 
         ent = list_entry(node, vfs_pcache_entry_t, lru_node);
         if (ent->dirty && !vfs_pcache_flush_entry(ent)) {
-                /* Keep dirty; rotate toward MRU so we try another victim next. */
+                /* Keep dirty; rotate toward MRU so we try another victim next.
+                 */
                 list_del_init(&ent->lru_node);
                 list_add_head(&ent->lru_node, &vfs_pcache_active);
                 return;
@@ -390,7 +394,8 @@ static error_t vfs_pcache_fill_slice_from_kva(struct page_slice **slice_out,
 
                 memcpy((void *)page, (void *)(src + off), copy_len);
                 if (copy_len < PAGE_SIZE) {
-                        memset((void *)(page + copy_len), 0,
+                        memset((void *)(page + copy_len),
+                               0,
                                PAGE_SIZE - copy_len);
                 }
 
@@ -439,10 +444,7 @@ static error_t vfs_pcache_fill_from_inode(vfs_pcache_entry_t *ent,
         }
 
         return vfs_pcache_fill_slice_from_kva(
-                &ent->slice,
-                vfs_inode_source_kva(ino),
-                ino->size,
-                ent);
+                &ent->slice, vfs_inode_source_kva(ino), ino->size, ent);
 }
 
 static vfs_pcache_entry_t *vfs_pcache_alloc_slot(const char *path)
@@ -629,10 +631,7 @@ static error_t vfs_pcache_fill_owned_slice(const vfs_inode_t *ino,
         }
 
         return vfs_pcache_fill_slice_from_kva(
-                out_slice,
-                vfs_inode_source_kva(ino),
-                ino->size,
-                NULL);
+                out_slice, vfs_inode_source_kva(ino), ino->size, NULL);
 }
 
 i64 vfs_page_cache_clone_inode(const vfs_inode_t *ino,

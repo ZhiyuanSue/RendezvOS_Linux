@@ -55,7 +55,7 @@ typedef struct linux_proc_append {
         linux_fs_state_t *fs;
 } linux_proc_append_t;
 
-/** ppid after reparent-to-init (kernel init thread / kernel_port reap). */
+/** ppid after reparent-to-init (kernel_port reap on boot_thread; ≠ user /init). */
 #define LINUX_INIT_REAP_PPID 0
 
 #define LINUX_EXIT_RUNNING      0
@@ -76,25 +76,27 @@ typedef struct linux_thread_append {
         rendezvos_timer_event sleep_timer_event;
 
         /* Thread management (after stable-prefix fields above). */
-        u64 clear_tid; /* user pointer for set_tid_address/CLONE_CHILD_CLEARTID */
-        u64 test_cookie; /* TEST ONLY: runner correlation cookie (0 = not test) */
+        u64 clear_tid; /* user pointer for set_tid_address/CLONE_CHILD_CLEARTID
+                        */
+        u64 test_cookie; /* TEST ONLY: runner correlation cookie (0 = not test)
+                          */
 } linux_thread_append_t;
 
 #define LINUX_PROC_APPEND_BYTES   ((size_t)sizeof(linux_proc_append_t))
 #define LINUX_THREAD_APPEND_BYTES ((size_t)sizeof(linux_thread_append_t))
 
-static inline linux_proc_append_t* linux_proc_append(Tcb_Base* tcb)
+static inline linux_proc_append_t *linux_proc_append(Tcb_Base *tcb)
 {
         if (!tcb)
                 return NULL;
-        return (linux_proc_append_t*)tcb->append_tcb_info;
+        return (linux_proc_append_t *)tcb->append_tcb_info;
 }
 
-static inline linux_thread_append_t* linux_thread_append(Thread_Base* thread)
+static inline linux_thread_append_t *linux_thread_append(Thread_Base *thread)
 {
         if (!thread)
                 return NULL;
-        return (linux_thread_append_t*)thread->append_thread_info;
+        return (linux_thread_append_t *)thread->append_thread_info;
 }
 
 #endif

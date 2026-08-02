@@ -76,5 +76,6 @@ i64 vfs_perm_check_mode(u32 mode, u32 mask, u32 uid, u32 gid)
 
 i64 vfs_perm_check_mode_request(u32 mode, u32 mask)
 {
-        return vfs_perm_check_mode(mode, mask, vfs_req_cred.uid, vfs_req_cred.gid);
+        return vfs_perm_check_mode(
+                mode, mask, vfs_req_cred.uid, vfs_req_cred.gid);
 }

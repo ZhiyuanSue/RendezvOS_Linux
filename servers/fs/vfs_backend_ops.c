@@ -78,9 +78,16 @@ i64 vfs_inode_read(const vfs_inode_t *ino, u64 offset, void *buf, u64 len)
                 return 0;
         }
 
-        return vfs_backend_msg_result(ino->backend_port, VFS_BACKEND_OP_READ,
-                                      NULL, (vfs_inode_t *)ino, NULL, offset,
-                                      len, buf, NULL, 0);
+        return vfs_backend_msg_result(ino->backend_port,
+                                      VFS_BACKEND_OP_READ,
+                                      NULL,
+                                      (vfs_inode_t *)ino,
+                                      NULL,
+                                      offset,
+                                      len,
+                                      buf,
+                                      NULL,
+                                      0);
 }
 
 i64 vfs_inode_write(vfs_inode_t *ino, u64 offset, const void *buf, u64 len)
@@ -103,8 +110,15 @@ i64 vfs_inode_write(vfs_inode_t *ino, u64 offset, const void *buf, u64 len)
                 return vfs_err_rofs();
         }
 
-        return vfs_backend_msg_result(ino->backend_port, VFS_BACKEND_OP_WRITE,
-                                      NULL, ino, NULL, offset, len, NULL, buf,
+        return vfs_backend_msg_result(ino->backend_port,
+                                      VFS_BACKEND_OP_WRITE,
+                                      NULL,
+                                      ino,
+                                      NULL,
+                                      offset,
+                                      len,
+                                      NULL,
+                                      buf,
                                       0);
 }
 
@@ -121,8 +135,16 @@ i64 vfs_inode_truncate(vfs_inode_t *ino, u64 size)
                 return vfs_err_rofs();
         }
 
-        return vfs_backend_msg_result(ino->backend_port, VFS_BACKEND_OP_TRUNCATE,
-                                      NULL, ino, NULL, 0, 0, NULL, NULL, size);
+        return vfs_backend_msg_result(ino->backend_port,
+                                      VFS_BACKEND_OP_TRUNCATE,
+                                      NULL,
+                                      ino,
+                                      NULL,
+                                      0,
+                                      0,
+                                      NULL,
+                                      NULL,
+                                      size);
 }
 
 i64 vfs_inode_flush_backing(const vfs_inode_t *ino)
@@ -136,15 +158,27 @@ i64 vfs_inode_flush_backing(const vfs_inode_t *ino)
         caps = ino->backend_caps;
         if (caps & VFS_BACKEND_CAP_FLUSH_DROP) {
                 return vfs_backend_msg_result(ino->backend_port,
-                                              VFS_BACKEND_OP_FLUSH, NULL,
-                                              (vfs_inode_t *)ino, NULL, 0, 0,
-                                              NULL, NULL, 0);
+                                              VFS_BACKEND_OP_FLUSH,
+                                              NULL,
+                                              (vfs_inode_t *)ino,
+                                              NULL,
+                                              0,
+                                              0,
+                                              NULL,
+                                              NULL,
+                                              0);
         }
         if (caps & VFS_BACKEND_CAP_WRITE_SOURCE) {
                 return vfs_backend_msg_result(ino->backend_port,
-                                              VFS_BACKEND_OP_FLUSH, NULL,
-                                              (vfs_inode_t *)ino, NULL, 0, 0,
-                                              NULL, NULL, 0);
+                                              VFS_BACKEND_OP_FLUSH,
+                                              NULL,
+                                              (vfs_inode_t *)ino,
+                                              NULL,
+                                              0,
+                                              0,
+                                              NULL,
+                                              NULL,
+                                              0);
         }
 
         return 0;

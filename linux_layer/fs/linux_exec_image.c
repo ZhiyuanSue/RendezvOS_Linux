@@ -10,8 +10,7 @@
 #include <rendezvos/mm/page_slice.h>
 
 /*
- * ELF load for execve / Path B: initramfs (cpio middle layer) then VFS IPC.
- * Embedded _num_app / program_map fallback removed — tests live in cpio.
+ * ELF load for execve / Path B: initramfs (cpio) then VFS IPC.
  */
 
 i64 linux_exec_load_elf_slice(VSpace *vs, const char *filename,

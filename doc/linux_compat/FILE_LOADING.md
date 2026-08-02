@@ -52,8 +52,6 @@ sys_execve
   → page_slice_destroy (compat policy)
 ```
 
-（曾有 ③ embedded `_num_app` / `program_map`；已删除，测例只在 cpio。）
-
 brk / mmap_hint：`linux_proc_set_heap_from_elf_load`（`linux_layer/proc/linux_exec_proc.c`）。
 
 ### 用户测例 harness
@@ -70,10 +68,12 @@ linux_spawn_and_wait_test_path
   → gen_task_from_elf(..., slice)
 ```
 
-### spawn（仅 stub link_app；不再作测例源）
+### 镜像嵌入（仅 initramfs）
 
 ```text
-filesystem:true → stub link_app.o (_num_app=0)；ELF 只从 initramfs 加载
+make user  → rootfs/tests/*.ELF + /bin/busybox
+make build → rootfs.cpio → rootfs_cpio.S (.incbin) → 链进内核
+（已删除：link_app.o / _num_app / 逐 ELF .incbin）
 ```
 
 ---

@@ -29,8 +29,8 @@ static void vfs_backend_tab_ensure(void)
         if (vfs_backend_tab_ready) {
                 return;
         }
-        if (vfs_slice_table_init(&vfs_backend_tab, sizeof(vfs_backend_entry_t),
-                                 8)
+        if (vfs_slice_table_init(
+                    &vfs_backend_tab, sizeof(vfs_backend_entry_t), 8)
             == REND_SUCCESS) {
                 vfs_backend_tab.soft_max = VFS_BACKEND_REGISTRY_SOFT_MAX;
                 vfs_backend_tab_ready = true;
@@ -132,7 +132,8 @@ i64 vfs_backend_register(const char *port_name, const char *fstype, u32 caps,
 
         if (reg_flags & VFS_BACKEND_REG_ROOT) {
                 if (vfs_backend_root_port_ptr
-                    && strcmp_s(vfs_backend_root_port_ptr, port_name,
+                    && strcmp_s(vfs_backend_root_port_ptr,
+                                port_name,
                                 VFS_PATH_MAX)
                                != 0) {
                         return -LINUX_EEXIST;
@@ -142,7 +143,8 @@ i64 vfs_backend_register(const char *port_name, const char *fstype, u32 caps,
 
         if (reg_flags & VFS_BACKEND_REG_OVERLAY) {
                 if (vfs_backend_overlay_port_ptr
-                    && strcmp_s(vfs_backend_overlay_port_ptr, port_name,
+                    && strcmp_s(vfs_backend_overlay_port_ptr,
+                                port_name,
                                 VFS_PATH_MAX)
                                != 0) {
                         return -LINUX_EEXIST;
@@ -331,12 +333,14 @@ static i64 vfs_backend_path_op(const char *port, vfs_backend_op_t op,
 
 i64 vfs_backend_mkdir(const char *port, const char *path, u32 mode)
 {
-        return vfs_backend_path_op(port, VFS_BACKEND_OP_MKDIR, path, NULL, mode);
+        return vfs_backend_path_op(
+                port, VFS_BACKEND_OP_MKDIR, path, NULL, mode);
 }
 
 i64 vfs_backend_create(const char *port, const char *path, u32 mode)
 {
-        return vfs_backend_path_op(port, VFS_BACKEND_OP_CREATE, path, NULL, mode);
+        return vfs_backend_path_op(
+                port, VFS_BACKEND_OP_CREATE, path, NULL, mode);
 }
 
 i64 vfs_backend_unlink(const char *port, const char *path)
@@ -344,14 +348,15 @@ i64 vfs_backend_unlink(const char *port, const char *path)
         return vfs_backend_path_op(port, VFS_BACKEND_OP_UNLINK, path, NULL, 0);
 }
 
-i64 vfs_backend_rename(const char *port, const char *oldpath, const char *newpath)
+i64 vfs_backend_rename(const char *port, const char *oldpath,
+                       const char *newpath)
 {
         if (!oldpath || !newpath) {
                 return -LINUX_EINVAL;
         }
 
-        return vfs_backend_path_op(port, VFS_BACKEND_OP_RENAME, oldpath, newpath,
-                                   0);
+        return vfs_backend_path_op(
+                port, VFS_BACKEND_OP_RENAME, oldpath, newpath, 0);
 }
 
 i64 vfs_backend_link(const char *port, const char *oldpath, const char *newpath)
@@ -360,5 +365,6 @@ i64 vfs_backend_link(const char *port, const char *oldpath, const char *newpath)
                 return -LINUX_EINVAL;
         }
 
-        return vfs_backend_path_op(port, VFS_BACKEND_OP_LINK, oldpath, newpath, 0);
+        return vfs_backend_path_op(
+                port, VFS_BACKEND_OP_LINK, oldpath, newpath, 0);
 }

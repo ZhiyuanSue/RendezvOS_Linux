@@ -10,19 +10,21 @@
 #include <rendezvos/task/thread_loader.h>
 
 /* Linux uapi auxv (include/uapi/linux/auxvec.h). */
-#define LINUX_AT_NULL     0
-#define LINUX_AT_PHDR     3
-#define LINUX_AT_PHENT    4
-#define LINUX_AT_PHNUM    5
-#define LINUX_AT_PAGESZ   6
-#define LINUX_AT_ENTRY    9
-#define LINUX_AT_UID      11
-#define LINUX_AT_EUID     12
-#define LINUX_AT_GID      13
-#define LINUX_AT_EGID     14
-#define LINUX_AT_CLKTCK   17
-#define LINUX_AT_SECURE   23
-#define LINUX_AT_RANDOM   25
+#define LINUX_AT_NULL   0
+#define LINUX_AT_PHDR   3
+#define LINUX_AT_PHENT  4
+#define LINUX_AT_PHNUM  5
+#define LINUX_AT_PAGESZ 6
+#define LINUX_AT_ENTRY  9
+#define LINUX_AT_UID    11
+#define LINUX_AT_EUID   12
+#define LINUX_AT_GID    13
+#define LINUX_AT_EGID   14
+#define LINUX_AT_HWCAP  16
+#define LINUX_AT_CLKTCK 17
+#define LINUX_AT_SECURE 23
+#define LINUX_AT_RANDOM 25
+#define LINUX_AT_EXECFN 31
 
 #define LINUX_EXEC_RANDOM_BYTES 16
 
@@ -46,11 +48,12 @@ bool linux_exec_elf_auxv_from_slice(struct page_slice *slice,
 /*
  * Shared by sys_execve (Path A) and Path B gen_task_from_elf bootstrap.
  * Layout: argc, argv[], NULL, envp[], NULL, auxv…, random16, strings.
+ * @execfn is the pathname for AT_EXECFN (may differ from argv[0]); NULL skips.
  * @stack_top is generate_user_stack() return (or Path B adjusted SP).
  * Returns new SP (points at argc) or 0 on failure.
  */
 vaddr linux_exec_build_initial_stack(VSpace *vs, vaddr stack_top, i64 argc,
-                                     const char *kargv[],
+                                     const char *kargv[], const char *execfn,
                                      const linux_exec_elf_auxv_t *elf_auxv,
                                      vaddr *argv_user_out);
 

@@ -555,7 +555,7 @@ When a new bug pattern appears during review/debug:
     proceed; otherwise same-CPU send can spin and never schedule powerd
     (core suite PASS but no `[powerd] shutdown request`).
   - Core-test footgun (2026-08-02 log): `BSP_test`/`AP_test` used
-    `thread_set_status(init_thread, ready)` while init was in
+    `thread_set_status(boot_thread, ready)` while boot was in
     `recv_msg(kernel_port)`. That bypasses `try_match` clear →
     `STALE_AFTER_WAIT` / `claim_fail` busy loop (no `schedule`) → powerd
     starved. Fix: do not force-ready IPC-blocked waiters; shutdown only via
@@ -579,3 +579,8 @@ When a new bug pattern appears during review/debug:
   - Correctness (keep): reply `NO_MSG`/`AGAIN` → rebuild+retry; client
     recv non-`PORT_CLOSED` → re-enter blocking `recv_msg` (not bare
     `schedule`, not immediate `-EIO`).
+  - Coop poll API: `ipc_server_poll_fn_t` is `void` (return no longer
+    steers listen); clean poll only tears down EXIT_NOTIFY workers.
+  - Reply-aware coop: `ipc_rpc_coop_queue` / `nested_call` /
+    `ipc_rpc_coop_server_loop`; listen send slot serialized (`send_owner`).
+    VFS not switched yet.

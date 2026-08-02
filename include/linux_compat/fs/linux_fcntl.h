@@ -13,24 +13,24 @@
  * and linux_open_flags_normalize() in sys_fs_impl.c.
  */
 
-#define LINUX_F_DUPFD            0
-#define LINUX_F_GETFD            1
-#define LINUX_F_SETFD            2
-#define LINUX_F_GETFL            3
-#define LINUX_F_SETFL            4
-#define LINUX_F_DUPFD_CLOEXEC    1030
+#define LINUX_F_DUPFD         0
+#define LINUX_F_GETFD         1
+#define LINUX_F_SETFD         2
+#define LINUX_F_GETFL         3
+#define LINUX_F_SETFL         4
+#define LINUX_F_DUPFD_CLOEXEC 1030
 
-#define LINUX_FD_CLOEXEC         1
+#define LINUX_FD_CLOEXEC 1
 
-#define LINUX_O_ACCMODE          0003
-#define LINUX_O_RDONLY           00
-#define LINUX_O_WRONLY           01
-#define LINUX_O_RDWR             02
-#define LINUX_O_CREAT            0100
-#define LINUX_O_APPEND           02000
-#define LINUX_O_NONBLOCK         04000
-#define LINUX_O_DIRECTORY        0200000
-#define LINUX_O_CLOEXEC          02000000
+#define LINUX_O_ACCMODE   0003
+#define LINUX_O_RDONLY    00
+#define LINUX_O_WRONLY    01
+#define LINUX_O_RDWR      02
+#define LINUX_O_CREAT     0100
+#define LINUX_O_APPEND    02000
+#define LINUX_O_NONBLOCK  04000
+#define LINUX_O_DIRECTORY 0200000
+#define LINUX_O_CLOEXEC   02000000
 
 #if defined(_AARCH64_)
 /* aarch64 Linux UAPI uses a different O_DIRECTORY bit. */
@@ -38,6 +38,6 @@
 #endif
 
 /* Status flags F_SETFL may change (subset; enough for BusyBox). */
-#define LINUX_F_SETFL_MASK       (LINUX_O_APPEND | LINUX_O_NONBLOCK)
+#define LINUX_F_SETFL_MASK (LINUX_O_APPEND | LINUX_O_NONBLOCK)
 
 #endif /* _LINUX_COMPAT_FS_LINUX_FCNTL_H_ */

@@ -42,8 +42,7 @@ static i32 vfs_ns_name_cmp(const char *a, const char *b)
 }
 
 static bool vfs_ns_child_visible(const vfs_ns_node_t *parent,
-                                 const vfs_ns_node_t *child,
-                                 bool allow_deleted)
+                                 const vfs_ns_node_t *child, bool allow_deleted)
 {
         if (!child) {
                 return false;
@@ -51,7 +50,8 @@ static bool vfs_ns_child_visible(const vfs_ns_node_t *parent,
         if (!allow_deleted && child->deleted) {
                 return false;
         }
-        if (parent && parent->mount_covered && child->in_cpio && !child->overlay) {
+        if (parent && parent->mount_covered && child->in_cpio
+            && !child->overlay) {
                 return false;
         }
         return true;
@@ -119,7 +119,8 @@ static bool vfs_ns_path_of(const vfs_ns_node_t *node, char *out, u64 out_cap)
         cur[0] = '/';
         cur[1] = '\0';
         for (i = depth; i > 0; i--) {
-                if (!vfs_path_join(cur, chain[i - 1]->name, next, sizeof(next))) {
+                if (!vfs_path_join(
+                            cur, chain[i - 1]->name, next, sizeof(next))) {
                         return false;
                 }
                 strncpy(cur, next, sizeof(cur) - 1);
@@ -283,7 +284,8 @@ static vfs_ns_node_t *vfs_ns_ensure_path_nodes(const char *path, bool is_dir)
                         next++;
                 }
 
-                node = vfs_ns_ensure_child(node, component, last ? is_dir : true);
+                node = vfs_ns_ensure_child(
+                        node, component, last ? is_dir : true);
                 if (!node) {
                         return NULL;
                 }
@@ -308,7 +310,8 @@ static i64 vfs_ns_fill_inode(const vfs_ns_node_t *node, vfs_inode_t *out)
         }
 
         /*
-         * Overlay vs root catalog (mount paths resolve in vfs_namespace_lookup):
+         * Overlay vs root catalog (mount paths resolve in
+         * vfs_namespace_lookup):
          * 1. Writable overlay node → overlay backend.
          * 2. Cpio catalog node → root backend (boot image).
          */
@@ -347,7 +350,8 @@ static i64 vfs_ns_check_parent_writable(const char *path)
         }
 
         if (vfs_path_is_root(parent)) {
-                return vfs_perm_check_mode_request(vfs_ns_root.mode, VFS_PERM_W);
+                return vfs_perm_check_mode_request(vfs_ns_root.mode,
+                                                   VFS_PERM_W);
         }
 
         node = vfs_ns_lookup_node(parent, false);
@@ -684,8 +688,8 @@ i64 vfs_namespace_readdir(const char *dirpath, u64 index, vfs_dirent_t *out)
         vfs_path_normalize(dirpath, norm, sizeof(norm));
 
         if (vfs_mount_view_for_path(norm, &mount_view)) {
-                return vfs_backend_readdir(mount_view.backend_port, norm, index,
-                                           out);
+                return vfs_backend_readdir(
+                        mount_view.backend_port, norm, index, out);
         }
 
         dir = vfs_ns_lookup_node(norm, false);
@@ -732,9 +736,9 @@ i64 vfs_namespace_readdir(const char *dirpath, u64 index, vfs_dirent_t *out)
                         memset(out, 0, sizeof(*out));
                         strncpy(out->name, child->name, sizeof(out->name) - 1);
                         out->name[sizeof(out->name) - 1] = '\0';
-                        out->d_type = child->is_symlink ?
-                                              VFS_DT_LNK :
-                                      child->is_dir ? VFS_DT_DIR : VFS_DT_REG;
+                        out->d_type = child->is_symlink ? VFS_DT_LNK :
+                                      child->is_dir     ? VFS_DT_DIR :
+                                                          VFS_DT_REG;
                         if (!vfs_ns_path_of(child, path_buf, sizeof(path_buf))) {
                                 return -LINUX_ENAMETOOLONG;
                         }
@@ -833,7 +837,8 @@ i64 vfs_namespace_rename(const char *oldpath, const char *newpath)
         {
                 char parent_path[VFS_PATH_MAX];
 
-                if (!vfs_path_parent(new_norm, parent_path, sizeof(parent_path))) {
+                if (!vfs_path_parent(
+                            new_norm, parent_path, sizeof(parent_path))) {
                         return -LINUX_EINVAL;
                 }
                 dest_parent = vfs_ns_lookup_node(parent_path, false);
@@ -923,7 +928,8 @@ i64 vfs_namespace_link(const char *oldpath, const char *newpath)
         {
                 char parent_path[VFS_PATH_MAX];
 
-                if (!vfs_path_parent(new_norm, parent_path, sizeof(parent_path))) {
+                if (!vfs_path_parent(
+                            new_norm, parent_path, sizeof(parent_path))) {
                         return -LINUX_EINVAL;
                 }
                 dest_parent = vfs_ns_lookup_node(parent_path, false);

@@ -301,7 +301,8 @@ bool proc_has_wait_reaper(linux_proc_append_t* pa)
         }
         /*
          * Link A only when a live parent owns wait_port. Init-adopted (ppid 0)
-         * and orphaned-with-dead-parent use link B — see protocols/EXIT_CLEAN.md.
+         * and orphaned-with-dead-parent use link B — see
+         * protocols/EXIT_CLEAN.md.
          */
         if (pa->ppid > 0 && find_task_by_pid(pa->ppid)) {
                 return true;
@@ -337,7 +338,7 @@ Tcb_Base* find_zombie_child(pid_t ppid)
                 }
 
                 /* Zombie with all threads detached (THREAD_REAP done). */
-        if (proc_child_zombie_ready(child, pa, ppid, 0, false)) {
+                if (proc_child_zombie_ready(child, pa, ppid, 0, false)) {
                         return child;
                 }
         }

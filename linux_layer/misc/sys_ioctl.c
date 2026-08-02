@@ -11,7 +11,8 @@ typedef struct {
         u16 ws_ypixel;
 } linux_winsize_t;
 
-/* Linux asm-generic termios / tty ioctl numbers (same on x86_64 and aarch64). */
+/* Linux asm-generic termios / tty ioctl numbers (same on x86_64 and aarch64).
+ */
 #define LINUX_TCGETS     0x5401U
 #define LINUX_TIOCGWINSZ 0x5413U
 

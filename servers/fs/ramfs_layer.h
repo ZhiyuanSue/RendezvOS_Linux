@@ -17,7 +17,7 @@
 /* Entry table is growable (vfs_slice_table); no fixed BSS cap. */
 #define RAMFS_MAX_FILE_SIZE (256u * 1024u)
 
-#define RAMFS_FLAG_DIR      0x01u
+#define RAMFS_FLAG_DIR 0x01u
 
 #define RAMFS_S_IFMT  0170000u
 #define RAMFS_S_IFDIR 0040000u

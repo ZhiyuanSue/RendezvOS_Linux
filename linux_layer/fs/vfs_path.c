@@ -344,9 +344,8 @@ bool vfs_path_join(const char *base, const char *rel, char *out, u64 out_cap)
                 }
                 if (r[2] == '/') {
                         r += 3;
-                        if (!vfs_path_append_to_scratch(scratch,
-                                                        sizeof(scratch),
-                                                        r)) {
+                        if (!vfs_path_append_to_scratch(
+                                    scratch, sizeof(scratch), r)) {
                                 return false;
                         }
                 }

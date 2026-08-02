@@ -135,10 +135,8 @@ static u32 linux_fs_table_fd_capacity_locked(linux_fs_state_t *fs)
         }
 
         lock_cas(&fs->lock);
-        if (page_slice_copy_to_buffer(fs->table,
-                                      LINUX_FS_HDR_FD_CAPACITY_OFF,
-                                      &cap,
-                                      sizeof(cap))
+        if (page_slice_copy_to_buffer(
+                    fs->table, LINUX_FS_HDR_FD_CAPACITY_OFF, &cap, sizeof(cap))
             != REND_SUCCESS) {
                 cap = 0;
         }
@@ -182,7 +180,7 @@ static error_t linux_fs_ensure_pgoff(struct page_slice *table, u64 pgoff)
 }
 
 static error_t linux_fs_ensure_bytes(struct page_slice *table, u64 byte_off,
-                                       size_t len)
+                                     size_t len)
 {
         u64 end;
         u64 pgoff;
@@ -210,7 +208,8 @@ static error_t linux_fs_hdr_load(const linux_fs_state_t *fs,
         if (!fs || !fs->table || !hdr) {
                 return -E_IN_PARAM;
         }
-        return linux_fs_table_load((linux_fs_state_t *)fs, 0, hdr, sizeof(*hdr));
+        return linux_fs_table_load(
+                (linux_fs_state_t *)fs, 0, hdr, sizeof(*hdr));
 }
 
 static error_t linux_fs_hdr_store(linux_fs_state_t *fs,
@@ -240,10 +239,8 @@ static error_t linux_fs_entry_store(linux_fs_state_t *fs, i32 fd,
         if (!fs || !fs->table || !ent || fd < 0) {
                 return -E_IN_PARAM;
         }
-        return linux_fs_table_store(fs,
-                                    linux_fs_fd_byte_off(fd),
-                                    ent,
-                                    sizeof(*ent));
+        return linux_fs_table_store(
+                fs, linux_fs_fd_byte_off(fd), ent, sizeof(*ent));
 }
 
 static error_t linux_fs_slice_store(struct page_slice *table, u64 byte_off,
@@ -287,7 +284,7 @@ static error_t linux_fs_slice_store(struct page_slice *table, u64 byte_off,
 }
 
 static error_t linux_fs_table_create(struct page_slice **table_out,
-                                       u32 fd_capacity)
+                                     u32 fd_capacity)
 {
         struct page_slice *table;
         linux_fs_slice_hdr_t *hdr;
@@ -305,8 +302,7 @@ static error_t linux_fs_table_create(struct page_slice **table_out,
                 return -E_REND_NO_MEM;
         }
 
-        pg_count = PAGE_SLICE_SIZE_TO_PAGE_COUNT(
-                page_slice_get_size(table));
+        pg_count = PAGE_SLICE_SIZE_TO_PAGE_COUNT(page_slice_get_size(table));
         for (pgoff = 0; pgoff < pg_count; pgoff++) {
                 err = linux_fs_ensure_pgoff(table, pgoff);
                 if (err != REND_SUCCESS) {
@@ -398,10 +394,8 @@ const char *linux_fs_cwd(const linux_fs_state_t *fs)
         }
 
         scratch = linux_fs_hdr_lookup_buf();
-        if (linux_fs_table_load((linux_fs_state_t *)fs,
-                                0,
-                                scratch->cwd,
-                                LINUX_VFS_PATH_MAX)
+        if (linux_fs_table_load(
+                    (linux_fs_state_t *)fs, 0, scratch->cwd, LINUX_VFS_PATH_MAX)
             != REND_SUCCESS) {
                 return "/";
         }
@@ -486,7 +480,9 @@ const char *linux_fs_dir_path_lookup(linux_fs_state_t *fs, i32 fd)
         {
                 linux_fs_slice_hdr_t *scratch = linux_fs_hdr_lookup_buf();
 
-                strncpy(scratch->cwd, ent.vfs_abs_path, sizeof(scratch->cwd) - 1);
+                strncpy(scratch->cwd,
+                        ent.vfs_abs_path,
+                        sizeof(scratch->cwd) - 1);
                 scratch->cwd[sizeof(scratch->cwd) - 1] = '\0';
                 return scratch->cwd;
         }
@@ -1020,9 +1016,8 @@ i32 linux_fd_lowest_free_from(Tcb_Base *task, i32 minfd)
                 return fd;
         }
 
-        err = linux_fs_grow_fd_cap(fs,
-                                   linux_fs_fd_capacity(fs)
-                                           + LINUX_FS_SLICE_FD_GROW);
+        err = linux_fs_grow_fd_cap(
+                fs, linux_fs_fd_capacity(fs) + LINUX_FS_SLICE_FD_GROW);
         if (err != REND_SUCCESS) {
                 return -1;
         }

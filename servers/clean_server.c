@@ -78,28 +78,26 @@ static void clean_exit_notify_jobs_ensure(void)
 }
 
 /*
- * Non-blocking: never schedule() here (would wedge coop listen the same way
- * parking THREAD_REAP did). Promote ready→zombie like THREAD_REAP; return
- * true while a finished worker still needs another poll.
+ * Non-blocking poll: tear down finished EXIT_NOTIFY one-shots only.
+ * Never schedule() here. In-flight workers (!finished) live on their own
+ * threads (block on wait_port) — leave them alone until finished+zombie.
+ * Coop loop always returns to recv_msg; unfinished jobs wait for the next
+ * poll after a wake/message (not a yield-spin).
  */
-static bool clean_poll_exit_notify_jobs(void)
+static void clean_poll_exit_notify_jobs(void)
 {
         struct list_entry *pos;
         struct list_entry *n;
         struct allocator *alloc = percpu(kallocator);
-        bool still_pending = false;
 
         clean_exit_notify_jobs_ensure();
-        list_for_each_safe(pos, n, &clean_exit_notify_jobs) {
+        list_for_each_safe(pos, n, &clean_exit_notify_jobs)
+        {
                 clean_exit_notify_job_t *job =
                         list_entry(pos, clean_exit_notify_job_t, node);
                 Thread_Base *thr;
                 u64 st;
 
-                /*
-                 * In-flight workers (!finished) block on wait_port in their
-                 * own threads — do not busy-spin the listen loop on them.
-                 */
                 if (!job->finished)
                         continue;
                 thr = job->thread;
@@ -117,7 +115,7 @@ static bool clean_poll_exit_notify_jobs(void)
                                 (void)thread_set_status(thr,
                                                         thread_status_zombie);
                         } else {
-                                still_pending = true;
+                                /* finished but not zombie yet — next poll */
                                 continue;
                         }
                 }
@@ -132,7 +130,6 @@ static bool clean_poll_exit_notify_jobs(void)
                 if (alloc && alloc->m_free)
                         alloc->m_free(alloc, job);
         }
-        return still_pending;
 }
 
 static void *clean_exit_notify_thread(void *arg)
@@ -153,9 +150,9 @@ static void *clean_exit_notify_thread(void *arg)
                 }
         }
         /*
-         * Zombie before finished: coop poll must not see finished=true
-         * while status is still running (that forced still_pending
-         * schedule-spins on clean_listen).
+         * Zombie before finished: poll must not see finished=true while
+         * status is still running (else delete_thread is deferred forever
+         * across polls, or historically forced yield-spin on listen).
          */
         if (self) {
                 thread_or_flags(self, THREAD_FLAG_EXIT_REQUESTED);
@@ -181,8 +178,7 @@ static void clean_exit_notify_fallback_pending(pid_t ppid, pid_t child_pid,
         Tcb_Base *parent;
         linux_proc_append_t *parent_pa;
 
-        pr_warn(
-                "[CLEAN] EXIT_NOTIFY fallback pending+poke ppid=%d child=%d\n",
+        pr_warn("[CLEAN] EXIT_NOTIFY fallback pending+poke ppid=%d child=%d\n",
                 (int)ppid,
                 (int)child_pid);
 
@@ -245,11 +241,8 @@ static void clean_async_exit_notify(pid_t ppid, pid_t child_pid, i32 exit_code)
         job->thread_name = name;
 
         list_add_tail(&job->node, &clean_exit_notify_jobs);
-        e = gen_thread_from_func(&thr,
-                                 clean_exit_notify_thread,
-                                 name,
-                                 percpu(core_tm),
-                                 job);
+        e = gen_thread_from_func(
+                &thr, clean_exit_notify_thread, name, percpu(core_tm), job);
         if (e != REND_SUCCESS || !thr) {
                 list_del_init(&job->node);
                 if (alloc->m_free) {
@@ -272,7 +265,8 @@ static void clean_async_exit_notify(pid_t ppid, pid_t child_pid, i32 exit_code)
 static bool clean_wait_exitor_zombie(Thread_Base *target)
 {
         if (!target || !(target->flags & THREAD_FLAG_EXIT_REQUESTED)) {
-                return target && thread_get_status(target) == thread_status_zombie;
+                return target
+                       && thread_get_status(target) == thread_status_zombie;
         }
 
         for (;;) {
@@ -329,7 +323,7 @@ static void clean_handle_thread_reap(const kmsg_t *km)
                 return;
         }
 
-        if (target == percpu(init_thread_ptr)
+        if (target == percpu(boot_thread_ptr)
             || target == percpu(idle_thread_ptr)) {
                 pr_error("[clean_server] THREAD_REAP: init/idle blocked\n");
                 return;
@@ -528,7 +522,8 @@ static void clean_handle_task_reap(const kmsg_t *km, const char *reply_port,
         }
 
         if (pid <= 0) {
-                pr_error("[clean_server] TASK_REAP: invalid pid=%d\n", (int)pid);
+                pr_error("[clean_server] TASK_REAP: invalid pid=%d\n",
+                         (int)pid);
                 if (want_reply) {
                         ipc_rpc_reply(km,
                                       reply_port,
@@ -657,11 +652,11 @@ static void clean_server_ensure_port(void)
                 (u64)percpu(cpu_number));
 }
 
-static bool clean_server_poll_pending(void *ctx)
+static void clean_server_poll_pending(void *ctx)
 {
         (void)ctx;
-        /* Only EXIT_NOTIFY worker teardown is pending; THREAD_REAP is inline. */
-        return clean_poll_exit_notify_jobs();
+        /* EXIT_NOTIFY worker teardown only; THREAD_REAP stays inline. */
+        clean_poll_exit_notify_jobs();
 }
 
 void clean_server_thread(void)
@@ -693,12 +688,12 @@ static void clean_server_init(void)
         }
 
         {
-                error_t e = gen_thread_from_func(
-                        &percpu(clean_server_thread_ptr),
-                        (kthread_func)clean_server_thread,
-                        clean_server_thread_name,
-                        percpu(core_tm),
-                        NULL);
+                error_t e =
+                        gen_thread_from_func(&percpu(clean_server_thread_ptr),
+                                             (kthread_func)clean_server_thread,
+                                             clean_server_thread_name,
+                                             percpu(core_tm),
+                                             NULL);
                 if (e != REND_SUCCESS) {
                         pr_error("[ Error ]clean server init fail (e=%d)\n",
                                  (int)e);

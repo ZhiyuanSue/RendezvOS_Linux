@@ -212,7 +212,7 @@ error_t linux_mm_load_from_user(VSpace* vs, u64 user_va, void* dst, size_t len)
 error_t linux_mm_load_cstring_from_user(VSpace* vs, u64 user_va, char* dst,
                                         size_t cap)
 {
-        size_t i;
+        size_t filled = 0;
 
         if (!dst || cap < 2) {
                 return -E_IN_PARAM;
@@ -221,18 +221,34 @@ error_t linux_mm_load_cstring_from_user(VSpace* vs, u64 user_va, char* dst,
                 return -E_IN_PARAM;
         }
 
-        for (i = 0; i < cap - 1; i++) {
-                char c;
-                error_t e =
-                        linux_mm_load_from_user(vs, user_va + (u64)i, &c, 1);
+        /*
+         * Page-chunked strnlen-style copy: never bulk-read past a page
+         * boundary (avoids guard-page EFAULT on short stack paths), and
+         * avoids the old per-byte syscall copy tax.
+         */
+        while (filled < cap - 1) {
+                u64 cur = user_va + (u64)filled;
+                size_t page_room =
+                        (size_t)PAGE_SIZE - (size_t)(cur & (PAGE_SIZE - 1));
+                size_t chunk = page_room;
+                size_t j;
+                error_t e;
 
+                if (chunk > cap - 1 - filled) {
+                        chunk = cap - 1 - filled;
+                }
+
+                e = linux_mm_load_from_user(vs, cur, dst + filled, chunk);
                 if (e != REND_SUCCESS) {
                         return e;
                 }
-                dst[i] = c;
-                if (c == '\0') {
-                        return REND_SUCCESS;
+
+                for (j = 0; j < chunk; j++) {
+                        if (dst[filled + j] == '\0') {
+                                return REND_SUCCESS;
+                        }
                 }
+                filled += chunk;
         }
 
         dst[cap - 1] = '\0';
@@ -309,7 +325,8 @@ void* linux_mm_map_user_range(VSpace* vs, vaddr hint, size_t page_num,
                 return NULL;
 
         while (mapped_pages < page_num) {
-                size_t chunk = linux_mm_buddy_chunk_pages(page_num - mapped_pages);
+                size_t chunk =
+                        linux_mm_buddy_chunk_pages(page_num - mapped_pages);
                 vaddr chunk_va = hint + mapped_pages * PAGE_SIZE;
 
                 if (!mm_user_utils_set_range_and_fill(
@@ -331,12 +348,16 @@ out_rollback:
                 size_t done = 0;
 
                 while (done < mapped_pages) {
-                        size_t chunk = linux_mm_buddy_chunk_pages(mapped_pages - done);
+                        size_t chunk =
+                                linux_mm_buddy_chunk_pages(mapped_pages - done);
                         vaddr chunk_va = hint + done * PAGE_SIZE;
                         ENTRY_FLAGS_t pte_flags = 0;
                         int pte_level = 3;
-                        ppn_t ppn = have_mapped(
-                                vs, VPN(chunk_va), &pte_flags, &pte_level, handler);
+                        ppn_t ppn = have_mapped(vs,
+                                                VPN(chunk_va),
+                                                &pte_flags,
+                                                &pte_level,
+                                                handler);
 
                         if (!invalid_ppn(ppn)) {
                                 (void)mm_user_utils_clean_range_and_unfill(
@@ -399,11 +420,13 @@ error_t linux_mm_unmap_user_range(VSpace* vs, vaddr start, size_t page_num)
                 error_t err;
 
                 if ((i64)run_ppn < 0) {
-                        (void)vmm_radix_tree_unlock_range_big(vs, l0_lo, range_end);
+                        (void)vmm_radix_tree_unlock_range_big(
+                                vs, l0_lo, range_end);
                         return (error_t)run_ppn;
                 }
                 if (invalid_ppn(run_ppn)) {
-                        (void)vmm_radix_tree_unlock_range_big(vs, l0_lo, range_end);
+                        (void)vmm_radix_tree_unlock_range_big(
+                                vs, l0_lo, range_end);
                         return -E_REND_NOFOUND;
                 }
 
@@ -411,8 +434,8 @@ error_t linux_mm_unmap_user_range(VSpace* vs, vaddr start, size_t page_num)
                         vaddr next_va = start + (done + run) * PAGE_SIZE;
                         ENTRY_FLAGS_t nf = 0;
                         int nl = 3;
-                        ppn_t next_ppn =
-                                have_mapped(vs, VPN(next_va), &nf, &nl, handler);
+                        ppn_t next_ppn = have_mapped(
+                                vs, VPN(next_va), &nf, &nl, handler);
 
                         if (invalid_ppn(next_ppn)
                             || next_ppn != run_ppn + (ppn_t)run) {
@@ -424,7 +447,8 @@ error_t linux_mm_unmap_user_range(VSpace* vs, vaddr start, size_t page_num)
                 err = mm_user_utils_clean_range_and_unfill(
                         vs, page_va, run, run_ppn);
                 if (err != REND_SUCCESS) {
-                        (void)vmm_radix_tree_unlock_range_big(vs, l0_lo, range_end);
+                        (void)vmm_radix_tree_unlock_range_big(
+                                vs, l0_lo, range_end);
                         return err;
                 }
                 done += run;
@@ -530,8 +554,7 @@ error_t linux_mm_cow_split_page(VSpace* vs, vaddr page_va)
         new_flags = entry_flags_rm_sw_flags(radix_flags) | PAGE_ENTRY_VALID
                     | PAGE_ENTRY_WRITE | PAGE_ENTRY_READ;
 
-        e = linux_mm_remap_user_leaf(
-                vs, page_va, new_ppn, new_flags, old_ppn);
+        e = linux_mm_remap_user_leaf(vs, page_va, new_ppn, new_flags, old_ppn);
         if (e != REND_SUCCESS) {
                 pmm->pmm_free(pmm, new_ppn, 1);
                 return e;
@@ -554,13 +577,12 @@ error_t linux_mm_sync_cow_ptes(VSpace* vs)
                 ENTRY_FLAGS_t range_flags = 0;
                 vaddr va;
 
-                if (!vmm_radix_tree_find_first_occupied_interval(
-                            vs,
-                            iter,
-                            end,
-                            &range_start,
-                            &range_end,
-                            &range_flags)) {
+                if (!vmm_radix_tree_find_first_occupied_interval(vs,
+                                                                 iter,
+                                                                 end,
+                                                                 &range_start,
+                                                                 &range_end,
+                                                                 &range_flags)) {
                         break;
                 }
                 if (range_end <= range_start || range_start < iter)
@@ -571,8 +593,7 @@ error_t linux_mm_sync_cow_ptes(VSpace* vs)
                         for (va = range_start; va < range_end;
                              va += PAGE_SIZE) {
                                 error_t e = linux_mm_reinstall_user_pte(vs, va);
-                                if (e != REND_SUCCESS
-                                    && e != -E_REND_NOFOUND) {
+                                if (e != REND_SUCCESS && e != -E_REND_NOFOUND) {
                                         return e;
                                 }
                         }
@@ -598,7 +619,8 @@ void linux_mm_cow_break_user_stack(VSpace* vs, vaddr user_sp)
         if (percpu(user_rsp_scratch) >= PAGE_SIZE)
                 user_sp = (vaddr)percpu(user_rsp_scratch);
 #elif defined(_AARCH64_)
-        /* SP_EL0 is refreshed into ctx by arch_ctx_refresh; caller passes ctx. */
+        /* SP_EL0 is refreshed into ctx by arch_ctx_refresh; caller passes ctx.
+         */
 #endif
 
         page = ROUND_DOWN(user_sp, PAGE_SIZE);

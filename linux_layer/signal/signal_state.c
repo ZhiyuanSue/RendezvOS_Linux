@@ -256,8 +256,7 @@ void linux_signal_thread_destroy(Thread_Base *thread)
 }
 
 error_t linux_signal_thread_fork_inherit(Thread_Base *child,
-                                         Thread_Base *parent,
-                                         bool copy_blocked)
+                                         Thread_Base *parent, bool copy_blocked)
 {
         linux_thread_append_t *cta;
         linux_thread_append_t *pta;

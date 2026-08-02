@@ -1,5 +1,6 @@
 /*
- * Install upper-layer handler for core init_thread IPC loop (port is core-owned).
+ * Install upper-layer handler for core boot_thread IPC loop (port is
+ * core-owned; ≠ Linux PID1 /init).
  */
 
 #include <linux_compat/initcall.h>
@@ -65,8 +66,7 @@ static void linux_init_kernel_handler_init(void)
         }
 
         kernel_set_ipc_handler(linux_init_kernel_ipc_handler);
-        pr_info("[init_kernel] handler installed for '%s'\n",
-                KERNEL_PORT_NAME);
+        pr_info("[init_kernel] handler installed for '%s'\n", KERNEL_PORT_NAME);
         linux_init_bsp_mark_done(&linux_init_kernel_handler_installed);
 }
 

@@ -12,7 +12,7 @@
  * Distinct from KMSG_OP_PROC_WAIT_INTERRUPT (wait4) and timer CANCEL (sleep).
  */
 
-#define KMSG_OP_IPC_RECV_INTERRUPT (KMSG_OP_SYSTEM_END + 1u)
+#define KMSG_OP_IPC_RECV_INTERRUPT        (KMSG_OP_SYSTEM_END + 1u)
 #define LINUX_KMSG_FMT_IPC_RECV_INTERRUPT "q"
 
 bool linux_ipc_post_recv_interrupt(Message_Port_t *port);

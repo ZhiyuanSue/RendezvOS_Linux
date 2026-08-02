@@ -1,40 +1,41 @@
 # Busybox 启动 — 临时妥协与待修项
 
-> **Status**: 正规 boot 路径进行中（更新 2026-08-01）  
+> **Status**: busybox Path B + `run_all` 功能对齐（更新 2026-08-02）  
 > **目标**: `/init`→busybox；用户态 `run_all.sh`；回收 Path B/incbin 妥协  
 > **演进叙事（从前到后）**: [`BOOT_PATH_EVOLUTION.md`](BOOT_PATH_EVOLUTION.md)  
-> **相关**: [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) · [`VFS_DYNAMIC_STORAGE.md`](VFS_DYNAMIC_STORAGE.md) · [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md) · [`USER_TESTS.md`](USER_TESTS.md) · [`SYSCALLS.md`](SYSCALLS.md)
+> **相关**: [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) · [`VFS_DYNAMIC_STORAGE.md`](VFS_DYNAMIC_STORAGE.md) · [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md) · [`USER_TESTS.md`](USER_TESTS.md) · [`SYSCALLS.md`](SYSCALLS.md) · [`protocols/IPC_RPC_FRAMEWORK.md`](protocols/IPC_RPC_FRAMEWORK.md)
 
 本文记录 **为尽快跑通 busybox demo 而做的妥协**。每一项都应在 demo 稳定后回收或正规化。
 
 ---
 
-## 剩余开放项一览（2026-07-31）
+## 剩余开放项一览（2026-08-02）
 
 | 优先级 | 项 | 现状 | 应改为 / 备注 |
 |--------|-----|------|----------------|
 | **P0** | boot argv | 🔧 Path B bootstrap：`sh /tests/run_all.sh` | **内核 cmdline** 覆盖 |
-| **P0** | `/init` | ✅ symlink → `bin/busybox`（`build_busybox.sh`） | — |
-| **P0** | 测例编排 | ✅ 默认 **pack 生成的 `run_all.sh`**（显式 `run_one`；非内核 for 循环，也非 ash `while read`） | 失败策略 / SMP 并行另议 |
-| **P0** | **IPC reply 会合楔死** | ✅ 子项 **2–4**；`run_all` 已跑完（2026-08-01：41 pass / 11 fail，未再卡 FS） | 余量见子项 **5**（`#PF` 139） |
-| **P0** | VFS client RPC | ✅ uninterruptible + ops gate + post-send 不弃 recv | — |
-| **P0** | fake return + append hook 栈 | busybox PID1 仍 Path B（glibc auxv bootstrap） | cmdline 后可再谈统一协议 |
-| **P1** | 用户 pathname 逐字节读 | `linux_mm_load_cstring_from_user` | `strnlen_user` / 按页探测 bulk |
-| **P1** | auxv 长尾 | 缺 `AT_HWCAP` / `AT_EXECFN`；`AT_RANDOM` 占位 | 真随机 + 完整 auxv |
-| **P1** | syscall stub 深度 | poll：CONSOLE_IN=EOF/`POLLHUP`；有限等走 sleep_port；编排不再依赖 `while read` | 按 FAIL 加深；UART RX 真唤醒 |
-| **P1** | clone/fork/exit `#PF` @ `0x57f485` | status=139 主簇（x86 `run_all` 约 9/11 fail） | 另案；见 [`BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md`](BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md) |
-| **P1** | aarch64 相对 incbin harness **体感变慢** | busybox/`run_all` 路径；原因未定性 | 先观察；工作区盘点见 [`PROGRESS.md`](PROGRESS.md) §8.4 |
+| **P0** | `/init` | ✅ symlink → `bin/busybox` | — |
+| **P0** | 测例编排 | ✅ pack 生成 `run_all.sh`（显式 `run_one`） | — |
+| **P0** | **IPC reply 会合楔死** | ✅ 子项 2–4 | — |
+| **P0** | VFS client RPC | ✅ uninterruptible + ops gate | — |
+| **P0** | clone/fork `#PF` @ `0x57f485` | ✅ x86 `run_all` **52/52**（2026-08-02 log） | 与迁 busybox 前全绿对齐 |
+| **P0** | fake return + append hook 栈 | busybox PID1 仍 Path B | cmdline 后统一协议 |
+| **P1** | VFS listen → coop | 框架 ✅ `ipc_rpc_coop_*`；server 仍 `ipc_rpc_server_loop` | 迁 listen（本轮暂缓） |
+| **P1** | 用户 pathname 读 | ✅ 按页 chunk 至 NUL（`linux_mm_load_cstring_from_user`） | — |
+| **P1** | auxv 长尾 | ✅ `AT_HWCAP` / `AT_EXECFN`；`AT_RANDOM` 混 pid/tid/cpu/nonce | 真 `getrandom` 熵源可再加 |
+| **P1** | syscall stub 深度 | CONSOLE_IN=`POLLHUP`；无真 UART RX | 按需加深 |
+| **P1** | aarch64 多核体感慢 | SMP=1 很快；idle×QEMU | 日常 `SMP=1`；core idle WFI 另案 |
 | **P2** | busybox 构建妥协 | `CONFIG_STATIC`、applet 子集 | 可选 `BUSYBOX_FULL` |
-| **P3** | `_num_app` / embedded | ✅ **exec 路径已去掉** embedded fallback；stub `link_app.o` 仍链进镜像 | 可删 stub 目标若链接允许 |
+| **P3** | `_num_app` / link_app | ✅ 已删除（脚本/`task_test`/`_num_app` 全清） | — |
 | **P3** | `/dev/*` | 未做 | 真 initramfs 形态 |
 | — | **VFS 定长 BSS / 栈炸弹** | — | ✅ |
-| — | **x86-64 red zone** | — | ✅ `-mno-red-zone` |
+| — | **x86-64 red zone** | — | ✅ |
 
 **建议下一步**
 
-1. ✅ IPC 楔死：`run_all` 已完整跑完（不再卡在 `oscomp_munmap`/FS）  
-2. **子项 5**：`#PF @ 0x57f485`（fork/clone/wait/exit/pipe/yield…）— 优先于 mount stub  
-3. cmdline → argv；pathname/auxv；`MEM_SIZE` 日志里曾是 256M（建议 ≥512M）
+1. ✅ x86 busybox `run_all` 52/52；pathname/auxv/stub link_app 已回收  
+2. **cmdline → argv**（需 core 读 Multiboot/`/chosen/bootargs` + compat 接线；aarch64 当前 DTB 常无 `bootargs`）  
+3. **VFS** 改用 `ipc_rpc_coop_server_loop`（框架已齐；本轮按要求暂缓）
 
 ---
 
@@ -66,7 +67,7 @@
 | **2** | **unregister 时唤醒 port 等待者** | ✅ 2026-08-01 | per-port **ops gate**（见下） |
 | **3** | interruptible RPC：`send` 成功后禁止弃 recv | ✅ 2026-08-01 | `ipc_rpc_call_va_flags`：EINTR 仅 commit 前；之后 drain interrupt / 重试 recv |
 | **4** | reply / EXIT_NOTIFY 勿静默丢消息 | ✅ 2026-08-01 | `ipc_rpc_send_reply` 分配失败重试；EXIT_NOTIFY OOM 重试 + 失败走 pending+poke；`PORT_CLOSED` 视为已处理 |
-| **5** | clone/fork `#PF` 0x57f485 | 🔧 根因已改待重跑 | **非 COW**：ash exec 后未把 catcher 重置为 `SIG_DFL`，子退出投递 SIGCHLD 跳到 busybox `0x57f485`。已修 `linux_signal_proc_reset`；已撤 `linux_copy_vspace` 上过度的 `sync_cow_ptes`。待重跑 `run_all` |
+| **5** | clone/fork `#PF` 0x57f485 | ✅ 2026-08-02 | `linux_signal_proc_reset`；x86 `run_all` **pass=52 fail=0**（`x86_64_run.log`） |
 
 ### 子项 2 说明：为什么说「unregister 时就要 clean」，会不会「每次减 ref 都 clean」？
 
@@ -177,7 +178,7 @@ QEMU 默认 **`MEM_SIZE=512M`**（仅 `run` 的 `-m`，**不必**为改内存而
 3. 检测：无 `PT_INTERP` 且 **`PT_NOTE` 段数 > 1**（musl harness = 1，static glibc busybox = 3）— 不用扫 `"GLIBC"` 字符串（busybox 里约 2.1MB 处，易漏检）
 4. 默认 demo argv：bootstrap 内硬编码 `sh -c '/bin/ls /bin; echo SHELL_OK'`（临时）
 5. 栈布局（低→高）：`argc, argv[], NULL, envp[], NULL, auxv(…), random16, argv strings`
-6. glibc auxv：`AT_PHDR/PHENT/PHNUM/PAGESZ/ENTRY/UID…/RANDOM`（`AT_RANDOM` 仍为占位字节，非 `getrandom`）
+6. glibc auxv：`AT_PHDR/PHENT/PHNUM/PAGESZ/ENTRY/UID…/HWCAP/RANDOM/EXECFN`（`AT_RANDOM` 为伪随机混入，非硬件熵）
 
 **涉及文件**:
 
@@ -189,7 +190,7 @@ QEMU 默认 **`MEM_SIZE=512M`**（仅 `run` 的 `-m`，**不必**为改内存而
 **仍缺 / 待正规化**:
 
 - demo argv 仍硬编码在 bootstrap（跨 `gen_task_from_elf` 传 pending **不可行**，除非挂在 thread/task 上）
-- `AT_HWCAP` / `AT_EXECFN`；真随机（`getrandom` 或强 `AT_RANDOM`）
+- 真随机熵源（`getrandom` / 硬件）；cmdline 覆盖 Path B argv
 - 去掉 fake return + 二次 bootstrap，改 execve 或 core 统一协议
 
 ### 3. 「spawn」应是什么？（说明）
@@ -252,7 +253,7 @@ QEMU 默认 **`MEM_SIZE=512M`**（仅 `run` 的 `-m`，**不必**为改内存而
 
 | 项 | 现状 | 应改为 |
 |----|------|--------|
-| path syscall 读用户 pathname | `linux_mm_load_cstring_from_user`（逐字节至 NUL） | 通用 **`strnlen_user` / `copy_from_user` 字符串** API；或 bulk 读但 **按页探测、遇 guard 停** |
+| path syscall 读用户 pathname | ✅ `linux_mm_load_cstring_from_user`（**按页 chunk** 至 NUL） | — |
 | `LINUX_VFS_PATH_MAX`（256） | 仍作上限；超长无 NUL → `EINVAL` | 与 Linux `PATH_MAX` / `ENAMETOOLONG` 语义对齐 |
 | 用户栈大小 | core `thread_ustack_page_num=8` | 若深栈 / 大 `alloca` 测例再评估；**非本次 EFAULT 主因** |
 
@@ -427,18 +428,17 @@ done < /tests/manifest
 
 ---
 
-## P3 — embedded `_num_app` / `program_map`（待清）
+## P3 — embedded `_num_app` / `program_map`（✅ 已删除）
 
-为早期无 cpio 时的测例/ELF 加载保留了 **`_num_app` + `.incbin` app 表**（`script/config/user_payload_link_app.py`、`linux_layer/fs/linux_exec_image.c`）。
+| 已删除 | 说明 |
+|--------|------|
+| `script/config/user_payload_link_app.py`、`stub_link_app.S` | 不再生成 ELF `.incbin` / `_num_app` 表 |
+| `linux_layer/tests/task_test.c`、`misc/num_app_stub.c` | 无调用方 |
+| `user.py` 非 filesystem 分支 | 仅 cpio + busybox；`filesystem:false` 直接报错 |
 
-| 现状 | 应改为 |
-|------|--------|
-| harness / 部分 exec 仍可能走 embedded map | **一律**经 initramfs cpio + VFS |
-| `_num_app` 与 rootfs.cpio 双轨 | 删除 app 表与 link 脚本路径（依赖「测例已在 cpio」） |
+**仍保留（不同机制）**：`build/rootfs.cpio` 经 Makefile 生成的 `rootfs_cpio.S` **`.incbin` 进内核**——这是 initramfs 镜像嵌入，不是测例 `link_app`。
 
-与 busybox「只从 `/bin/busybox` 启动」同一清理方向；**阻塞依赖**：编排迁到 cpio + execve（上节阶段 A/B）。
-
-详见 [`FILE_LOADING.md`](FILE_LOADING.md)、[`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md)。
+详见 [`FILE_LOADING.md`](FILE_LOADING.md)、[`BOOT_PATH_EVOLUTION.md`](BOOT_PATH_EVOLUTION.md)。
 
 ---
 
@@ -475,6 +475,8 @@ done < /tests/manifest
 
 | 日期 | 变更 |
 |------|------|
+| 2026-08-02 | **清除 link_app 整套**：删脚本/`task_test`/`_num_app`；`user.py` 仅 cpio/busybox；保留 rootfs.cpio `.incbin` |
+| 2026-08-02 | **不动 core / 不迁 VFS coop**：pathname 按页 chunk；auxv `AT_HWCAP`/`AT_EXECFN`+加强 `AT_RANDOM`；`init_thread`→`boot_thread` |
 | 2026-08-01 | **工作区盘点**：[`PROGRESS.md`](PROGRESS.md) §8（core ops gate / compat IPC / boot·FS stub 切分）；aarch64 相对 incbin 体感变慢记入开放项 |
 | 2026-08-01 | **验证**：busybox `run_all` 跑完 `pass=41 fail=11`，IPC 楔死不再出现；失败簇为 `#PF 0x57f485` + mount -19 + ch2b_exit 255 |
 | 2026-08-01 | **子项 3–4 + EXIT_NOTIFY**：RPC post-send 不弃 recv；reply/EXIT_NOTIFY 分配重试；notify 失败 fallback pending+poke；`PORT_CLOSED` 不当事故丢消息 |

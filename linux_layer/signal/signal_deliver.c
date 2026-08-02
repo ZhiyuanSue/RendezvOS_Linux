@@ -231,8 +231,8 @@ static bool signal_install_return_path(VSpace *vs, struct trap_frame *tf,
                 u64 ret_addr = (u64)restorer;
 
                 sp = (sp - sizeof(u64)) & ~((vaddr)0xF);
-                if (linux_mm_store_to_user(vs, (u64)sp, &ret_addr,
-                                           sizeof(ret_addr))
+                if (linux_mm_store_to_user(
+                            vs, (u64)sp, &ret_addr, sizeof(ret_addr))
                     != REND_SUCCESS)
                         return false;
         }
@@ -462,9 +462,9 @@ bool linux_deliver_pending_signals(struct trap_frame *tf)
         ts->signal_restore.sig = sig;
 
         if (!current_process->vs
-            || !signal_install_return_path(current_process->vs, tf, &user_sp,
-                                           disp, ps)) {
-                                                   ts->signal_inflight = 0;
+            || !signal_install_return_path(
+                    current_process->vs, tf, &user_sp, disp, ps)) {
+                ts->signal_inflight = 0;
                 ts->signal_restore.active = 0;
                 if (ts->alt_stack.ss_flags & SS_ONSTACK) {
                         ts->alt_stack.ss_flags &= ~SS_ONSTACK;

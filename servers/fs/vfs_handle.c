@@ -25,8 +25,8 @@ error_t vfs_handle_init(void)
         error_t err;
 
         vfs_slice_table_destroy(&vfs_handle_tab);
-        err = vfs_slice_table_init(&vfs_handle_tab, sizeof(vfs_open_handle_t),
-                                   32);
+        err = vfs_slice_table_init(
+                &vfs_handle_tab, sizeof(vfs_open_handle_t), 32);
         if (err != REND_SUCCESS) {
                 return err;
         }

@@ -129,8 +129,8 @@ static i64 signal_queue_on_thread_helper(Tcb_Base* target,
          * nanosleep: block_on_receive on sleep_port → TIMER_CANCEL kmsg.
          * wait4: wait_port_<pid> → WAIT_INTERRUPT only if
          *   linux_signal_wait4_should_return_eintr (non-SIGCHLD). Child exit
-         *   wakes wait via EXIT_NOTIFY (protocols/WAIT_AND_SIGCHLD.md), not here.
-         * RPC reply ports → IPC_RECV_INTERRUPT (see ipc_block_wake.c).
+         *   wakes wait via EXIT_NOTIFY (protocols/WAIT_AND_SIGCHLD.md), not
+         * here. RPC reply ports → IPC_RECV_INTERRUPT (see ipc_block_wake.c).
          */
         if (thread_get_status(target_thread)
             == thread_status_block_on_receive) {

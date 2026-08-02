@@ -32,8 +32,8 @@ i64 sys_mount(u64 user_source, u64 user_target, u64 user_fstype, u64 flags,
         }
 
         if (user_source) {
-                e = linux_mm_load_from_user(vs, user_source, source,
-                                            sizeof(source));
+                e = linux_mm_load_from_user(
+                        vs, user_source, source, sizeof(source));
                 if (e != REND_SUCCESS) {
                         return -LINUX_EFAULT;
                 }
@@ -56,8 +56,8 @@ i64 sys_mount(u64 user_source, u64 user_target, u64 user_fstype, u64 flags,
 
         (void)source;
 
-        return vfs_ipc_request_response(KMSG_OP_VFS_MOUNT, VFS_KMSG_FMT_MOUNT,
-                                        target, fstype, flags);
+        return vfs_ipc_request_response(
+                KMSG_OP_VFS_MOUNT, VFS_KMSG_FMT_MOUNT, target, fstype, flags);
 }
 
 i64 sys_umount2(u64 user_target, i32 flags)
@@ -82,6 +82,6 @@ i64 sys_umount2(u64 user_target, i32 flags)
         }
         target[sizeof(target) - 1] = '\0';
 
-        return vfs_ipc_request_response(KMSG_OP_VFS_UMOUNT, VFS_KMSG_FMT_UMOUNT,
-                                        target, (u32)flags);
+        return vfs_ipc_request_response(
+                KMSG_OP_VFS_UMOUNT, VFS_KMSG_FMT_UMOUNT, target, (u32)flags);
 }

@@ -103,8 +103,8 @@ static i64 linux_poll_scan(Tcb_Base *task, VSpace *vs, u64 ufds, u32 nfds)
                 return -LINUX_ENOMEM;
         }
 
-        e = linux_mm_load_from_user(vs, ufds, kfds,
-                                    (size_t)nfds * sizeof(*kfds));
+        e = linux_mm_load_from_user(
+                vs, ufds, kfds, (size_t)nfds * sizeof(*kfds));
         if (e != REND_SUCCESS) {
                 alloc->m_free(alloc, kfds);
                 return -LINUX_EFAULT;
@@ -125,7 +125,8 @@ static i64 linux_poll_scan(Tcb_Base *task, VSpace *vs, u64 ufds, u32 nfds)
                         ready++;
 #if LINUX_COMPAT_TRACE_POLL
                         pr_info("[poll] fd=%d kind=bad events=0x%x -> NVAL\n",
-                                kfds[i].fd, (u32)kfds[i].events);
+                                kfds[i].fd,
+                                (u32)kfds[i].events);
 #endif
                         continue;
                 }
@@ -148,8 +149,8 @@ static i64 linux_poll_scan(Tcb_Base *task, VSpace *vs, u64 ufds, u32 nfds)
 #endif
         }
 
-        e = linux_mm_store_to_user(vs, ufds, kfds,
-                                   (size_t)nfds * sizeof(*kfds));
+        e = linux_mm_store_to_user(
+                vs, ufds, kfds, (size_t)nfds * sizeof(*kfds));
         alloc->m_free(alloc, kfds);
         if (e != REND_SUCCESS) {
                 return -LINUX_EFAULT;
@@ -238,9 +239,9 @@ i64 sys_poll(u64 ufds, u32 nfds, i32 timeout_ms)
 #endif
 
         if (timeout_ms > 0) {
-                deadline = rendezvos_time_now()
-                           + rendezvos_time_us_to_count(
-                                   (u64)timeout_ms * 1000ull);
+                deadline =
+                        rendezvos_time_now()
+                        + rendezvos_time_us_to_count((u64)timeout_ms * 1000ull);
                 have_deadline = true;
         }
 

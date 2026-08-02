@@ -7,9 +7,11 @@
 /*
  * Zombie wakeup after THREAD_REAP (thread_number==0):
  * - Live parent: blocking send_msg on wait_port_<ppid> (today: one-shot
- *   EXIT_NOTIFY thread so coop listen is not stalled; target: try_send+pending).
- * - Reparented / dead parent: send_msg on kernel_port (init thread recv).
- * kmsg_hdr.module = target port service_id; payload carries child_pid + exit_code.
+ *   EXIT_NOTIFY thread so coop listen is not stalled; target:
+ * try_send+pending).
+ * - Reparented / dead parent: send_msg on kernel_port (boot_thread recv).
+ * kmsg_hdr.module = target port service_id; payload carries child_pid +
+ * exit_code.
  */
 
 #define KMSG_OP_PROC_FIRST (KMSG_OP_SYSTEM_END + 1u)

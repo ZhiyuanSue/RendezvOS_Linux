@@ -21,8 +21,8 @@
 | 角色 | 谁 | 职责 |
 |------|-----|------|
 | **Exitor** | 退出中的用户线程 | `THREAD_REAP` → zombie → `schedule` |
-| **Listen** | **唯一** `clean_listen` 线程（BSP） | `ipc_server_coop_loop`：`try_recv` + 推进 pending（今日仅 EXIT_NOTIFY worker 收尸）；`THREAD_REAP` zombie 等待 **inline** `schedule`（协议允许；勿 park，见下） |
-| **EXIT_NOTIFY worker** | listen 按需 spawn 的 one-shot（过渡） | **仅**阻塞 `EXIT_NOTIFY`→父 `wait_port`；目标改为 listen 内 `try_send` + pending |
+| **Listen** | **唯一** `clean_listen` 线程（BSP） | `ipc_server_coop_loop`：`try_recv` + `poll`（今日仅 EXIT_NOTIFY worker **收尸**）+ 空则 `recv_msg`；`THREAD_REAP` zombie 等待 **inline** `schedule`（协议允许；勿 park，见下） |
+| **EXIT_NOTIFY worker** | listen 按需 spawn 的 one-shot（过渡） | **仅**阻塞 `EXIT_NOTIFY`→父 `wait_port`；**目标**：listen 内对已阻塞父 `try_send`，失败再 park/fallback（去掉每退出一次 `gen_thread`） |
 | **Parent** | 活父 | `wait4`：收 notify → `REAPED` → `TASK_REAP_SYNC` |
 
 ### 为何曾经反复 `send done` / 无 `enter`
@@ -158,6 +158,28 @@ Parent wait4:
 
 ---
 
+## Listen 上仍允许的 `schedule`（非 poll 空转）
+
+| 位置 | 为何允许 | 禁止改成 |
+|------|----------|----------|
+| `clean_wait_exitor_zombie` | THREAD_REAP 会合后 exitor 可能尚未 zombie；ready→zombie promote，否则 `schedule` | 把整个 THREAD_REAP park 进 pending 却不保证随后 `EXIT_NOTIFY`（ash `wait4` 挂） |
+| `clean_claim_and_delete_task` | 等 `thread_number==0` / 防双 claim | 父侧空转等 pid 消失 |
+| EXIT_NOTIFY one-shot 末尾 | worker 自标 zombie 后等 listen `delete_thread` | 在 listen 上同步 `send` `wait_port` |
+
+`poll_pending` / `clean_poll_exit_notify_jobs`：**禁止** `schedule()`。
+
+## 相对「单线程轮询多请求进度」的差距
+
+| 目标 | 今日 |
+|------|------|
+| poll 推进多个 **协议 FSM** | 仅收尸已 `finished` 的 EXIT_NOTIFY 线程 |
+| EXIT_NOTIFY 不 `gen_thread` | 仍 one-shot（正确性优先于少线程） |
+| 框架级 pending API | 无；job list 留在 `clean_server.c` |
+
+收紧原则：先保证 Link A/B 与 ash `run_all`；再做 EXIT_NOTIFY `try_send`+park。**不要**为「像 VFS 一样」把 THREAD_REAP 丢回 worker 池。
+
+---
+
 ## 明确禁止
 
 - 把 `ppid==0` 当成链路 A（对 kernel_port 发 EXIT_NOTIFY）。  
@@ -184,4 +206,4 @@ Parent wait4:
 | exit / SIGCHLD queue | `linux_layer/syscall/thread_syscall.c` |
 | wait4 / EINTR 判定 | `linux_layer/proc/sys_wait.c`；`linux_signal_wait4_should_return_eintr` |
 | wait 唤醒 | `linux_layer/proc/proc_wait_ipc.c`（EXIT_NOTIFY / WAIT_INTERRUPT） |
-| 通用 pool（VFS 等，**非 clean client 路径**） | `linux_layer/ipc/rpc.c` |
+| Coop / 过渡 reply loop | `linux_layer/ipc/rpc.c`（**无** per-msg worker pool） |

@@ -99,7 +99,7 @@
 
 **无交叉。** 目录 syscall 走 VFS IPC + `vfs_inode_t`；内核加载 ELF/manifest 仍走 [`FILE_LOADING.md`](FILE_LOADING.md) 的 page_slice 路径。
 
-execve 已从 initramfs 跑通（`#8` stdout：`execve success`），embedded `program_map` 可逐步缩小（见 [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md)）。
+execve 已从 initramfs 跑通（`#8` stdout：`execve success`）；embedded `program_map` / link_app 已删除（见 [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md)）。
 
 ---
 

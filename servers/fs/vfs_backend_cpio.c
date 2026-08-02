@@ -67,7 +67,8 @@ static i64 vfs_backend_cpio_readlink(vfs_backend_req_t *req)
         cpio_rofs_stat_t st;
         u64 len;
 
-        if (!req || !req->path || !req->readlink_buf || req->readlink_cap == 0) {
+        if (!req || !req->path || !req->readlink_buf
+            || req->readlink_cap == 0) {
                 return -LINUX_EINVAL;
         }
 
@@ -99,7 +100,8 @@ static i64 vfs_backend_cpio_read(vfs_backend_req_t *req)
                 return 0;
         }
 
-        /* Direct blob copy; page_slice cache fill under nested IPC hung bring-up. */
+        /* Direct blob copy; page_slice cache fill under nested IPC hung
+         * bring-up. */
         st.mode = req->ino->mode;
         st.size = req->ino->size;
         st.is_dir = req->ino->is_dir;
@@ -134,8 +136,8 @@ static i64 vfs_backend_cpio_write(vfs_backend_req_t *req)
                 return -LINUX_EISDIR;
         }
 
-        return vfs_page_cache_write_inode(req->ino, req->offset, req->wbuf,
-                                          req->len);
+        return vfs_page_cache_write_inode(
+                req->ino, req->offset, req->wbuf, req->len);
 }
 
 static i64 vfs_backend_cpio_flush(vfs_backend_req_t *req)
@@ -183,20 +185,20 @@ static i64 vfs_backend_cpio_service(vfs_backend_req_t *req)
 static i64 vfs_cpio_rpc_handler(u16 opcode, const kmsg_t *km,
                                 char **reply_port_out)
 {
-        return vfs_backend_ipc_rpc_handler(opcode, km, reply_port_out,
-                                           vfs_backend_cpio_service);
+        return vfs_backend_ipc_rpc_handler(
+                opcode, km, reply_port_out, vfs_backend_cpio_service);
 }
 
 static void vfs_cpio_thread_entry(void)
 {
         i64 reg_ret;
 
-        reg_ret = vfs_backend_ipc_register(
-                VFS_BACKEND_PORT_CPIO,
-                VFS_BACKEND_FSTYPE_CPIO,
-                VFS_BACKEND_CAP_READ_SOURCE | VFS_BACKEND_CAP_WRITE_CACHE
-                        | VFS_BACKEND_CAP_FLUSH_DROP,
-                VFS_BACKEND_REG_ROOT);
+        reg_ret = vfs_backend_ipc_register(VFS_BACKEND_PORT_CPIO,
+                                           VFS_BACKEND_FSTYPE_CPIO,
+                                           VFS_BACKEND_CAP_READ_SOURCE
+                                                   | VFS_BACKEND_CAP_WRITE_CACHE
+                                                   | VFS_BACKEND_CAP_FLUSH_DROP,
+                                           VFS_BACKEND_REG_ROOT);
         if (reg_ret < 0) {
                 pr_error("[VFS/cpio] register with server failed: %lld\n",
                          (long long)reg_ret);

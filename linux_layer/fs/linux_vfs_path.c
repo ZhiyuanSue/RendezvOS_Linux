@@ -58,8 +58,8 @@ i64 linux_vfs_resolve_path(Tcb_Base *task, i32 dirfd, const char *path,
                                        == 0) {
                                 linux_fd_set_is_dir(fs, dirfd, true);
                                 if (dent->vfs_abs_path[0] == '\0') {
-                                        linux_fd_set_vfs_abs_path(fs, dirfd,
-                                                                  probe);
+                                        linux_fd_set_vfs_abs_path(
+                                                fs, dirfd, probe);
                                 }
                                 dent = linux_fd_get(task, dirfd);
                         }

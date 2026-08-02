@@ -99,17 +99,16 @@ static void linux_pf_log_user_context(struct trap_frame *tf, vaddr fault_addr,
         }
 #endif
 
-        pr_error(
-                "[MM] fault context pid=%d tid=%d far=0x%lx pc=0x%lx sp=0x%lx "
-                "write=%d present=%d exec=%d\n",
-                task ? (int)task->pid : -1,
-                th ? (int)th->tid : -1,
-                (unsigned long)fault_addr,
-                (unsigned long)user_pc,
-                (unsigned long)user_sp,
-                is_write ? 1 : 0,
-                is_present ? 1 : 0,
-                is_execute ? 1 : 0);
+        pr_error("[MM] fault context pid=%d tid=%d far=0x%lx pc=0x%lx sp=0x%lx "
+                 "write=%d present=%d exec=%d\n",
+                 task ? (int)task->pid : -1,
+                 th ? (int)th->tid : -1,
+                 (unsigned long)fault_addr,
+                 (unsigned long)user_pc,
+                 (unsigned long)user_sp,
+                 is_write ? 1 : 0,
+                 is_present ? 1 : 0,
+                 is_execute ? 1 : 0);
 }
 
 static void linux_compat_deliver_segv_or_fatal(struct trap_frame *tf)
@@ -321,7 +320,8 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
 fatal_fault:
 unhandled_fault:
         if (!is_kernel) {
-                /* Context already printed for the common "not in radix" case. */
+                /* Context already printed for the common "not in radix" case.
+                 */
                 if (in_radix)
                         linux_pf_log_user_context(tf,
                                                   fault_addr,

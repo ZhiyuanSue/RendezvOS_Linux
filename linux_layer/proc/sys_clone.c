@@ -36,7 +36,8 @@
  * syscall_entry remaps aarch64 arg4/arg5 accordingly.
  *
  * Implementation notes:
- * - Append: memset + proc static fields, then linux_task_append_clone (see APPEND_HOOKS.md)
+ * - Append: memset + proc static fields, then linux_task_append_clone (see
+ * APPEND_HOOKS.md)
  * - Reuses copy_thread() from core (thread.append_hooks.copy)
  * - With CLONE_VM: shares parent's VSpace (no refcount increment needed)
  * - With CLONE_THREAD: sets same thread group (stored in proc_append)
@@ -192,8 +193,7 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
          * child. The stack parameter points to the TOP of the stack (stacks
          * grow downward).
          */
-        child_thread =
-                copy_thread(parent_thread, child, 0);
+        child_thread = copy_thread(parent_thread, child, 0);
         if (!child_thread) {
                 pr_error("[PROC] clone: Failed to create child thread\n");
                 ret = -LINUX_ENOMEM;

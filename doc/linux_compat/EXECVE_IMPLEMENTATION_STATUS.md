@@ -59,7 +59,7 @@
 |-------|---------|---------|
 | **3a** | envp on stack | linux_layer only |
 | **3b** | `de_thread` / exit_group semantics | policy in `GOALS_AND_CORE_CONTRACT.md` §3.1 |
-| **3c** | auxv (`AT_PHDR`, `AT_ENTRY`, `AT_PAGESZ`, `AT_RANDOM`, …) | needs aux vector builder |
+| **3c** | auxv (`AT_PHDR`…`AT_RANDOM`/`AT_HWCAP`/`AT_EXECFN`) | ✅ builder；envp / 真熵仍缺 |
 | **3c** | Full `linux_exec_reset_proc_state` | signal dispositions, altstack, blocked mask, thread pending |
 | **3d** | Read ELF from VFS | ✅ static ELF64 via `linux_exec_load_elf_slice` + `vfs_exec_load.c` |
 | **3d** | shebang, `PT_INTERP` | deferred (no dynamic linking) |
@@ -79,7 +79,6 @@
 ## Next steps
 
 1. ✅ Boot: `/init`→busybox + `run_all.sh`；exec 去掉 embedded fallback  
-2. envp + 正规化 auxv  
+2. ✅ auxv `HWCAP`/`EXECFN` + 清除 link_app 整套；⬜ envp  
 3. de_thread + complete signal/MM reset  
-4. 可选：去掉 stub `link_app.o` 链接依赖  
-5. Verification gate entry in [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md)
+4. Verification gate entry in [`CROSS_ARCH_VERIFICATION_LOG.md`](CROSS_ARCH_VERIFICATION_LOG.md)

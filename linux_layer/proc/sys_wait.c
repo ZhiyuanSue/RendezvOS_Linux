@@ -203,8 +203,8 @@ static i64 wait4_try_pending(Tcb_Base *parent, linux_proc_append_t *parent_pa,
         pid_t child_pid;
         i32 exit_code;
 
-        if (!linux_proc_wait_pending_take(parent_pa, want_pid, parent,
-                                         &child_pid, &exit_code))
+        if (!linux_proc_wait_pending_take(
+                    parent_pa, want_pid, parent, &child_pid, &exit_code))
                 return 0;
         return wait4_finish_reap(parent, user_wstatus, child_pid, exit_code);
 }
@@ -230,8 +230,8 @@ static i64 wait4_handle_port_msg(Tcb_Base *parent,
                  * WAIT_INTERRUPT may be a poke to drain pending_exits
                  * (EXIT_NOTIFY spawn failure). Try that before EINTR.
                  */
-                pending_ret = wait4_try_pending(parent, parent_pa, want_pid,
-                                                user_wstatus);
+                pending_ret = wait4_try_pending(
+                        parent, parent_pa, want_pid, user_wstatus);
                 if (pending_ret != 0)
                         return pending_ret;
                 if (self && linux_signal_wait4_should_return_eintr(self))
@@ -251,8 +251,8 @@ static i64 wait4_handle_port_msg(Tcb_Base *parent,
         ref_put(&msg->ms_queue_node.refcount, free_message_ref);
 
         if (!wait4_pid_matches(want_pid, child_pid, parent, parent_pa)) {
-                if (!linux_proc_wait_pending_push(parent_pa, child_pid,
-                                                 exit_code)) {
+                if (!linux_proc_wait_pending_push(
+                            parent_pa, child_pid, exit_code)) {
                         pr_error(
                                 "[PROC] wait4: pending EXIT_NOTIFY drop pid=%d\n",
                                 (int)child_pid);
@@ -260,15 +260,15 @@ static i64 wait4_handle_port_msg(Tcb_Base *parent,
                 return 0;
         }
 
-        reap_ret = wait4_finish_reap(parent, user_wstatus, child_pid,
-                                     exit_code);
+        reap_ret =
+                wait4_finish_reap(parent, user_wstatus, child_pid, exit_code);
         if (reap_ret == 0) {
                 /*
                  * EXIT_NOTIFY consumed but child not empty yet. Park for a
                  * later poke / pending drain — do not lose the exit.
                  */
-                if (!linux_proc_wait_pending_push(parent_pa, child_pid,
-                                                 exit_code)) {
+                if (!linux_proc_wait_pending_push(
+                            parent_pa, child_pid, exit_code)) {
                         pr_error(
                                 "[WAIT4] defer reap pending_push drop pid=%d\n",
                                 (int)child_pid);
@@ -293,8 +293,8 @@ static i64 wait4_try_recv_once(Tcb_Base *parent, linux_proc_append_t *parent_pa,
         if (!msg)
                 return 0;
 
-        ret = wait4_handle_port_msg(parent, parent_pa, want_pid, user_wstatus,
-                                    wait_port, msg, self);
+        ret = wait4_handle_port_msg(
+                parent, parent_pa, want_pid, user_wstatus, wait_port, msg, self);
         return ret;
 }
 
@@ -333,9 +333,13 @@ static i64 wait4_block_on_port(Tcb_Base *parent, linux_proc_append_t *parent_pa,
                         msg = dequeue_recv_msg();
                         if (!msg)
                                 continue;
-                        ret = wait4_handle_port_msg(parent, parent_pa, pid,
-                                                    user_wstatus, wait_port,
-                                                    msg, self);
+                        ret = wait4_handle_port_msg(parent,
+                                                    parent_pa,
+                                                    pid,
+                                                    user_wstatus,
+                                                    wait_port,
+                                                    msg,
+                                                    self);
                         if (ret != 0) {
                                 ref_put(&wait_port->refcount,
                                         free_message_port_ref);
@@ -367,8 +371,13 @@ static i64 wait4_block_on_port(Tcb_Base *parent, linux_proc_append_t *parent_pa,
                 if (!msg)
                         continue;
 
-                ret = wait4_handle_port_msg(parent, parent_pa, pid,
-                                            user_wstatus, wait_port, msg, self);
+                ret = wait4_handle_port_msg(parent,
+                                            parent_pa,
+                                            pid,
+                                            user_wstatus,
+                                            wait_port,
+                                            msg,
+                                            self);
                 if (ret != 0) {
                         ref_put(&wait_port->refcount, free_message_port_ref);
                         return ret;
@@ -412,8 +421,8 @@ i64 sys_wait4(i32 pid, u64 user_wstatus, i32 options, u64 user_rusage)
         }
 
         self = get_cpu_current_thread();
-        ret = wait4_try_recv_once(parent, parent_pa, pid, user_wstatus,
-                                  wait_port, self);
+        ret = wait4_try_recv_once(
+                parent, parent_pa, pid, user_wstatus, wait_port, self);
         if (ret != 0) {
                 ref_put(&wait_port->refcount, free_message_port_ref);
                 return ret;

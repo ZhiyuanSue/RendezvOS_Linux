@@ -32,7 +32,7 @@ bool linux_proc_post_exit_notify(pid_t parent_pid, pid_t child_pid,
 
 /*
  * Blocking EXIT_NOTIFY to kernel_port for reparented / parent-dead zombies.
- * Handled by linux_init_kernel_ipc_handler (init thread recv loop).
+ * Handled by linux_init_kernel_ipc_handler (boot_thread / kernel_port recv).
  */
 bool linux_proc_post_kernel_exit_notify(pid_t child_pid, i32 exit_code);
 

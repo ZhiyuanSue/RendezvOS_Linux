@@ -19,17 +19,18 @@
 #define VFS_BACKEND_PORT_BLKDEV "vfs_blkdev_port"
 
 #define VFS_BACKEND_REGISTRY_SOFT_MAX 32u
-#define VFS_BACKEND_FSTYPE_MAX   16u
+#define VFS_BACKEND_FSTYPE_MAX        16u
 
-/* Registry is growable (vfs_slice_table); soft max VFS_BACKEND_REGISTRY_SOFT_MAX. */
+/* Registry is growable (vfs_slice_table); soft max
+ * VFS_BACKEND_REGISTRY_SOFT_MAX. */
 
 #define VFS_BACKEND_FSTYPE_CPIO   "cpio"
 #define VFS_BACKEND_FSTYPE_RAMFS  "ramfs"
 #define VFS_BACKEND_FSTYPE_BLKDEV "blkdev"
 
 /* Registration flags (separate from I/O capability bits). */
-#define VFS_BACKEND_REG_ROOT     (1u << 0)
-#define VFS_BACKEND_REG_OVERLAY  (1u << 1)
+#define VFS_BACKEND_REG_ROOT    (1u << 0)
+#define VFS_BACKEND_REG_OVERLAY (1u << 1)
 
 typedef enum vfs_backend_op {
         VFS_BACKEND_OP_LOOKUP = 0,
@@ -46,10 +47,10 @@ typedef enum vfs_backend_op {
         VFS_BACKEND_OP_LINK,
 } vfs_backend_op_t;
 
-#define VFS_BACKEND_CAP_READ_SOURCE     (1u << 0)
-#define VFS_BACKEND_CAP_WRITE_SOURCE    (1u << 1)
-#define VFS_BACKEND_CAP_WRITE_CACHE     (1u << 2)
-#define VFS_BACKEND_CAP_FLUSH_DROP      (1u << 3)
+#define VFS_BACKEND_CAP_READ_SOURCE  (1u << 0)
+#define VFS_BACKEND_CAP_WRITE_SOURCE (1u << 1)
+#define VFS_BACKEND_CAP_WRITE_CACHE  (1u << 2)
+#define VFS_BACKEND_CAP_FLUSH_DROP   (1u << 3)
 
 typedef struct vfs_backend_req {
         const char *port;
@@ -104,7 +105,7 @@ i64 vfs_backend_dispatch(vfs_backend_req_t *req);
 bool vfs_backend_lookup(const char *port, const char *path, vfs_inode_t *out);
 
 i64 vfs_backend_readdir(const char *port, const char *dirpath, u64 index,
-                          vfs_dirent_t *out);
+                        vfs_dirent_t *out);
 
 i64 vfs_backend_readlink(const char *port, const char *path, char *buf,
                          u64 buf_cap);
@@ -114,6 +115,7 @@ i64 vfs_backend_create(const char *port, const char *path, u32 mode);
 i64 vfs_backend_unlink(const char *port, const char *path);
 i64 vfs_backend_rename(const char *port, const char *oldpath,
                        const char *newpath);
-i64 vfs_backend_link(const char *port, const char *oldpath, const char *newpath);
+i64 vfs_backend_link(const char *port, const char *oldpath,
+                     const char *newpath);
 
 #endif /* _VFS_BACKEND_H_ */

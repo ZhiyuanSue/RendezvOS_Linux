@@ -29,16 +29,15 @@ static void linux_clean_log_lookup_miss(const char* what)
                                               CLEAN_SERVER_PORT_NAME);
         }
 
-        pr_error(
-                "[clean_ipc] %s: '%s' not found via thread_lookup_port "
-                "(self=%p tm=%p gpt=%p via_table=%p cpu=%lu)\n",
-                what,
-                CLEAN_SERVER_PORT_NAME,
-                (void*)self,
-                (void*)tm,
-                (void*)global_port_table,
-                (void*)via_table,
-                (u64)percpu(cpu_number));
+        pr_error("[clean_ipc] %s: '%s' not found via thread_lookup_port "
+                 "(self=%p tm=%p gpt=%p via_table=%p cpu=%lu)\n",
+                 what,
+                 CLEAN_SERVER_PORT_NAME,
+                 (void*)self,
+                 (void*)tm,
+                 (void*)global_port_table,
+                 (void*)via_table,
+                 (u64)percpu(cpu_number));
 
         if (via_table)
                 ref_put(&via_table->refcount, free_message_port_ref);
@@ -129,7 +128,6 @@ error_t linux_clean_send_task_reap(pid_t pid)
                 return -E_RENDEZVOS;
         }
 
-
         md = kmsg_create(port->service_id,
                          KMSG_OP_CLEAN_TASK_REAP,
                          LINUX_KMSG_FMT_TASK_REAP,
@@ -176,8 +174,9 @@ i64 linux_clean_task_reap_sync(pid_t caller_pid, pid_t target_pid)
 
         reply = ipc_rpc_port_lookup_or_create(reply_name);
         if (!reply) {
-                pr_error("[clean_ipc] TASK_REAP_SYNC: reply port '%s' create fail\n",
-                         reply_name);
+                pr_error(
+                        "[clean_ipc] TASK_REAP_SYNC: reply port '%s' create fail\n",
+                        reply_name);
                 return -E_RENDEZVOS;
         }
 

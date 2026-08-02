@@ -10,8 +10,8 @@ kernel's IPC wait model. The test plan is a build artifact.
 Usage:
   python3 script/config/pack_user_rootfs.py ARCH ROOT_DIR USER_PAYLOAD_DIR
 
-Reads USER_PAYLOAD_DIR/user/build/ARCH/ for ELF binaries and
-USER_PAYLOAD_DIR/build/manifest.order (if present) or sorted basenames.
+Reads USER_PAYLOAD_DIR/user/build/ARCH/ for ELF binaries and optional
+USER_PAYLOAD_DIR/build/manifest.order (one basename per line), else sorted.
 """
 
 import os

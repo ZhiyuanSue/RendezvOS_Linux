@@ -266,22 +266,20 @@ static i64 vfs_rpc_handler(u16 opcode, const kmsg_t *km, char **reply_port_out)
                 char *port_name = NULL;
                 char *fstype = NULL;
 
-                decode_err = ipc_serial_decode(
-                        km->payload,
-                        km->hdr.payload_len,
-                        VFS_KMSG_FMT_BACKEND_REGISTER "t",
-                        &port_name,
-                        &fstype,
-                        &param1,
-                        &param2,
-                        reply_port_out);
+                decode_err = ipc_serial_decode(km->payload,
+                                               km->hdr.payload_len,
+                                               VFS_KMSG_FMT_BACKEND_REGISTER
+                                               "t",
+                                               &port_name,
+                                               &fstype,
+                                               &param1,
+                                               &param2,
+                                               reply_port_out);
                 if (decode_err != REND_SUCCESS) {
                         return -LINUX_EINVAL;
                 }
-                return vfs_backend_register(port_name,
-                                            fstype,
-                                            (u32)param1,
-                                            (u32)param2);
+                return vfs_backend_register(
+                        port_name, fstype, (u32)param1, (u32)param2);
         }
         case KMSG_OP_VFS_GETCWD:
                 return -LINUX_ENOSYS;
@@ -329,9 +327,14 @@ static i64 vfs_rpc_handler(u16 opcode, const kmsg_t *km, char **reply_port_out)
                 }
         }
 
-        return vfs_rpc_dispatch(
-                pid, opcode, param1, param2, param3, param4, str_param,
-                str_param2);
+        return vfs_rpc_dispatch(pid,
+                                opcode,
+                                param1,
+                                param2,
+                                param3,
+                                param4,
+                                str_param,
+                                str_param2);
 }
 
 static void vfs_server_thread_entry(void)

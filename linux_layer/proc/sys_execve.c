@@ -205,13 +205,11 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
                 return -LINUX_EFAULT;
         }
 
-
         e = linux_mm_load_cstring_from_user(
                 vs, user_filename, filename, sizeof(filename));
         if (e != REND_SUCCESS) {
                 return (e == -E_IN_PARAM) ? -LINUX_EINVAL : -LINUX_EFAULT;
         }
-
 
         ret = linux_exec_load_elf_slice(vs, filename, alloc, &elf_slice);
         if (ret != 0) {
@@ -288,7 +286,7 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
         }
 
         initial_stack_sp = linux_exec_build_initial_stack(
-                vs, user_sp, argc, kargv, &elf_auxv, NULL);
+                vs, user_sp, argc, kargv, filename, &elf_auxv, NULL);
         alloc->m_free(alloc, arg_storage);
         arg_storage = NULL;
         if (initial_stack_sp == 0) {

@@ -119,12 +119,13 @@ bool linux_proc_wait_pending_take(linux_proc_append_t *parent_pa, i32 want_pid,
                 return false;
 
         alloc = percpu(kallocator);
-        list_for_each_safe(pos, n, &parent_pa->pending_exits) {
+        list_for_each_safe(pos, n, &parent_pa->pending_exits)
+        {
                 linux_wait_pending_exit_t *ent =
                         list_entry(pos, linux_wait_pending_exit_t, node);
 
-                if (!wait_pending_pid_matches(want_pid, ent->pid, parent,
-                                              parent_pa))
+                if (!wait_pending_pid_matches(
+                            want_pid, ent->pid, parent, parent_pa))
                         continue;
 
                 *pid_out = ent->pid;
@@ -149,7 +150,8 @@ void linux_proc_wait_pending_drain(linux_proc_append_t *parent_pa)
                 return;
 
         alloc = percpu(kallocator);
-        list_for_each_safe(pos, n, &parent_pa->pending_exits) {
+        list_for_each_safe(pos, n, &parent_pa->pending_exits)
+        {
                 linux_wait_pending_exit_t *ent =
                         list_entry(pos, linux_wait_pending_exit_t, node);
 
@@ -350,7 +352,8 @@ bool linux_proc_reap_zombie_by_pid(pid_t child_pid)
 
 /*
  * Dedicated reaper: keeps kernel_port recv loop free for EXIT_NOTIFY.
- * Protocol: protocols/EXIT_CLEAN.md (init must not nest SYNC in notify handler).
+ * Protocol: protocols/EXIT_CLEAN.md (init must not nest SYNC in notify
+ * handler).
  */
 #define LINUX_INIT_REAP_QUEUE_CAP 64u
 
@@ -391,7 +394,7 @@ static void *linux_init_reaper_thread(void *arg)
                 if (linux_init_reap_count > 0) {
                         pid = linux_init_reap_queue[linux_init_reap_head];
                         linux_init_reap_head = (linux_init_reap_head + 1u)
-                                              % LINUX_INIT_REAP_QUEUE_CAP;
+                                               % LINUX_INIT_REAP_QUEUE_CAP;
                         linux_init_reap_count--;
                 }
                 unlock_cas(&linux_init_reap_lock);
@@ -413,12 +416,10 @@ static void linux_init_reaper_init(void)
                 return;
 
         lock_init_cas(&linux_init_reap_lock);
-        if (gen_thread_from_func(&thr,
-                                 linux_init_reaper_thread,
-                                 name,
-                                 percpu(core_tm),
-                                 NULL)
-            != REND_SUCCESS || !thr) {
+        if (gen_thread_from_func(
+                    &thr, linux_init_reaper_thread, name, percpu(core_tm), NULL)
+                    != REND_SUCCESS
+            || !thr) {
                 pr_error("[PROC] failed to start init_reaper thread\n");
         } else {
                 pr_info("[PROC] init_reaper thread started\n");

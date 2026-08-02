@@ -11,7 +11,7 @@
 | 档位 | 含义 |
 |------|------|
 | **Demo（导师）** | QEMU 串口跑 `/bin/ls`（static busybox） |
-| **Regression** | 52/52 harness via **initramfs manifest** (`filesystem:true` in `user.json`); stub `link_app.o` |
+| **Regression** | 52/52 via **initramfs** + busybox `run_all`（`user.json` filesystem/busybox） |
 | **长期** | initramfs 作为 **只读根文件系统** 长期存在；磁盘镜像 / virtio-blk 为可选 Phase 4.5 |
 
 **不做（第一版）**: virtio-blk 驱动、ext2、动态链接、`mount` 完整语义、vDSO。
@@ -38,7 +38,7 @@ Bootloader / 内核 early boot
 | cpio 谁解析 | 内核 unpack 或 init | **vfs_server**（或 compat 只读后端）在 **内核态** 解析 |
 | `/init` | 用户态 PID 1 | 第一版可由 **内核 init 线程** `execve("/bin/ls")` demo；后续 `/init` 用户态 |
 | **servers** | 多在用户态（systemd） | **vfs_server / clean_server 仍是内核线程**（`servers/*.c`），**不进 cpio** |
-| 测例 | 通常在磁盘或 initramfs | 过渡期：**link_app.o 嵌入 + initramfs 并存** |
+| 测例 | 通常在磁盘或 initramfs | **仅 initramfs**（`rootfs/tests` + busybox） |
 
 结论：**cpio 打包方式与 Linux 相同**；**server 不在 initramfs 里当文件跑**——那是混合内核架构的 deliberate 选择（见 [`ARCHITECTURE.md`](ARCHITECTURE.md)）。
 
@@ -54,7 +54,7 @@ Bootloader / 内核 early boot
 │   ├── busybox          # static，可 busybox --install -s bin 做 ls sh cat ...
 │   └── ls -> busybox    # 或 applet 链接
 ├── init                 # 可选：#!/bin/sh  exec /bin/ls
-└── tests/               # 可选：从 user_payload 拷出的 ELF（逐步替代 link_app）
+└── tests/               # user_payload ELF + run_all.sh（pack 生成）
     └── test_open
 ```
 
@@ -63,8 +63,6 @@ Bootloader / 内核 early boot
 - `core/` 全部
 - `linux_layer/` syscall、proc、mm、signal
 - `servers/clean_server.c`、`servers/fs/vfs_server.c` — **内核线程 + IPC**
-- 现有 `link_app.o`（**过渡期保留**，直到测例迁完）
-
 **内核仍然「干净」的含义**: core 无 Linux/VFS 语义；**文件内容**通过 initramfs 供给 **用户程序**，VFS **机制**在 vfs_server（读 cpio 后端，不读块设备）。
 
 ---
@@ -154,9 +152,9 @@ vfs_server 启动
 |------|------|
 | `make rootfs ARCH=x86_64` | 生成 `build/rootfs.cpio` + `build/rootfs_cpio.o` |
 | `make build` | 依赖 `rootfs`（或 `HAVE_ROOTFS=1` 开关） |
-| `make user` | **`filesystem:true`** → build ELFs, `pack_user_rootfs.py`, stub `link_app.o` |
+| `make user` | build ELFs → `pack_user_rootfs.py` → rootfs/；可选 busybox；stamp `user.arch` |
 
-`user.json` 的 `"filesystem": true` **暂不实现 img 挂载**；将来表示「测例从 initramfs 跑而非 link_app」。
+`user.json` 的 `"filesystem": true` 表示测例进 initramfs（**不再**有 link_app 嵌入路径）。
 
 ### 7.3 servers / linux_layer（实施顺序）
 
@@ -212,7 +210,7 @@ ARCH=x86_64 script/rootfs/build_busybox.sh   # 可选
 | # | 检查 |
 |---|------|
 | 1 | `make ARCH=x86_64 rootfs build run` — 串口见 `[VFS] root ready: cpio N entries…` |
-| 2 | 现有 `52/52` harness 仍 PASS（link_app 未动） |
+| 2 | `52/52` / busybox `run_all` 仍 PASS |
 | 3 | #50 `open` stdout 开始 PASS（打开 cpio 内文件） |
 | 4 | aarch64 同路径（可选第二里程碑） |
 

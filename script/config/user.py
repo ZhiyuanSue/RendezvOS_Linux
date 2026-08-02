@@ -1,5 +1,7 @@
-# This script is only used by the top-level build target `make user`.
-# It generates/copies `build/link_app.o` that gets linked into the kernel image.
+# Top-level `make user` entry: build user_payload ELFs → pack into rootfs/
+# (+ optional busybox), stamp build/user.arch.
+#
+# Boot path is busybox/initramfs only (no link_app.o / embedded program_map).
 #
 # Layout (after clone): $(ROOT)/user_payload/ = git root of user payload repo
 # Inner build directory (must contain Makefile):
@@ -13,7 +15,6 @@
 import sys
 import os
 import json
-import shutil
 from typing import Optional
 
 target_dir = "user_payload"
@@ -171,6 +172,13 @@ if __name__ == "__main__":
         user_json = json.load(json_file)
         git_repo_link = user_json["git"]
 
+        if user_json.get("filesystem") is False:
+            print(
+                "ERROR: embedded link_app / program_map mode is removed.\n"
+                '  Set "filesystem": true in user.json (cpio + busybox boot).'
+            )
+            sys.exit(2)
+
         if not os.path.isdir(user_dir):
             git_repo_clone_cmd = f"git clone {git_repo_link} {user_dir}"
             status = os.system(git_repo_clone_cmd)
@@ -203,166 +211,83 @@ if __name__ == "__main__":
 
         try_populate_user_payload_worktree(user_dir, pwd, skip_git)
 
-        using_file_system = user_json["filesystem"]
         user_user_dir = resolve_user_inner_build_dir(user_dir, user_json)
-        user_user_build_dir = (
-            os.path.join(user_user_dir, "build") if user_user_dir else ""
-        )
-        user_user_build_arch_dir = os.path.join(user_user_build_dir, arch)
-        user_user_build_bin_dir = os.path.join(user_user_dir, "bin")
-
-        if using_file_system:
-            if not user_user_dir:
-                print(
-                    "ERROR: filesystem mode requires inner user build (Makefile)"
-                )
-                sys.exit(2)
-
-            cross_prefix = get_cross_prefix(arch)
-            if not cross_prefix:
-                print(
-                    f"ERROR: unsupported arch for cross compiling user payload: {arch}"
-                )
-                sys.exit(1)
-
-            user_cc = cross_prefix + "gcc"
-            make_env = (
-                f'SCRIPT_MAKE_DIR="{script_make_dir}" '
-                f'BUILD="{build_dir}" '
-                f'MODULES_DIR="{modules_dir}" '
-                f'CC="{user_cc}" '
-                f'AS="{cross_prefix}as" '
-                f'RENDEZVOS_FILESYSTEM_MODE=1'
-            )
-
-            os.chdir(user_user_dir)
-            make_clean_cmd = f"{make_env} make clean"
-            status = os.system(make_clean_cmd)
-            if status != 0:
-                print("ERROR:make clean fail")
-                sys.exit(2)
-
-            make_all_cmd = f"{make_env} make all ARCH={arch}"
-            status = os.system(make_all_cmd)
-            if status != 0:
-                print("ERROR:make all fail (user inner)")
-                sys.exit(2)
-
-            os.chdir(user_dir)
-            make_all_cmd = f"{make_env} make all ARCH={arch}"
-            status = os.system(make_all_cmd)
-            if status != 0:
-                print("ERROR:make all fail (user_payload link_app stub)")
-                sys.exit(2)
-
-            pack_script = os.path.join(
-                root_dir, "script", "config", "pack_user_rootfs.py"
-            )
-            status = os.system(
-                f'python3 "{pack_script}" {arch} "{root_dir}" "{user_dir}"'
-            )
-            if status != 0:
-                print("ERROR: pack_user_rootfs.py failed")
-                sys.exit(2)
-
-            build_busybox_for_rootfs(root_dir, arch, cross_prefix, user_json)
-
-            link_app_obj = os.path.join(user_dir, "link_app.o")
-            if not os.path.isfile(link_app_obj):
-                print("ERROR: filesystem mode expected stub link_app.o")
-                sys.exit(2)
-
-            os.makedirs(build_dir, exist_ok=True)
-            target_link_app_obj = os.path.join(build_dir, "link_app.o")
-            shutil.copy2(link_app_obj, target_link_app_obj)
-            with open(os.path.join(build_dir, "link_app.arch"), "w") as f:
-                f.write(arch + "\n")
-            os.chdir(pwd)
-            bb_note = ""
-            if user_json.get("busybox", False):
-                bb_note = ", busybox in rootfs/bin/"
+        if not user_user_dir:
+            top_list = None
+            try:
+                top_list = sorted(os.listdir(user_dir))
+            except OSError:
+                pass
             print(
-                f"User payload (cpio mode): {len(os.listdir(os.path.join(root_dir, 'rootfs', 'tests')))} "
-                f"file(s) under rootfs/tests/{bb_note}"
+                "ERROR: cannot find inner user build (need Makefile).\n"
+                f"  Searched under: {user_dir}\n"
+                "  Tried: user.json 'inner' (if set), then user/, then repo root.\n"
+                f"  Clone URL: {git_repo_link}\n"
+                f"  Top-level entries: {top_list!r}\n"
+                '  Fix: add a Makefile under user/ or at repo root, or set '
+                '"inner" in user.json (e.g. \".\" for root).'
             )
-        else:
-            if not user_user_dir:
-                top_list = None
-                try:
-                    top_list = sorted(os.listdir(user_dir))
-                except OSError:
-                    pass
+            if top_list == [".git"]:
                 print(
-                    "ERROR: cannot find inner user build (need Makefile).\n"
-                    f"  Searched under: {user_dir}\n"
-                    "  Tried: user.json 'inner' (if set), then user/, then repo root.\n"
-                    f"  Clone URL: {git_repo_link}\n"
-                    f"  Top-level entries: {top_list!r}\n"
-                    '  Fix: add a Makefile under user/ or at repo root, or set '
-                    '"inner" in user.json (e.g. \".\" for root).'
+                    f'\n  Worktree still empty: rm -rf "{user_dir}" '
+                    "then make user ARCH=<arch> (with network).\n"
                 )
-                if top_list == [".git"]:
-                    print(
-                        f'\n  Worktree still empty: rm -rf "{user_dir}" '
-                        "then make user ARCH=<arch> (with network).\n"
-                    )
-                sys.exit(2)
+            sys.exit(2)
 
-            cross_prefix = get_cross_prefix(arch)
-            if not cross_prefix:
-                print(
-                    f"ERROR: unsupported arch for cross compiling user payload: {arch}"
-                )
-                sys.exit(1)
-
-            user_cc = cross_prefix + "gcc"
-            make_env = (
-                f'SCRIPT_MAKE_DIR="{script_make_dir}" '
-                f'BUILD="{build_dir}" '
-                f'MODULES_DIR="{modules_dir}" '
-                f'CC="{user_cc}" '
-                f'AS="{cross_prefix}as"'
+        cross_prefix = get_cross_prefix(arch)
+        if not cross_prefix:
+            print(
+                f"ERROR: unsupported arch for cross compiling user payload: {arch}"
             )
+            sys.exit(1)
 
-            os.chdir(user_user_dir)
-            make_clean_cmd = f"{make_env} make clean"
-            status = os.system(make_clean_cmd)
-            if status != 0:
-                print("ERROR:make clean fail")
-                sys.exit(2)
+        user_cc = cross_prefix + "gcc"
+        make_env = (
+            f'SCRIPT_MAKE_DIR="{script_make_dir}" '
+            f'BUILD="{build_dir}" '
+            f'MODULES_DIR="{modules_dir}" '
+            f'CC="{user_cc}" '
+            f'AS="{cross_prefix}as"'
+        )
 
-            make_all_cmd = f"{make_env} make all ARCH={arch}"
-            status = os.system(make_all_cmd)
-            if status != 0:
-                print("ERROR:make all fail")
-                sys.exit(2)
+        os.chdir(user_user_dir)
+        make_clean_cmd = f"{make_env} make clean"
+        status = os.system(make_clean_cmd)
+        if status != 0:
+            print("ERROR:make clean fail")
+            sys.exit(2)
 
-            root_makefile = os.path.join(user_dir, "Makefile")
-            link_app_obj = os.path.join(user_dir, "link_app.o")
-            if os.path.isfile(root_makefile):
-                os.chdir(user_dir)
-                make_all_cmd = f"{make_env} make all ARCH={arch}"
-                status = os.system(make_all_cmd)
-                if status != 0:
-                    print("ERROR:make all fail (outer user_payload Makefile)")
-                    sys.exit(2)
-                link_app_obj = os.path.join(user_dir, "link_app.o")
-            else:
-                inner_obj = os.path.join(user_user_dir, "link_app.o")
-                if os.path.isfile(inner_obj):
-                    link_app_obj = inner_obj
-                else:
-                    print(
-                        "ERROR: no Makefile at user_payload repo root and no link_app.o "
-                        f"in inner dir {user_user_dir}\n"
-                        "  Add a top-level Makefile that produces link_app.o, or build "
-                        "link_app.o from the inner Makefile."
-                    )
-                    sys.exit(2)
+        make_all_cmd = f"{make_env} make all ARCH={arch}"
+        status = os.system(make_all_cmd)
+        if status != 0:
+            print("ERROR:make all fail (user inner)")
+            sys.exit(2)
 
-            os.makedirs(build_dir, exist_ok=True)
-            target_link_app_obj = os.path.join(build_dir, "link_app.o")
-            shutil.copy2(link_app_obj, target_link_app_obj)
-            with open(os.path.join(build_dir, "link_app.arch"), "w") as f:
-                f.write(arch + "\n")
-            os.chdir(pwd)
+        pack_script = os.path.join(
+            root_dir, "script", "config", "pack_user_rootfs.py"
+        )
+        status = os.system(
+            f'python3 "{pack_script}" {arch} "{root_dir}" "{user_dir}"'
+        )
+        if status != 0:
+            print("ERROR: pack_user_rootfs.py failed")
+            sys.exit(2)
+
+        build_busybox_for_rootfs(root_dir, arch, cross_prefix, user_json)
+
+        os.makedirs(build_dir, exist_ok=True)
+        with open(os.path.join(build_dir, "user.arch"), "w") as f:
+            f.write(arch + "\n")
+        os.chdir(pwd)
+
+        tests_dir = os.path.join(root_dir, "rootfs", "tests")
+        n_tests = (
+            len(os.listdir(tests_dir)) if os.path.isdir(tests_dir) else 0
+        )
+        bb_note = ""
+        if user_json.get("busybox", False):
+            bb_note = ", busybox in rootfs/bin/"
+        print(
+            f"User payload (cpio/busybox): {n_tests} file(s) under "
+            f"rootfs/tests/{bb_note}"
+        )

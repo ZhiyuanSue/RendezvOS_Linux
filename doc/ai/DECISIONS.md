@@ -54,6 +54,14 @@ Format: Context / Decision / Consequences.
 
 ---
 
+## 2026-08-02 | VFS coop is the direction; reply-aware framework landed
+
+- Context: clean_server proves one-way coop. VFS still blocks listen on nested backend RPC and client reply. Busybox x86 `run_all` is 52/52 on transitional `ipc_rpc_server_loop`.
+- Decision: Land **`ipc_rpc_coop_*`** in `rpc.c`/`rpc.h` (queue, job, nested try_send/try_recv, coop_server_loop). Listen send queue is a single FIFO — **serialize with `send_owner`**. VFS/backends **keep** `ipc_rpc_server_loop` until server-side state (`vfs_req_cred`, `vfs_io_chunk`, …) is scoped; then switch listen to `ipc_rpc_coop_server_loop`. No per-msg worker pools. EXIT_NOTIFY may later use try_send+park; THREAD_REAP stays inline.
+- Consequences: Framework gate cleared; next work is VFS migration + Path B cmdline cleanup. aarch64 SMP wall-clock still dominated by core idle busy-`schedule` under QEMU.
+
+---
+
 ## 2026-04 | Stdout/stderr `write` shim without VFS
 
 - Context: User tests and minimal libc need `write` on fd 1/2 before an fd table and filesystem exist.

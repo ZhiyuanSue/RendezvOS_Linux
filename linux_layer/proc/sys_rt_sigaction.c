@@ -54,9 +54,7 @@ i64 sys_rt_sigaction(i64 signum_i, u64 act_ptr, u64 oldact_ptr, u64 sigsetsize)
 
         if (oldact_ptr != 0) {
                 error_t e = linux_copy_sigaction_to_user(
-                        vs,
-                        oldact_ptr,
-                        &ps->dispositions[signum - 1]);
+                        vs, oldact_ptr, &ps->dispositions[signum - 1]);
                 i64 err = linux_mm_errno_from_copy(e);
                 if (err != 0) {
                         return err;
