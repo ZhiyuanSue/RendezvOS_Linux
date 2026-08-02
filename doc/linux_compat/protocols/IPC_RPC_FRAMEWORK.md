@@ -139,6 +139,7 @@ void vfs_coop_thread(void)
 
 ```c
 void clean_server_thread(void) {
+        /* Every CPU runs this; all recv the same global listen. */
         ipc_server_coop_loop(CLEAN_SERVER_PORT_NAME, on_msg, poll_pending, NULL);
 }
 ```

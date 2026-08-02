@@ -2,7 +2,7 @@
 
 本文件是 **exit ↔ clean_server ↔ wait4** 的权威模型。实现必须服从此协议；禁止用 `schedule` 空转“等 task 消失”掩盖异步竞态。
 
-**Listen / client 端口名：** 见 [`PORT_NAMING.md`](PORT_NAMING.md)。现行：全局唯一 `clean_listen`；client `clean_cli_{pid}`。EXIT_NOTIFY 异步 worker 为 listen 派生的 one-shot（非通用 IPC pool）。
+**Listen / client 端口名：** 见 [`PORT_NAMING.md`](PORT_NAMING.md) §4。现行：全局唯一 `clean_listen`；client `clean_cli_{pid}`。**每核一条** clean 线程都从该 port `recv`（core0 的清理可在 core1 上处理）。EXIT_NOTIFY：listen 上 `try_deliver` + park（无 `gen_thread`）；有 parked job 时 coop 用 `schedule` 让出而非堵在 `recv_msg`。
 
 **项目角色：** 上层 compat（含本协议落地）由 AI 在 `linux_layer/` / `servers/` 实现；维护者指导与验收。
 
@@ -21,25 +21,27 @@
 | 角色 | 谁 | 职责 |
 |------|-----|------|
 | **Exitor** | 退出中的用户线程 | `THREAD_REAP` → zombie → `schedule` |
-| **Listen** | **唯一** `clean_listen` 线程（BSP） | `ipc_server_coop_loop`：`try_recv` + `poll`（今日仅 EXIT_NOTIFY worker **收尸**）+ 空则 `recv_msg`；`THREAD_REAP` zombie 等待 **inline** `schedule`（协议允许；勿 park，见下） |
-| **EXIT_NOTIFY worker** | listen 按需 spawn 的 one-shot（过渡） | **仅**阻塞 `EXIT_NOTIFY`→父 `wait_port`；**目标**：listen 内对已阻塞父 `try_send`，失败再 park/fallback（去掉每退出一次 `gen_thread`） |
+| **Listen** | **每 CPU** 一线程，**共用** `clean_listen` | `ipc_server_coop_loop`：`poll`（EXIT_NOTIFY try）+ `try_recv`；有 park 则 `schedule`，否则 `recv_msg`；`THREAD_REAP` zombie 等待 **inline** `schedule`（勿 park THREAD_REAP） |
+| **EXIT_NOTIFY park** | 处理 THREAD_REAP 的那条 listen 上的 job | `linux_proc_try_post_exit_notify`（`ipc_system_try_deliver`）；AGAIN → park，poll 重试；alloc/硬失败 → `pending_exits`+poke |
 | **Parent** | 活父 | `wait4`：收 notify → `REAPED` → `TASK_REAP_SYNC` |
 
 ### 为何曾经反复 `send done` / 无 `enter`
 
 旧实现把 **每条** `THREAD_REAP` 丢进通用 `ipc_server_recv_loop_per_msg_worker`，再叠加：
 
-1. **每 CPU 一个 listen** 抢同一个 `clean_listen`，各自私有 pool；
+1. 每 CPU 一条 listen 线程挂在共享 `clean_listen` 上，却再叠各自私有 **per-msg worker pool**；
 2. listen `recv` 成功即让 client `send` 返回，再 `pending_push` 冒充派发成功；
 3. worker 未跑到 handler → 永无 `THREAD_REAP enter`。
 
-这与下面「pool 只为 EXIT_NOTIFY」矛盾。
+根因是 **共享 port + 私有 pool + pending 撒谎**，不是「每核一线程收同一 port」。
 
 **裁定：**
 
-- `THREAD_REAP` / `TASK_REAP*` 在 **listen 上**处理；zombie 等待 **inline**（handshake §2）。
-- 仅 `EXIT_NOTIFY` 异步（listen 不得堵在父 `wait_port` 上，否则无法收 `TASK_REAP_SYNC`）。
+- **一个** `clean_listen`；**每核一条** coop 线程都 `recv` 该 port（跨核收尸是设计目标）。
+- `THREAD_REAP` / `TASK_REAP*` 在 **抢到消息的那条 listen 线程上**内联处理；zombie 等待 **inline**（handshake §2）。
+- `EXIT_NOTIFY` 用 listen 上 try+park（**禁止** listen 阻塞 `send_msg(wait_port)`；**禁止**为此再 `gen_thread`）。
 - **禁止**再为 clean 的 client 消息使用通用 per-msg worker pool。
+- **禁止**把 clean 收成「仅 BSP 一线程」（会饿死 AP 上的收尸能力）。
 - **禁止**把 `THREAD_REAP` zombie 等待 park 成 pending 却不保证随后 `delete_thread`+`EXIT_NOTIFY`：Path B `run_all` 下测例是 ash 的 **链路 A** 孩子，缺 `EXIT_NOTIFY` → 父 `wait4` 永挂（串口停在 `END test_*` 之后）。
 
 ---
@@ -106,9 +108,9 @@ Parent wait4:
 - `WAIT_INTERRUPT`：非 SIGCHLD 的 EINTR，或 EXIT_NOTIFY 异步失败时的 poke（同文 §6）。  
 - Layer B / restorer / RX stub：见同文 §5；**禁止** RW 栈 EXEC trampoline。
 
-### EXIT_NOTIFY 异步失败回退
+### EXIT_NOTIFY 失败回退
 
-`clean_async_exit_notify` 若 alloc/spawn 失败：向父 `pending_exits` 推送 + `linux_proc_wait_poke`。禁止 listen 同步堵在 `wait_port` 上。
+`clean_async_exit_notify` 若 job alloc 失败或 try 硬失败：向父 `pending_exits` 推送 + `linux_proc_wait_poke`。禁止 listen 同步堵在 `wait_port` 上；禁止再 spawn one-shot。
 
 ---
 
@@ -129,32 +131,32 @@ Parent wait4:
 
 | 消息 | 方向 | 语义 | 阻塞？ |
 |------|------|------|--------|
-| `THREAD_REAP` | exitor → clean_listen | listen 内联：`delete_thread`；链路 B 可接 `delete_task`；链路 A 末线程 → async EXIT_NOTIFY | 至 **listen recv**（随后 listen 在同线程处理，可 `schedule` 等 zombie） |
-| `EXIT_NOTIFY` | notify-worker → 活父 wait_port | 链路 A | 是（故不能在 listen 上做） |
-| `TASK_REAP` | （遗留）→ clean_listen | 认领后 `delete_task` | one-way；链路 B 退出不用 |
-| `TASK_REAP_SYNC` | wait4 → clean_listen + reply | 认领后 `delete_task` | RPC 全程阻塞；**listen 内联** |
+| `THREAD_REAP` | exitor → `clean_listen` | 任意核 listen 内联：`delete_thread`；链路 B 可接 `delete_task`；链路 A 末线程 → async EXIT_NOTIFY | 至 **listen recv**（随后 listen 在同线程处理，可 `schedule` 等 zombie） |
+| `EXIT_NOTIFY` | listen try_deliver → 活父 wait_port | 链路 A | try；AGAIN 则 park（不阻塞 listen） |
+| `TASK_REAP` | （遗留）→ `clean_listen` | 认领后 `delete_task` | one-way；链路 B 退出不用 |
+| `TASK_REAP_SYNC` | wait4 → `clean_listen` + reply | 认领后 `delete_task` | RPC 全程阻塞；**listen 内联** |
 
 ---
 
-## 为何必须有 EXIT_NOTIFY 异步（不是通用 THREAD_REAP pool）
+## 为何 EXIT_NOTIFY 必须 try+park（不是阻塞 send，也不是 THREAD_REAP pool）
 
-链路 A 下 `EXIT_NOTIFY` 合法阻塞在父 `wait_port`。若 listen 自己发：
+链路 A 下父可能尚未 `recv(wait_port)`。若 listen **阻塞** `send_msg(wait_port)`：
 
-- 父接着要 `TASK_REAP_SYNC` → 同一 `clean_listen`；
-- listen 堵在 EXIT_NOTIFY → **死锁**。
+- 父接着要 `TASK_REAP_SYNC` → 同一共享 `clean_listen`；
+- 处理 THREAD_REAP 的那条 listen 堵死 → 它无法再收 SYNC（多核时别核或可顶上，仍禁止此形态）。
 
-故：**只有 EXIT_NOTIFY 离开 listen**。`THREAD_REAP` 本身（等 zombie / `delete_thread`）用 `schedule` 即可，不必进 pool。
+故：listen 上 **`try_deliver`；失败 park；有 park 时 coop `schedule` 让父跑进 wait4，再 poll 重试**。`THREAD_REAP` 本身仍 inline（等 zombie / `delete_thread`），不进 pool。
 
 ---
 
 ## 握手要点
 
-1. Exitor：`send(THREAD_REAP)` 与 listen `recv` 会合 → 再 zombie。  
-2. Listen：同线程跑 handler；等 zombie 时 `schedule`（exitor 才能 zombie）。  
-3. EXIT_NOTIFY：async one-shot；listen 不阻塞。  
-4. TASK_REAP_SYNC：listen 内联；reply 用 **`ipc_rpc_reply`（blocking）**。  
-5. 全局 **一个** `clean_listen` 线程（BSP）；禁止每 CPU 再挂一个抢同一端口的 listen。  
-6. VFS / backend 等普通 RPC **同样**用 **`ipc_rpc_reply`（blocking rendezvous）**；遗弃 client 靠 reply-port teardown 唤醒 `block_on_send`。禁止用裸 `try_send`「best-effort」冒充协议（会与 client 尚未 `recv` 竞态）。
+1. Exitor：`send(THREAD_REAP)` → 共享 `clean_listen`，与**任意核**上一条 clean 线程 `recv` 会合 → 再 zombie。  
+2. Listen：同线程跑 handler；等 zombie 时 `schedule`（exitor 才能 zombie；跨核时依赖既有 exit_requested→zombie 握手）。  
+3. EXIT_NOTIFY：listen `try_deliver` + park；不 `gen_thread`、不阻塞 `send_msg(wait_port)`。  
+4. TASK_REAP_SYNC：同样进 `clean_listen`，由任一空闲 clean 线程内联；reply 用 **`ipc_rpc_reply`（blocking）**。  
+5. **一个** `clean_listen` + **每 CPU 一条** coop 线程；禁止收成仅 BSP；禁止叠加 per-msg worker pool。  
+6. VFS / backend 等普通 RPC **同样**用 **`ipc_rpc_reply`（blocking rendezvous）**；遗弃 client 靠 reply-port teardown 唤醒 `block_on_send`。协议路径的 try 仅用于 **coop park 重试**，不是「发完就丢」。
 
 ---
 
@@ -164,19 +166,17 @@ Parent wait4:
 |------|----------|----------|
 | `clean_wait_exitor_zombie` | THREAD_REAP 会合后 exitor 可能尚未 zombie；ready→zombie promote，否则 `schedule` | 把整个 THREAD_REAP park 进 pending 却不保证随后 `EXIT_NOTIFY`（ash `wait4` 挂） |
 | `clean_claim_and_delete_task` | 等 `thread_number==0` / 防双 claim | 父侧空转等 pid 消失 |
-| EXIT_NOTIFY one-shot 末尾 | worker 自标 zombie 后等 listen `delete_thread` | 在 listen 上同步 `send` `wait_port` |
+`poll_pending` / `clean_poll_exit_notify_jobs`：**禁止**在 poll 内 `schedule()`（由 `ipc_server_coop_loop` 在「仍有 park」时 yield）。
 
-`poll_pending` / `clean_poll_exit_notify_jobs`：**禁止** `schedule()`。
-
-## 相对「单线程轮询多请求进度」的差距
+## Coop 进度
 
 | 目标 | 今日 |
 |------|------|
-| poll 推进多个 **协议 FSM** | 仅收尸已 `finished` 的 EXIT_NOTIFY 线程 |
-| EXIT_NOTIFY 不 `gen_thread` | 仍 one-shot（正确性优先于少线程） |
-| 框架级 pending API | 无；job list 留在 `clean_server.c` |
+| poll 推进 EXIT_NOTIFY FSM | `try_post` + park list |
+| EXIT_NOTIFY 不 `gen_thread` | 已落地 |
+| 框架级 pending API | job list 仍在 `clean_server.c`（可接受） |
 
-收紧原则：先保证 Link A/B 与 ash `run_all`；再做 EXIT_NOTIFY `try_send`+park。**不要**为「像 VFS 一样」把 THREAD_REAP 丢回 worker 池。
+**不要**为「像 VFS 一样」把 THREAD_REAP 丢回 worker 池。
 
 ---
 
@@ -184,7 +184,8 @@ Parent wait4:
 
 - 把 `ppid==0` 当成链路 A（对 kernel_port 发 EXIT_NOTIFY）。  
 - 把 `THREAD_REAP` 丢进通用 per-msg worker pool / pending 冒充 handoff。  
-- 每 CPU 多个 listen 抢同一个 `clean_listen`。  
+- 为 clean 再注册 `clean_c{cpu}` 与 `clean_listen` 并存，或 client 按 owner_cpu 分端口（破坏跨核收尸）。
+- 共享 `clean_listen` 上再叠每核私有 per-msg worker pool + pending 冒充 handoff。  
 - 协议路径短超时 `try_send` 丢 reply。  
 - wait4 在 one-way `TASK_REAP` 后空转等 pid 消失。  
 - 链路 B 从 exitor 再发 one-way `TASK_REAP`。  

@@ -1,13 +1,12 @@
 #ifndef _LINUX_COMPAT_PROC_LINUX_EXEC_STACK_H_
 #define _LINUX_COMPAT_PROC_LINUX_EXEC_STACK_H_
 
+#include <common/stdbool.h>
 #include <common/types.h>
 #include <rendezvos/error.h>
 #include <rendezvos/mm/page_slice.h>
 #include <rendezvos/mm/vmm.h>
 #include <rendezvos/task/tcb.h>
-
-#include <rendezvos/task/thread_loader.h>
 
 /* Linux uapi auxv (include/uapi/linux/auxvec.h). */
 #define LINUX_AT_NULL   0
@@ -46,30 +45,15 @@ bool linux_exec_elf_auxv_from_slice(struct page_slice *slice,
                                     linux_exec_elf_auxv_t *out);
 
 /*
- * Shared by sys_execve (Path A) and Path B gen_task_from_elf bootstrap.
+ * Shared by sys_execve and kernel PID1 (linux_exec_replace_image).
  * Layout: argc, argv[], NULL, envp[], NULL, auxv…, random16, strings.
  * @execfn is the pathname for AT_EXECFN (may differ from argv[0]); NULL skips.
- * @stack_top is generate_user_stack() return (or Path B adjusted SP).
+ * @stack_top is generate_user_stack() return.
  * Returns new SP (points at argc) or 0 on failure.
  */
 vaddr linux_exec_build_initial_stack(VSpace *vs, vaddr stack_top, i64 argc,
                                      const char *kargv[], const char *execfn,
                                      const linux_exec_elf_auxv_t *elf_auxv,
                                      vaddr *argv_user_out);
-
-/*
- * Path B: called from thread.append.init inside run_elf_program (after the
- * new thread is scheduled — NOT during gen_task_from_elf return).
- *
- * For static-glibc ELFs (busybox), rebuilds argc/argv/auxv via
- * linux_exec_build_initial_stack. Musl harness ELFs (one PT_NOTE) skip this.
- *
- * Temporary Path B boot argv (until kernel cmdline wiring):
- *   {"sh","/tests/run_all.sh"}
- * Scripts packed by pack_user_rootfs.py. /init is busybox symlink.
- * Do not pass pending argv across gen_task (race with bootstrap).
- */
-error_t linux_exec_bootstrap_elf_spawn_stack(Thread_Base *thread, VSpace *vs,
-                                             const elf_load_info_t *info);
 
 #endif /* _LINUX_COMPAT_PROC_LINUX_EXEC_STACK_H_ */

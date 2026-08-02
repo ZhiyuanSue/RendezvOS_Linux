@@ -184,7 +184,7 @@ pr_debug("signal %d queued\n", sig);                // 格式不统一
 typedef struct linux_thread_append {
     /* Thread management */
     u64 clear_tid;
-    u64 test_cookie;
+    u64 boot_wait_cookie;
     
     /* Signal state (per-thread) */
     sigset_t blocked_signals;
@@ -197,7 +197,7 @@ typedef struct linux_thread_append {
 typedef struct linux_thread_append {
     u64 clear_tid;
     sigset_t blocked_signals;
-    u64 test_cookie;
+    u64 boot_wait_cookie;
     stack_t alt_stack;
     // ... 混乱排列
 } linux_thread_append_t;

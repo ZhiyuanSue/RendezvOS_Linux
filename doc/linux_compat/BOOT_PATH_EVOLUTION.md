@@ -88,7 +88,7 @@
 | 嵌入测例 exec fallback | ✅ 已删 |
 | stub `link_app.o` / `_num_app` | ✅ **已删除**（构建与源码） |
 | cmdline → argv | ⬜（需 core 读 bootargs；见下） |
-| PID1 改 `execve("/init")`（非 `gen_task_from_elf`） | ⬜ |
+| PID1 改 `execve("/init")`（非 `gen_task_from_elf`） | ✅ `linux_exec_replace_image`；落入用户仍 Path B drop |
 | VFS 客户端 RPC 不可中断 | 🔧 2026-08-01 已改代码，**待复跑验证**（见 §3） |
 
 **目标态（「基本标准 Linux 启动」）**：
@@ -112,18 +112,18 @@ make user          → rootfs/tests/* + manifest + 生成的 run_all.sh
 make rootfs/build  → rootfs.cpio .incbin → 内核
 make run
 
-linux_boot (默认 busybox):
-  gen_task_from_elf("/init")     # 仍是 Path B spawn，非内核 execve
-  argv = ["sh", "/tests/run_all.sh"]
-  envp = 空（无 PATH → 脚本里用绝对路径）
+linux_boot:
+  空 user task + thread
+  → linux_exec_replace_image("/init", ["sh","/tests/run_all.sh"])
+       （与 sys_execve 同一套 load/栈/auxv）
+  → Path B arch_return_to_user 落入 /init
+  envp = 空（脚本用绝对路径）
 
 busybox ash:
-  按 run_all.sh 的 run_one 逐个 exec 测例 ELF
+  按 run_all.sh 的 run_one 逐个 sys_execve 测例 ELF
 ```
 
 操作说明：[`script/rootfs/README.txt`](../../script/rootfs/README.txt)、[`ROOTFS.md`](ROOTFS.md)、[`USER_TESTS.md`](USER_TESTS.md)。
-
-回退：`LINUX_COMPAT_BOOT_BUSYBOX_ONLY=0` → 旧内核 manifest 循环（仅调试）。
 
 ---
 

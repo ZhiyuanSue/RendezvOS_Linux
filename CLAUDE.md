@@ -253,6 +253,7 @@ DEFINE_INIT(my_server_init);
 void clean_server_thread(void)
 {
         // 合作式 listen（勿再引入 per-msg worker 池）
+        /* Shared clean_listen; one thread per CPU all recv this port. */
         ipc_server_coop_loop(CLEAN_SERVER_PORT_NAME, on_message, poll, NULL);
 }
 ```

@@ -4,13 +4,9 @@
 #include <common/stdbool.h>
 #include <common/types.h>
 
-#define LINUX_USER_TEST_VFS_PREFIX "/tests/"
+/* Userspace suite directory in initramfs (not a kernel harness). */
+#define LINUX_INITRAMFS_TESTS_PREFIX "/tests/"
 
-/*
- * Map a user execve path to initramfs layout.
- * e.g. "test_echo" or "/test_echo" -> "/tests/test_echo"
- * Returns false if @p out is too small or @p path is invalid.
- */
 /*
  * Map a user execve path to initramfs layout.
  * e.g. "test_echo" or "/test_echo" -> "/tests/test_echo"

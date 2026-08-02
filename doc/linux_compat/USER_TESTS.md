@@ -1,74 +1,33 @@
-# Linux compat user tests: single vs smp
+# Linux compat user tests（用户态套件）
 
-本文件描述 **Linux 兼容层（用户态 ELF 测例）** 的运行模型、同步边界与输出乱序的期望。
+本文件描述 **initramfs 里的用户态 ELF 测例**（`rootfs/tests/`）如何被编排与验证。  
+**内核侧不再有 test harness**：PID1 启动在 `linux_layer/init/linux_boot.c`。
 
-**相关**: [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) §8 · [`ROOTFS.md`](ROOTFS.md) · [`FILE_LOADING.md`](FILE_LOADING.md)
+**相关**: [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) · [`ROOTFS.md`](ROOTFS.md) · [`FILE_LOADING.md`](FILE_LOADING.md) · [`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md)
 
-## initramfs 与 manifest
+## Boot 与套件
 
-integrated harness（`filesystem:true`）下：
+1. `make user` 将静态 ELF 写入 `rootfs/tests/`，并生成 `manifest` + `run_all.sh`。
+2. `make rootfs` 将 `rootfs/`（含 `/bin/busybox`、`/init`）打成 cpio 并链进内核。
+3. BSP `linux_boot`：空 user task → **`linux_exec_replace_image("/init", argv)`**（与 `sys_execve` 同路径）→ 落入用户；argv=`sh /tests/run_all.sh`。
+4. 套件在 **用户态 ash** 里顺序 `sys_execve` 各 ELF；成败看 exit code / stdout。
 
-1. `make user` 将静态 ELF 写入 `rootfs/tests/`，并生成 `rootfs/tests/manifest`（每行一个绝对路径）。
-2. `make rootfs` 将 `rootfs/` 打成 cpio 并链进内核。
-3. BSP 线程 `linux_user_test_load_manifest()` 经 **`vfs_kern_read_file_slice("/tests/manifest")`** 解析 manifest（page_slice，无整文件 kmalloc）。
-4. 每个测例路径同样经 **`vfs_kern_read_file_slice`** 加载后 **`gen_task_from_elf(..., &linux_task_append_hooks, &linux_thread_append_hooks, slice)`**（append 生命周期见 [`APPEND_HOOKS.md`](APPEND_HOOKS.md)）。
+内核等待 `/init` 结束：`boot_wait_cookie` + `clean_server` → `linux_boot_notify_exit`（见 `boot_wait.h`）。
 
-测例**数据文件**（`./text.txt`、`./mnt/`）是 `rootfs/` 里的 fixtures，由用户态 `open/read` 经 VFS 访问，不走上述 slice 路径。
+## 为什么需要 single / smp 分层（历史 / 可选）
 
-**默认 boot**：`linux_boot` Path B 起 **`/init`（→ busybox）**，bootstrap argv=`sh /tests/run_all.sh`（读 `/tests/manifest`）。恢复旧内核 for-manifest：`LINUX_COMPAT_BOOT_BUSYBOX_ONLY=0`。见 [`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md)。
+- **single**：优先验证功能点，减少并发噪声。
+- **smp**：验证并发下 allocator / 跨核清理 / 生命周期。
 
-**Path B 栈**：与 `sys_execve` 共用 `linux_exec_build_initial_stack`（busybox glibc 需 auxv）。VFS 定长表已回收：[`VFS_DYNAMIC_STORAGE.md`](VFS_DYNAMIC_STORAGE.md)。
+默认路径已是 busybox `run_all`；内核 per-CPU harness 循环已删除。
 
-## 为什么需要 single / smp 分层
+## Config 开关
 
-- **single**：优先验证“功能点是否工作”（如 `getpid`/`brk`），减少并发噪声，降低 bring-up 调试成本。
-- **smp**：验证“并发下是否正确”（如 `mmap/munmap/exit` 会触发多核 allocator、跨核清理、生命周期竞态），必须在多核参与下加压。
+- **Linux compat boot**：`script/config/root.json` → `LINUX_COMPAT_TEST`（名字历史遗留；实际打开的是 compat boot + 相关代码路径）
+- **core tests**：`core/script/config/config_*.json` 的 `modules.test`
 
-这并非否定多核；而是把验证拆成两个阶段，便于归因。
+`do_init_call()` 在所有 CPU 上执行；boot 线程创建必须限制在 BSP（`linux_init_on_bsp()`）。
 
-## 运行方式（对齐 core test 模型）
+## 输出乱序
 
-参考内核侧的 `core/modules/test/single_test.c` 与 `core/modules/test/smp_test.c`：
-
-- **BSP orchestrator**：由 BSP 选择当前 case，打印 case banner，并推进到下一个 case。
-- **per-CPU runner 线程**：每个 CPU 上有一个 runner（线程不迁移，因此“在哪个 CPU 上创建就在哪个 CPU 上跑”）。
-- **barrier 两次**：每个 case 都有 begin/end 同步点。
-
-Linux user tests 的实现入口在：
-
-- `linux_layer/tests/user_test_runner.c`（`LINUX_COMPAT_TEST` 使能时生效）
-
-## 如何在 config 中开关测试（非侵入式）
-
-- **开启/关闭 Linux compat tests**：编辑 `script/config/root.json`
-  - `use: true/false`：总开关（更雅观，不需要删 key）
-  - `features: ["LINUX_COMPAT_TEST", ...]`：仅在 `use=true` 时生效
-  - `make config ...` 会生成 `Makefile.root.env`，只用于顶层 `linux_layer/servers` 的编译
-- **开启/关闭 core tests**：编辑 `core/script/config/config_*.json` 的 `modules.test.use`，并使用 `modules.test.features = ["RENDEZVOS_TEST"]`
-
-注意：`do_init_call()` 会在所有 CPU 上执行，因此 **不能**像早期 `task_test()` 那样在 initcall 里“无条件 spawn 所有 app”，否则会造成跨 CPU 的 case 混跑与输出交错。
-
-## single 阶段语义
-
-- 系统 SMP 仍可启用，但 **只有 BSP 的 runner 会创建/等待用户测例**。
-- 其他 CPU 不参与用户测例（可 idle）。
-
-因此在 single 阶段，用户 stdout/stderr 的输出应当呈现“顺序感”（不会被其他 CPU 的用户输出插入）。
-
-## smp 阶段语义（选项一）
-
-你选择的 smp 运行策略是：
-
-- 每个 case（功能点）由 **每个 CPU 的 runner** 各自 spawn 并等待 **该 CPU 上的一个用户测例实例**。
-- case 内允许并发，因此 **同一个 case 内的用户 stdout/stderr 允许交错**（用于暴露竞态/时序问题）。
-- **不同 case 之间禁止交错**：依靠 runner 的串行调度 + begin/end barrier + case banner 保证。
-
-## 输出乱序的边界（重要）
-
-- **内核日志（`printk/pr_*`）**：调试期允许并发交错，不强求全局有序。
-- **用户输出（`write(1|2)`）**：
-  - single：应当不被其他 CPU 的用户输出插入（前提：其他 CPU 不跑用户测例）。
-  - smp：同 case 内允许交错；不同 case 不应交错。
-
-如果未来需要更强的可读性，可以加“每行前缀 cpu/tid/pid”的 debug 选项，但不作为第一阶段目标。
-
+多核下用户态 stdout 可能交错；套件以 `run_all` 汇总 `pass=` / `fail=` 为准。

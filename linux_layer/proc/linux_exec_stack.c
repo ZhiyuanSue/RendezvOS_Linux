@@ -1,5 +1,6 @@
 #include <common/align.h>
 #include <common/mm.h>
+#include <common/rand.h>
 #include <common/string.h>
 #include <common/types.h>
 
@@ -10,100 +11,21 @@
 #include <rendezvos/error.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/tcb.h>
-#include <rendezvos/task/thread_loader.h>
 
-#if defined(_AARCH64_)
-#include <arch/aarch64/tcb_arch.h>
-#elif defined(_X86_64_)
-#include <arch/x86_64/tcb_arch.h>
-#endif
-
-#define LINUX_EXEC_SPAWN_MAX_ARGC 3
 #define LINUX_EXEC_AUXV_MAX_PAIRS 24
 
-/* Conservative AT_HWCAP baselines (glibc probes further via CPUID / mrs). */
+/*
+ * AT_HWCAP baseline. Do not set HWCAP_CPUID (1<<11): that makes glibc issue
+ * EL0 `mrs …_el1` (e.g. MIDR_EL1), which traps as undefined unless the kernel
+ * emulates ID-register MRS (Linux does; we do not yet). Seen on aarch64 as
+ * ESR unknown/IL @ mrs midr_el1 shortly after busybox _start.
+ */
 #if defined(_AARCH64_)
-/* HWCAP_FP | HWCAP_ASIMD | HWCAP_EVTSTRM | HWCAP_CPUID */
-#define LINUX_EXEC_AT_HWCAP_VAL \
-        ((1ULL << 0) | (1ULL << 1) | (1ULL << 2) | (1ULL << 11))
+/* HWCAP_FP | HWCAP_ASIMD | HWCAP_EVTSTRM */
+#define LINUX_EXEC_AT_HWCAP_VAL ((1ULL << 0) | (1ULL << 1) | (1ULL << 2))
 #else
 #define LINUX_EXEC_AT_HWCAP_VAL 0ULL
 #endif
-
-static bool linux_exec_elf_has_interp(vaddr elf_start)
-{
-        if (!elf_start || !check_elf_header(elf_start)) {
-                return false;
-        }
-
-        for_each_program_header_64(elf_start)
-        {
-                if (phdr_ptr->p_type == PT_INTERP) {
-                        return true;
-                }
-        }
-        return false;
-}
-
-static u32 linux_exec_elf_pt_note_count(vaddr elf_start)
-{
-        u32 count = 0;
-
-        if (!elf_start || !check_elf_header(elf_start)) {
-                return 0;
-        }
-
-        for_each_program_header_64(elf_start)
-        {
-                if (phdr_ptr->p_type == PT_NOTE) {
-                        count++;
-                }
-        }
-        return count;
-}
-
-static bool linux_exec_elf_needs_spawn_stack(struct page_slice *slice)
-{
-        vaddr base;
-
-        if (!slice) {
-                return false;
-        }
-
-        base = linux_page_slice_file_base(slice);
-        if (!base || !check_elf_header(base)
-            || get_elf_class(base) != ELFCLASS64) {
-                return false;
-        }
-
-        if (linux_exec_elf_has_interp(base)) {
-                return false;
-        }
-
-        /*
-         * Path B musl harness ELFs: static, one PT_NOTE (build-id).
-         * Static glibc (busybox): multiple PT_NOTE (ABI-tag, build-id, …).
-         */
-        return linux_exec_elf_pt_note_count(base) > 1;
-}
-
-/*
- * Temporary Path B boot argv for busybox multi-call (/init → busybox).
- * Must live in bootstrap itself: append.init runs in run_elf_program on the
- * *new* thread after gen_task_from_elf returns — a caller-side pending argv
- * buffer races with bootstrap (cleared too early → BusyBox Usage).
- *
- * Default: run /tests/run_all.sh (manifest orchestration). Absolute paths;
- * empty envp has no PATH. TODO: kernel cmdline override.
- */
-static u8
-linux_exec_spawn_default_argv(const char *kargv[LINUX_EXEC_SPAWN_MAX_ARGC + 1])
-{
-        kargv[0] = "sh";
-        kargv[1] = "/tests/run_all.sh";
-        kargv[2] = NULL;
-        return 2;
-}
 
 typedef struct {
         u64 tag;
@@ -180,29 +102,36 @@ bool linux_exec_elf_auxv_from_slice(struct page_slice *slice,
         return linux_exec_elf_auxv_from_kva(base, out);
 }
 
-static u32 linux_exec_rng_nonce;
+/* PRNG state for AT_RANDOM; advanced with core common/rand.h (rand64). */
+static u64 linux_exec_rng_state = 1;
 
 static void linux_exec_fill_random16(u8 buf[LINUX_EXEC_RANDOM_BYTES], vaddr mix)
 {
-        u64 s = (u64)mix;
+        u64 s = linux_exec_rng_state;
         Tcb_Base *task = get_cpu_current_task();
         Thread_Base *thr = get_cpu_current_thread();
+        u64 lo, hi;
 
+        s ^= (u64)mix;
         if (task) {
-                s ^= (u64)task->pid * 0x9e3779b97f4a7c15ULL;
+                s ^= (u64)task->pid << 32;
         }
         if (thr) {
-                s ^= (u64)thr->tid << 17;
+                s ^= (u64)thr->tid;
         }
-        s ^= (u64)percpu(cpu_number) << 40;
-        s ^= (u64)(++linux_exec_rng_nonce) * 0x5851f42d4c957f2dULL;
+        s ^= (u64)percpu(cpu_number) << 48;
+        if (s == 0) {
+                s = 1;
+        }
 
-        for (u32 i = 0; i < LINUX_EXEC_RANDOM_BYTES; i++) {
-                s ^= s >> 12;
-                s ^= s << 25;
-                s ^= s >> 27;
-                buf[i] = (u8)(s & 0xFFU);
-                s = s * 0x2545F4914F6CDD1DULL + 1ULL;
+        /* Same advance pattern as core tests: next = rand64(next). */
+        lo = rand64(s);
+        hi = rand64(lo);
+        linux_exec_rng_state = hi;
+
+        for (u32 i = 0; i < 8; i++) {
+                buf[i] = (u8)((lo >> (i * 8)) & 0xFFU);
+                buf[i + 8] = (u8)((hi >> (i * 8)) & 0xFFU);
         }
 }
 
@@ -415,44 +344,4 @@ vaddr linux_exec_build_initial_stack(VSpace *vs, vaddr stack_top, i64 argc,
                 *argv_user_out = argv_ptr_area;
         }
         return sp;
-}
-
-error_t linux_exec_bootstrap_elf_spawn_stack(Thread_Base *thread, VSpace *vs,
-                                             const elf_load_info_t *info)
-{
-        const char *kargv[LINUX_EXEC_SPAWN_MAX_ARGC + 1];
-        linux_exec_elf_auxv_t elf_auxv;
-        vaddr stack_top;
-        vaddr sp;
-        u8 argc;
-
-        if (!thread || !vs || !info || !info->slice) {
-                return -E_IN_PARAM;
-        }
-        if (!linux_vspace_is_user_table(vs)) {
-                return -E_IN_PARAM;
-        }
-        if (!linux_exec_elf_needs_spawn_stack(info->slice)) {
-                return REND_SUCCESS;
-        }
-
-        stack_top = info->user_sp + 8;
-        argc = linux_exec_spawn_default_argv(kargv);
-
-        if (!linux_exec_elf_auxv_from_slice(info->slice, &elf_auxv)) {
-                elf_auxv.have_elf = false;
-        }
-
-        /*
-         * Path B boots busybox as /init (symlink). AT_EXECFN should be the
-         * pathname of the executed image, not applet argv[0] ("sh").
-         */
-        sp = linux_exec_build_initial_stack(
-                vs, stack_top, (i64)argc, kargv, "/init", &elf_auxv, NULL);
-        if (sp == 0) {
-                return -E_RENDEZVOS;
-        }
-
-        arch_set_thread_user_sp(&thread->ctx, sp);
-        return REND_SUCCESS;
 }

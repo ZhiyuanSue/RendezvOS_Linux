@@ -41,7 +41,7 @@ bool linux_vfs_exec_path_under_tests(const char *path, char *out, u64 out_cap)
                 return false;
         }
 
-        prefix_len = strlen(LINUX_USER_TEST_VFS_PREFIX);
+        prefix_len = strlen(LINUX_INITRAMFS_TESTS_PREFIX);
         base_len = strlen(base);
         total = prefix_len + base_len;
 
@@ -49,7 +49,7 @@ bool linux_vfs_exec_path_under_tests(const char *path, char *out, u64 out_cap)
                 return false;
         }
 
-        memcpy(out, LINUX_USER_TEST_VFS_PREFIX, prefix_len);
+        memcpy(out, LINUX_INITRAMFS_TESTS_PREFIX, prefix_len);
         memcpy(out + prefix_len, base, base_len);
         out[total] = '\0';
         return true;

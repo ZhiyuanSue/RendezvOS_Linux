@@ -3,17 +3,18 @@
 
 #include <common/types.h>
 #include <rendezvos/ipc/port.h>
+#include <rendezvos/smp/cpu_id.h>
 #include <rendezvos/task/tcb.h>
 
 /*
  * Canonical port-name grammar: doc/linux_compat/protocols/PORT_NAMING.md
  *
- * Live names today:
+ * Live names:
  *   {service}_listen     global listen (clean_listen, vfs_listen)
+ *   {service}_c{cpu}     per-CPU listen (when a service chooses §3.1)
  *   {service}_cli_{id}   client reply (usually pid; vfs_cli_k_* for kern)
  *
- * Historical (do not use): per-CPU listen / worker work-ports for a removed
- * per-message worker pool.
+ * clean: §4 global listen — all per-CPU clean threads recv the same port.
  */
 
 #define IPC_PORT_SERVICE_CLEAN "clean"
@@ -34,5 +35,9 @@
 /* "{service}_cli_{caller_id}" — length or 0 on error. */
 size_t ipc_port_name_cli(char *buf, size_t bufsize, const char *service,
                          pid_t caller_id);
+
+/* "{service}_c{cpu}" — per-CPU listen; length or 0 on error. */
+size_t ipc_port_name_listen_cpu(char *buf, size_t bufsize, const char *service,
+                                cpu_id_t cpu);
 
 #endif /* _LINUX_COMPAT_IPC_PORT_NAMING_H_ */

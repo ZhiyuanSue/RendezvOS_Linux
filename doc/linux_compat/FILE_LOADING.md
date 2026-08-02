@@ -54,18 +54,11 @@ sys_execve
 
 brk / mmap_hint：`linux_proc_set_heap_from_elf_load`（`linux_layer/proc/linux_exec_proc.c`）。
 
-### 用户测例 harness
+### 用户测例编排（用户态）
 
 ```text
-默认 boot（LINUX_COMPAT_BOOT_BUSYBOX_ONLY=1）:
-  Path B /init (=busybox) → sh /tests/run_all.sh → 逐行 exec manifest
-
-旧内核编排（=0）:
-linux_user_test_load_manifest
-  → vfs_kern_read_file_slice("/tests/manifest")
-linux_spawn_and_wait_test_path
-  → vfs_kern_read_file_slice(path)
-  → gen_task_from_elf(..., slice)
+Path B /init (=busybox) → sh /tests/run_all.sh → 用户态 exec 各 ELF
+内核入口: linux_layer/init/linux_boot.c（boot_wait_cookie 等 /init）
 ```
 
 ### 镜像嵌入（仅 initramfs）

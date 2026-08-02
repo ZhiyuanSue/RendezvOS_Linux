@@ -82,6 +82,7 @@ error_t linux_clean_send_thread_reap(Thread_Base* thread, i64 exit_code)
                 return -E_IN_PARAM;
         }
 
+        /* Shared clean_listen: any CPU's clean thread may handle this. */
         port = thread_lookup_port(CLEAN_SERVER_PORT_NAME);
         if (!port) {
                 linux_clean_log_lookup_miss("THREAD_REAP");

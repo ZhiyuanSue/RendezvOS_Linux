@@ -14,16 +14,15 @@
 |------|--------|---------|-------|
 | Syscall wired | ✅ | ✅ | `syscall_entry.c` → `sys_execve` |
 | Phase 3a embedded ELF | ❌ | ❌ | **Removed** — exec load is cpio / VFS only |
-| argv on user stack | ✅ | ✅ | `build_initial_stack` / Path B bootstrap |
+| argv on user stack | ✅ | ✅ | `linux_exec_build_initial_stack` |
 | aarch64 x0/x1 at exec | ✅ | ✅ | **必须为 0 / 勿塞 argc**：glibc `_start` 把 x0 当 `rtld_fini`；argc/argv 只在栈上 |
 | envp | ❌ | ❌ | `user_envp` ignored（syscall 路径） |
-| auxv（syscall execve） | ⚠️ | ⚠️ | 与 Path B 共用 builder；缺 HWCAP/EXECFN/真随机 |
-| auxv（busybox Path B spawn） | ⚠️ | ⚠️ | `/init`→busybox PID1 |
+| auxv | ✅ | ✅ | 共用 builder：`HWCAP`/`EXECFN`/`RANDOM`(rand.h) |
 | de_thread before exec | ❌ | ❌ | Multi-thread exec unsafe |
-| Full post-exec reset | ⚠️ | ⚠️ | pending + **caught→SIG_DFL** (2026-08-01); altstack/blocked via thread reinit; SIG_IGN kept |
+| Full post-exec reset | ⚠️ | ⚠️ | pending + **caught→SIG_DFL**；altstack/blocked via thread reinit；SIG_IGN kept |
 | FS path (open + load) | ✅ | ✅ | CPIO slice + initramfs |
 | shebang / PT_INTERP | ❌ | ❌ | Out of scope (no dynamic linking) |
-| Boot orchestration | ✅ | ✅ | Path B `/init` + `run_all.sh`（非内核 for-manifest） |
+| Boot / PID1 | ✅ | ✅ | `linux_exec_replace_image("/init")` + Path B drop |
 
 ---
 

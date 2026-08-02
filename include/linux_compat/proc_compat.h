@@ -78,8 +78,8 @@ typedef struct linux_thread_append {
         /* Thread management (after stable-prefix fields above). */
         u64 clear_tid; /* user pointer for set_tid_address/CLONE_CHILD_CLEARTID
                         */
-        u64 test_cookie; /* TEST ONLY: runner correlation cookie (0 = not test)
-                          */
+        /* Path-B PID1 wait: set only on /init; copy_thread must clear. */
+        u64 boot_wait_cookie;
 } linux_thread_append_t;
 
 #define LINUX_PROC_APPEND_BYTES   ((size_t)sizeof(linux_proc_append_t))

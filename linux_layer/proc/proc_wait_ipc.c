@@ -227,6 +227,55 @@ bool linux_proc_wait_poke(pid_t parent_pid)
         return ok;
 }
 
+linux_proc_try_result_t linux_proc_try_post_exit_notify(pid_t parent_pid,
+                                                        pid_t child_pid,
+                                                        i32 exit_code)
+{
+        Message_Port_t *wait_port;
+        Msg_Data_t *md;
+        Message_t *msg;
+        error_t err;
+
+        if (parent_pid <= 0 || child_pid <= 0)
+                return LINUX_PROC_TRY_FAIL;
+
+        wait_port = proc_get_or_create_wait_port(parent_pid);
+        if (!wait_port)
+                return LINUX_PROC_TRY_FAIL;
+
+        md = kmsg_create(wait_port->service_id,
+                         KMSG_OP_PROC_EXIT_NOTIFY,
+                         LINUX_KMSG_FMT_EXIT_NOTIFY,
+                         (i64)child_pid,
+                         exit_code);
+        if (!md) {
+                ref_put(&wait_port->refcount, free_message_port_ref);
+                /* Transient OOM — park and retry. */
+                return LINUX_PROC_TRY_AGAIN;
+        }
+
+        msg = create_message_with_msg(md);
+        ref_put(&md->refcount, free_msgdata_ref_default);
+        if (!msg) {
+                ref_put(&wait_port->refcount, free_message_port_ref);
+                return LINUX_PROC_TRY_AGAIN;
+        }
+
+        /*
+         * send_pending_msg path: does not occupy listen send_msg_queue, so
+         * the same clean thread can still recv TASK_REAP_SYNC. On AGAIN the
+         * helper drops msg; caller parks the (ppid,child,code) job.
+         */
+        err = ipc_system_try_deliver(wait_port, msg, false);
+        ref_put(&wait_port->refcount, free_message_port_ref);
+
+        if (err == REND_SUCCESS || err == -E_REND_PORT_CLOSED)
+                return LINUX_PROC_TRY_DELIVERED;
+        if (err == -E_REND_AGAIN)
+                return LINUX_PROC_TRY_AGAIN;
+        return LINUX_PROC_TRY_FAIL;
+}
+
 bool linux_proc_post_exit_notify(pid_t parent_pid, pid_t child_pid,
                                  i32 exit_code)
 {
@@ -239,9 +288,8 @@ bool linux_proc_post_exit_notify(pid_t parent_pid, pid_t child_pid,
                 return false;
 
         /*
-         * Retry alloc until we can hand the notify to the wait port. Dropping
-         * EXIT_NOTIFY leaves the parent blocked in wait4 with a zombie child.
-         * Blocking send is OK: clean runs this from an EXIT_NOTIFY worker.
+         * Legacy blocking path (tests / rare callers). Clean listen uses
+         * linux_proc_try_post_exit_notify + park instead.
          */
         for (;;) {
                 wait_port = proc_get_or_create_wait_port(parent_pid);

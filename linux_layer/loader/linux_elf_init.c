@@ -1,13 +1,14 @@
 #include <linux_compat/append_hooks.h>
 #include <linux_compat/clone_flags.h>
 #include <linux_compat/ipc/clean_protocol.h>
-#include <linux_compat/proc/linux_exec_stack.h>
+#include <linux_compat/proc/linux_exec.h>
+#include <linux_compat/proc/linux_exec_proc.h>
 
 #include <common/align.h>
 #include <common/stddef.h>
 #include <common/string.h>
 #include <common/types.h>
-#include <linux_compat/proc/linux_exec_proc.h>
+#include <common/dsa/list.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/fs/linux_fd_table.h>
 #include <linux_compat/fs/vfs_protocol.h>
@@ -15,7 +16,6 @@
 #include <linux_compat/proc/wait_ipc.h>
 #include <linux_compat/proc_registry.h>
 #include <linux_compat/signal/signal_state.h>
-#include <common/dsa/list.h>
 #include <linux_compat/time/linux_time_sleep.h>
 #include <linux_compat/initcall.h>
 #include <modules/log/log.h>
@@ -166,7 +166,7 @@ error_t linux_thread_append_copy(Thread_Base *dst, Thread_Base *src)
 
         /* Fork/clone policy: child must not inherit runner cookie or clear_tid.
          */
-        dst_ta->test_cookie = 0;
+        dst_ta->boot_wait_cookie = 0;
         dst_ta->clear_tid = 0;
 
         return linux_signal_thread_fork_inherit(d, s, true);
@@ -195,52 +195,18 @@ error_t linux_thread_append_init(Thread_Base *thread,
                 return -E_IN_PARAM;
         }
 
-        INIT_LIST_HEAD(&pa->pending_exits);
-        linux_proc_set_heap_from_elf_load(tcb, info->max_load_end);
-        if (linux_signal_proc_attach(tcb) != REND_SUCCESS) {
-                pr_emer("[LINUX_ELF_INIT] ERROR: signal attach failed for pid=%d\n",
-                        tcb->pid);
-                return -E_RENDEZVOS;
-        }
-        if (linux_signal_thread_attach(thr) != REND_SUCCESS) {
-                pr_emer("[LINUX_ELF_INIT] ERROR: thread signal attach failed pid=%d\n",
-                        tcb->pid);
-                return -E_RENDEZVOS;
-        }
-        if (linux_fs_proc_attach(tcb) != REND_SUCCESS) {
-                pr_emer("[LINUX_ELF_INIT] ERROR: fs attach failed for pid=%d\n",
-                        tcb->pid);
-                return -E_RENDEZVOS;
-        }
-
-        error_t reg_e = register_process(tcb);
-        if (reg_e != REND_SUCCESS) {
-                pr_warn("[LINUX_ELF_INIT] Failed to register PID=%d: %d\n",
-                        tcb->pid,
-                        (int)reg_e);
-        }
-
-        Message_Port_t *wait_port = proc_get_or_create_wait_port(tcb->pid);
-        if (!wait_port) {
-                pr_warn("[LINUX_ELF_INIT] Failed to create wait_port for PID=%d\n",
-                        tcb->pid);
-        } else {
-                ref_put(&wait_port->refcount, free_message_port_ref);
-        }
-
-        error_t stack_e =
-                linux_exec_bootstrap_elf_spawn_stack(thr, tcb->vs, info);
-        if (stack_e != REND_SUCCESS) {
-                pr_error(
-                        "[LINUX_ELF_INIT] elf spawn stack failed pid=%d e=%d\n",
-                        tcb->pid,
-                        (int)stack_e);
-        }
-
         /*
-         * Compat policy: file image is copied into user PT_LOAD; drop the
-         * staging slice after load. Future page-cache / LRU may retain it.
+         * Legacy Path B (gen_task_from_elf → run_elf_program): attach only.
+         * PID1 no longer uses this path — see linux_boot.c + linux_exec_replace_image.
+         * Stack/auxv for glibc must come from exec; do not bootstrap here.
          */
+        if (linux_user_task_prepare_new(tcb, thr) != REND_SUCCESS) {
+                pr_emer("[LINUX_ELF_INIT] ERROR: prepare_new failed pid=%d\n",
+                        tcb->pid);
+                return -E_RENDEZVOS;
+        }
+        linux_proc_set_heap_from_elf_load(tcb, info->max_load_end);
+
         if (info->slice) {
                 struct page_slice *s = info->slice;
 

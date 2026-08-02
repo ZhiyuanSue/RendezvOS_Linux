@@ -88,7 +88,7 @@ Client **不**编码 cpu：reply 跟进程走，不跟某核的 server 实例绑
 
 ## 4. 全局单例 listen（例外）
 
-少数服务 **故意** 全机一个 listen（所有核的 server 线程 `recv` 同一 port），例如历史上的 `kernel_port`、早期 `clean_server_port`。
+少数服务 **故意** 全机一个 listen port（所有核的 server 线程 `recv` 同一 port），例如 `clean_listen`、`vfs_listen`、历史上的 `kernel_port`。
 
 仅当协议文档 **明确写「global listen」** 时可用：
 
@@ -99,7 +99,8 @@ Client **不**编码 cpu：reply 跟进程走，不跟某核的 server 实例绑
 此时：
 
 - **不得**再为同 service 注册 `{service}_c{cpu}` listen（两套并存禁止）；
-- worker 若仍 per-CPU pool，work-port **仍必须**带 cpu：`{service}_c{cpu}_w{wid}`（pool 跨核共享全局表，不带 cpu 必撞）。
+- **可以**每核一条 server 线程都挂在该 port 上 `recv`（clean 正是如此：跨核处理退出清理）；
+- worker 若仍 per-CPU pool，work-port **仍必须**带 cpu：`{service}_c{cpu}_w{wid}`（pool 跨核共享全局表，不带 cpu 必撞）。禁止「每核私有 pool + 共享 listen」却用 pending 冒充派发成功。
 
 新服务默认走 **§3.1 per-CPU listen**；选 global 要在 [`DECISIONS.md`](../ai/DECISIONS.md) 或该服务协议里记一笔理由。
 
@@ -118,9 +119,9 @@ Client **不**编码 cpu：reply 跟进程走，不跟某核的 server 实例绑
 
 | 角色 | 现行名字 | 说明 |
 |------|----------|------|
-| clean listen | `clean_listen` | 全局单例（仅 BSP 一线程） |
+| clean listen | `clean_listen` | **§4 全局单例 port**；每核一条线程都 `recv` 该 port（跨核收尸） |
 | clean client | `clean_cli_{pid}` | 含 init 的 `clean_cli_0` |
-| vfs listen | `vfs_listen` | 绑 VFS service CPU |
+| vfs listen | `vfs_listen` | 绑 VFS service CPU（§4） |
 | vfs client | `vfs_cli_{pid}` | 用户进程 → VFS |
 | vfs kernel client | `vfs_cli_k_srv` | VFS → backend（listen 串行） |
 | vfs kernel client | `vfs_cli_k_reg_{fstype}` | backend register → VFS（每后端一端口） |
@@ -128,7 +129,7 @@ Client **不**编码 cpu：reply 跟进程走，不跟某核的 server 实例绑
 
 辅助拼装：`include/linux_compat/ipc/port_naming.h` + `ipc_port_name_*`（`linux_layer/ipc/rpc.c`）。
 
-**未完成**：`kernel_port` → `kernel_listen`；若某服务改为 per-CPU listen，用 `ipc_port_name_listen_cpu`。
+**未完成**：`kernel_port` → `kernel_listen`。
 
 改名须服务端 + 所有 client 查找点 + 协议头宏 **同一变更** 落地。
 

@@ -47,9 +47,13 @@ linux_layer/
 │   ├── syscall_entry.c
 │   └── thread_syscall.c
 ├── init/
-└── tests/
-    ├── user_test_runner.c     # Path B: /init → run_all.sh
-    └── …
+│   ├── linux_boot.c           # PID1: exec /init → run_all.sh
+│   ├── linux_init_kernel_port.c
+│   └── linux_init_main.c
+├── proc/
+│   ├── linux_exec.c           # shared replace_image (syscall + boot)
+│   ├── sys_execve.c
+│   └── linux_exec_stack.c     # argc/argv/auxv builder
 
 servers/
 ├── fs/                        # VFS listen + cpio/ramfs backends

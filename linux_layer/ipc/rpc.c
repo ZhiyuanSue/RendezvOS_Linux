@@ -74,6 +74,31 @@ size_t ipc_port_name_cli(char* buf, size_t bufsize, const char* service,
         return strlen(buf);
 }
 
+size_t ipc_port_name_listen_cpu(char* buf, size_t bufsize, const char* service,
+                                cpu_id_t cpu)
+{
+        size_t n = ipc_port_name_copy_service(buf, bufsize, service);
+        const char* mid = "_c";
+        size_t i;
+
+        if (!n)
+                return 0;
+        for (i = 0; mid[i]; i++) {
+                if (n + 1 >= bufsize) {
+                        buf[0] = '\0';
+                        return 0;
+                }
+                buf[n++] = mid[i];
+        }
+        buf[n] = '\0';
+        /* Decimal cpu id; same digit helper as pid strings. */
+        if (proc_format_pid(buf + n, bufsize - n, (pid_t)cpu) == 0) {
+                buf[0] = '\0';
+                return 0;
+        }
+        return strlen(buf);
+}
+
 const char* ipc_serial_payload_reply_port(const u8* payload, u32 len)
 {
         u32 nparam;
@@ -723,15 +748,16 @@ void ipc_server_coop_loop(const char* listen_port_name,
         port = ipc_server_coop_lookup(listen_port_name);
 
         /*
-         * Poll parked work, then try_recv or block in recv_msg.
-         * Poll must not decide whether to skip the port (historical
-         * still_pending schedule-spin flooded EBR on aarch64 SMP).
+         * Poll parked work, then try_recv. Block in recv_msg only when there
+         * is no parked outbound work; otherwise schedule once so the peer
+         * (e.g. parent wait4) can progress, then re-poll try_send.
          */
         while (1) {
                 error_t ret;
+                bool parked_pending = false;
 
                 if (poll_pending)
-                        poll_pending(poll_ctx);
+                        parked_pending = poll_pending(poll_ctx);
 
                 ret = ipc_try_recv_msg(port);
                 if (ret == REND_SUCCESS) {
@@ -743,6 +769,11 @@ void ipc_server_coop_loop(const char* listen_port_name,
                 if (ret == -E_REND_PORT_CLOSED) {
                         ref_put(&port->refcount, free_message_port_ref);
                         port = ipc_server_coop_lookup(listen_port_name);
+                        continue;
+                }
+
+                if (parked_pending) {
+                        schedule(percpu(core_tm));
                         continue;
                 }
 
@@ -1307,10 +1338,12 @@ void ipc_rpc_coop_server_loop(const char* listen_port_name, u16 service_id,
 
         while (1) {
                 error_t ret;
+                bool parked;
 
                 ipc_rpc_coop_queue_poll(q, service_id, resp_opcode, resp_fmt);
+                parked = !list_empty(&q->jobs);
                 if (poll_extra)
-                        poll_extra(poll_extra_ctx);
+                        parked = poll_extra(poll_extra_ctx) || parked;
 
                 ret = ipc_try_recv_msg(port);
                 if (ret == -E_REND_PORT_CLOSED) {
@@ -1319,6 +1352,10 @@ void ipc_rpc_coop_server_loop(const char* listen_port_name, u16 service_id,
                         continue;
                 }
                 if (ret != REND_SUCCESS) {
+                        if (parked) {
+                                schedule(percpu(core_tm));
+                                continue;
+                        }
                         ret = recv_msg(port);
                         if (ret == -E_REND_PORT_CLOSED) {
                                 ref_put(&port->refcount, free_message_port_ref);

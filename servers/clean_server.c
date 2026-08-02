@@ -17,160 +17,118 @@
 #include <linux_compat/ipc/block_wake.h>
 #include <linux_compat/ipc/clean_protocol.h>
 #include <linux_compat/ipc/rpc.h>
-#include <linux_compat/initcall.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/proc_registry.h>
 #include <linux_compat/proc/wait_ipc.h>
-#include <linux_compat/test_sync_ipc.h>
 #ifdef LINUX_COMPAT_TEST
-#include <linux_compat/test_runner.h>
+#include <linux_compat/boot_wait.h>
 #endif
 
 extern struct Port_Table *global_port_table;
 
 DEFINE_PER_CPU(Thread_Base *, clean_server_thread_ptr);
+/* EXIT_NOTIFY jobs stay per-CPU: each listen thread reaps what it spawned. */
+DEFINE_PER_CPU(struct list_entry, clean_exit_notify_jobs);
+DEFINE_PER_CPU(bool, clean_exit_notify_jobs_ready);
 
 static char clean_server_thread_name[] = "clean_server_thread";
 
+/* Shared clean_listen: one port, one service_id, creator pin once. */
 static u16 clean_server_service_id;
 static bool clean_server_service_id_valid;
-/* Creator pin: keeps the listen port alive for the life of the kernel. */
 static Message_Port_t *clean_server_port_owned;
-static bool clean_listen_started;
 
 static i64 clean_claim_and_delete_task(pid_t pid);
 
 /*
  * Protocol: doc/linux_compat/protocols/EXIT_CLEAN.md
+ * Port names: doc/linux_compat/protocols/PORT_NAMING.md §4
  *
- * Single global clean_listen (ipc_server_coop_loop):
- *   THREAD_REAP / TASK_REAP*  — on listen (not a worker pool)
- *   EXIT_NOTIFY              — one-shot only (must not block listen on
- *                              wait_port; parent needs TASK_REAP_SYNC)
+ * Global clean_listen + one coop thread per CPU (all recv the same port):
+ *   THREAD_REAP / TASK_REAP*  — on whichever clean thread wins recv
+ *   EXIT_NOTIFY              — try_send + park on listen (no gen_thread);
+ *                              poll retries; yield instead of blocking recv
+ *                              while jobs remain so parent can enter wait4
+ *
+ * Cross-CPU by design: core0's reap may run on core1. Forbidden is N private
+ * ports / pending-pool lies — not "N threads on one port".
  *
  * THREAD_REAP zombie wait stays inline (schedule + ready→zombie promote).
- * Parking it left Link A children without EXIT_NOTIFY → ash wait4 hung
- * after the first run_all test (END printed, next test never started).
+ * Parking THREAD_REAP itself without guaranteed EXIT_NOTIFY hung ash wait4.
  */
 
 typedef struct clean_exit_notify_job {
         struct list_entry node;
-        Thread_Base *thread;
-        char *thread_name;
         pid_t ppid;
         pid_t child_pid;
         i32 exit_code;
-        volatile bool finished;
 } clean_exit_notify_job_t;
-
-static struct list_entry clean_exit_notify_jobs;
-static bool clean_exit_notify_jobs_ready;
 
 static void clean_exit_notify_fallback_pending(pid_t ppid, pid_t child_pid,
                                                i32 exit_code);
 
 static void clean_exit_notify_jobs_ensure(void)
 {
-        if (clean_exit_notify_jobs_ready)
+        if (percpu(clean_exit_notify_jobs_ready))
                 return;
-        INIT_LIST_HEAD(&clean_exit_notify_jobs);
-        clean_exit_notify_jobs_ready = true;
+        INIT_LIST_HEAD(&percpu(clean_exit_notify_jobs));
+        percpu(clean_exit_notify_jobs_ready) = true;
+}
+
+static void clean_exit_notify_job_free(clean_exit_notify_job_t *job)
+{
+        struct allocator *alloc = percpu(kallocator);
+
+        if (!job)
+                return;
+        list_del_init(&job->node);
+        if (alloc && alloc->m_free)
+                alloc->m_free(alloc, job);
 }
 
 /*
- * Non-blocking poll: tear down finished EXIT_NOTIFY one-shots only.
- * Never schedule() here. In-flight workers (!finished) live on their own
- * threads (block on wait_port) — leave them alone until finished+zombie.
- * Coop loop always returns to recv_msg; unfinished jobs wait for the next
- * poll after a wake/message (not a yield-spin).
+ * Coop poll: retry parked EXIT_NOTIFY via try_deliver. Never schedule() here
+ * (coop_loop yields when we return true). Returns true if jobs remain.
  */
-static void clean_poll_exit_notify_jobs(void)
+static bool clean_poll_exit_notify_jobs(void)
 {
         struct list_entry *pos;
         struct list_entry *n;
-        struct allocator *alloc = percpu(kallocator);
 
         clean_exit_notify_jobs_ensure();
-        list_for_each_safe(pos, n, &clean_exit_notify_jobs)
+        list_for_each_safe(pos, n, &percpu(clean_exit_notify_jobs))
         {
                 clean_exit_notify_job_t *job =
                         list_entry(pos, clean_exit_notify_job_t, node);
-                Thread_Base *thr;
-                u64 st;
+                linux_proc_try_result_t tr;
 
-                if (!job->finished)
-                        continue;
-                thr = job->thread;
-                if (!thr) {
-                        list_del_init(&job->node);
-                        if (alloc && alloc->m_free)
-                                alloc->m_free(alloc, job);
+                if (!find_task_by_pid(job->ppid)) {
+                        /* Parent gone — drop; reparent/orphan paths elsewhere. */
+                        clean_exit_notify_job_free(job);
                         continue;
                 }
 
-                st = thread_get_status(thr);
-                if (st != thread_status_zombie) {
-                        if ((thr->flags & THREAD_FLAG_EXIT_REQUESTED)
-                            && st == thread_status_ready) {
-                                (void)thread_set_status(thr,
-                                                        thread_status_zombie);
-                        } else {
-                                /* finished but not zombie yet — next poll */
-                                continue;
-                        }
+                tr = linux_proc_try_post_exit_notify(
+                        job->ppid, job->child_pid, job->exit_code);
+                if (tr == LINUX_PROC_TRY_DELIVERED) {
+                        clean_exit_notify_job_free(job);
+                        continue;
                 }
-
-                list_del_init(&job->node);
-                if (delete_thread(thr) != REND_SUCCESS) {
-                        pr_error(
-                                "[clean_server] EXIT_NOTIFY worker delete failed\n");
-                }
-                job->thread = NULL;
-                job->thread_name = NULL; /* freed in delete_thread */
-                if (alloc && alloc->m_free)
-                        alloc->m_free(alloc, job);
-        }
-}
-
-static void *clean_exit_notify_thread(void *arg)
-{
-        clean_exit_notify_job_t *job = (clean_exit_notify_job_t *)arg;
-        Thread_Base *self = get_cpu_current_thread();
-
-        if (job) {
-                /*
-                 * Must not drop EXIT_NOTIFY: parent wait4 would hang on a
-                 * zombie. If blocking deliver fails after retries, fall back
-                 * to pending_exits + poke (same as spawn/alloc failure).
-                 */
-                if (!linux_proc_post_exit_notify(
-                            job->ppid, job->child_pid, job->exit_code)) {
+                if (tr == LINUX_PROC_TRY_FAIL) {
                         clean_exit_notify_fallback_pending(
                                 job->ppid, job->child_pid, job->exit_code);
+                        clean_exit_notify_job_free(job);
+                        continue;
                 }
+                /* AGAIN: keep parked */
         }
-        /*
-         * Zombie before finished: poll must not see finished=true while
-         * status is still running (else delete_thread is deferred forever
-         * across polls, or historically forced yield-spin on listen).
-         */
-        if (self) {
-                thread_or_flags(self, THREAD_FLAG_EXIT_REQUESTED);
-                (void)thread_set_status(self, thread_status_zombie);
-        }
-        if (job)
-                job->finished = true;
-        for (;;)
-                schedule(percpu(core_tm));
-        return NULL;
+
+        return !list_empty(&percpu(clean_exit_notify_jobs));
 }
 
 /*
- * Link A only: must not block clean_listen on wait_port (parent may need to
- * send TASK_REAP_SYNC to the same listen). One-shot worker.
- *
- * If spawn/alloc fails: push pending_exits on the parent and poke wait_port
- * (WAIT_INTERRUPT → try_pending). See protocols/EXIT_CLEAN.md.
+ * Alloc/OOM / hard fail: push pending_exits + poke (WAIT_INTERRUPT →
+ * try_pending). Must not block listen on wait_port.
  */
 static void clean_exit_notify_fallback_pending(pid_t ppid, pid_t child_pid,
                                                i32 exit_code)
@@ -197,28 +155,38 @@ static void clean_exit_notify_fallback_pending(pid_t ppid, pid_t child_pid,
         (void)linux_proc_wait_poke(ppid);
 }
 
+/*
+ * Link A: try_send EXIT_NOTIFY on listen; park on AGAIN so this thread can
+ * still accept TASK_REAP_SYNC. No one-shot worker thread.
+ */
 static void clean_async_exit_notify(pid_t ppid, pid_t child_pid, i32 exit_code)
 {
         struct allocator *alloc = percpu(kallocator);
         clean_exit_notify_job_t *job;
-        Thread_Base *thr = NULL;
-        char *name;
-        error_t e;
+        linux_proc_try_result_t tr;
 
         (void)clean_poll_exit_notify_jobs();
 
-        if (!alloc || !alloc->m_alloc || ppid <= 0 || child_pid <= 0) {
+        if (ppid <= 0 || child_pid <= 0) {
+                clean_exit_notify_fallback_pending(ppid, child_pid, exit_code);
+                return;
+        }
+
+        tr = linux_proc_try_post_exit_notify(ppid, child_pid, exit_code);
+        if (tr == LINUX_PROC_TRY_DELIVERED)
+                return;
+        if (tr == LINUX_PROC_TRY_FAIL) {
+                clean_exit_notify_fallback_pending(ppid, child_pid, exit_code);
+                return;
+        }
+
+        if (!alloc || !alloc->m_alloc) {
                 clean_exit_notify_fallback_pending(ppid, child_pid, exit_code);
                 return;
         }
 
         job = (clean_exit_notify_job_t *)alloc->m_alloc(alloc, sizeof(*job));
-        name = (char *)alloc->m_alloc(alloc, 32);
-        if (!job || !name) {
-                if (job && alloc->m_free)
-                        alloc->m_free(alloc, job);
-                if (name && alloc->m_free)
-                        alloc->m_free(alloc, name);
+        if (!job) {
                 pr_error("[clean_server] EXIT_NOTIFY job alloc failed\n");
                 clean_exit_notify_fallback_pending(ppid, child_pid, exit_code);
                 return;
@@ -228,33 +196,8 @@ static void clean_async_exit_notify(pid_t ppid, pid_t child_pid, i32 exit_code)
         job->ppid = ppid;
         job->child_pid = child_pid;
         job->exit_code = exit_code;
-        {
-                const char *p = "clean_exit_ntf";
-                u32 i = 0;
-
-                while (p[i] && i + 1 < 32) {
-                        name[i] = p[i];
-                        i++;
-                }
-                name[i] = '\0';
-        }
-        job->thread_name = name;
-
-        list_add_tail(&job->node, &clean_exit_notify_jobs);
-        e = gen_thread_from_func(
-                &thr, clean_exit_notify_thread, name, percpu(core_tm), job);
-        if (e != REND_SUCCESS || !thr) {
-                list_del_init(&job->node);
-                if (alloc->m_free) {
-                        alloc->m_free(alloc, name);
-                        alloc->m_free(alloc, job);
-                }
-                pr_error("[clean_server] EXIT_NOTIFY spawn failed e=%d\n",
-                         (int)e);
-                clean_exit_notify_fallback_pending(ppid, child_pid, exit_code);
-                return;
-        }
-        job->thread = thr;
+        clean_exit_notify_jobs_ensure();
+        list_add_tail(&job->node, &percpu(clean_exit_notify_jobs));
 }
 
 /*
@@ -339,16 +282,16 @@ static void clean_handle_thread_reap(const kmsg_t *km)
 #ifdef LINUX_COMPAT_TEST
         {
                 /*
-                 * Boot harness cookie (usually /init). Per-test ELFs under
+                 * Path-B PID1 wait cookie (usually /init). Suite ELFs under
                  * ash run_all are Link A — progress depends on EXIT_NOTIFY,
                  * not this cookie.
                  */
                 linux_thread_append_t *ta = linux_thread_append(target);
 
-                if (ta && ta->test_cookie != 0 && target->tm) {
-                        linux_user_test_notify_exit((i32)target->tm->owner_cpu,
-                                                    ta->test_cookie,
-                                                    exit_code);
+                if (ta && ta->boot_wait_cookie != 0 && target->tm) {
+                        linux_boot_notify_exit((i32)target->tm->owner_cpu,
+                                               ta->boot_wait_cookie,
+                                               exit_code);
                 }
         }
 #endif
@@ -424,7 +367,7 @@ static void clean_handle_thread_reap(const kmsg_t *km)
         if (after == REAP_LINK_A && task_pid > 0) {
                 /*
                  * Must return to listen after spawn — parent wait4 will
-                 * TASK_REAP_SYNC on the same clean_listen.
+                 * TASK_REAP_SYNC on the shared clean_listen.
                  */
                 clean_async_exit_notify(ppid, task_pid, notify_exit_code);
         }
@@ -597,8 +540,8 @@ static void clean_server_on_message(Message_t *msg, u16 service_id)
 }
 
 /*
- * Global listen port: any CPU may create/register (SMP init races).
- * Keep creator ref in clean_server_port_owned.
+ * Shared clean_listen: any CPU may create/register (SMP init races).
+ * Creator pin stays in clean_server_port_owned (first successful register).
  */
 static void clean_server_ensure_port(void)
 {
@@ -611,6 +554,9 @@ static void clean_server_ensure_port(void)
                         (u64)percpu(cpu_number));
                 return;
         }
+
+        if (clean_server_service_id_valid)
+                return;
 
         port = port_table_lookup(global_port_table, CLEAN_SERVER_PORT_NAME);
         if (port) {
@@ -652,11 +598,11 @@ static void clean_server_ensure_port(void)
                 (u64)percpu(cpu_number));
 }
 
-static void clean_server_poll_pending(void *ctx)
+static bool clean_server_poll_pending(void *ctx)
 {
         (void)ctx;
-        /* EXIT_NOTIFY worker teardown only; THREAD_REAP stays inline. */
-        clean_poll_exit_notify_jobs();
+        /* Retry parked EXIT_NOTIFY; true → coop_loop yields instead of recv. */
+        return clean_poll_exit_notify_jobs();
 }
 
 void clean_server_thread(void)
@@ -671,19 +617,16 @@ void clean_server_thread(void)
 
 static void clean_server_init(void)
 {
+        /*
+         * One global port (clean_listen); one coop thread per CPU, all recv
+         * that port so reaps can run cross-CPU. DEFINE_INIT runs on BSP and
+         * each AP — do not collapse to BSP-only.
+         */
         clean_server_ensure_port();
 
-        /*
-         * One global listen only. Every CPU spawning a pool listener on the
-         * same clean_listen was a protocol violation (N private pools, one
-         * port) and a root cause of "send done / no enter".
-         */
-        if (!linux_init_bsp_once(&clean_listen_started))
-                return;
-
         if (!clean_server_service_id_valid) {
-                pr_error("[clean_server] clean_listen not available on BSP\n");
-                linux_init_bsp_mark_done(&clean_listen_started);
+                pr_error("[clean_server] clean_listen not available (cpu=%lu)\n",
+                         (u64)percpu(cpu_number));
                 return;
         }
 
@@ -695,10 +638,10 @@ static void clean_server_init(void)
                                              percpu(core_tm),
                                              NULL);
                 if (e != REND_SUCCESS) {
-                        pr_error("[ Error ]clean server init fail (e=%d)\n",
+                        pr_error("[ Error ]clean server init fail (cpu=%lu e=%d)\n",
+                                 (u64)percpu(cpu_number),
                                  (int)e);
                 }
         }
-        linux_init_bsp_mark_done(&clean_listen_started);
 }
 DEFINE_INIT(clean_server_init);

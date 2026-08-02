@@ -18,9 +18,8 @@
 #include <linux_compat/proc/wait_ipc.h>
 #include <linux_compat/fs/linux_fd_table.h>
 #include <linux_compat/time/linux_time_sleep.h>
-#include <linux_compat/test_sync_ipc.h>
 #include <linux_compat/fault.h>
-#include <linux_compat/test_runner.h>
+
 void sys_exit(i64 exit_code)
 {
         Thread_Base* self = get_cpu_current_thread();

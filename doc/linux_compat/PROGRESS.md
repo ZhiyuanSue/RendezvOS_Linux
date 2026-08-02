@@ -85,6 +85,7 @@ doc/ai/DECISIONS.md      非显然设计选择（ADR-lite）
 | envp / auxv | ✅ busybox：`HWCAP`/`EXECFN`/`RANDOM`（伪随机）；envp 仍空 |
 | de_thread + 完整 post-exec 清理 | ❌ |
 | 缩小 embedded program_map / `_num_app` | ✅ **整套删除**（仅留 rootfs.cpio `.incbin`） |
+| 内核 test harness → boot | ✅ `init/linux_boot.c` + `boot_wait.h` |
 
 详见 [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md)。
 

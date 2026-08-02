@@ -29,10 +29,12 @@ ROOTFS_DIR="${ROOTFS_DIR:-$ROOT_DIR/rootfs}"
 BUSYBOX_SRC="${BUSYBOX_SRC:-$ROOT_DIR/third_party/busybox}"
 BUSYBOX_VERSION="${BUSYBOX_VERSION:-1.36.1}"
 BUSYBOX_AUTO_FETCH="${BUSYBOX_AUTO_FETCH:-0}"
-BUSYBOX_FULL="${BUSYBOX_FULL:-0}"
+# Default: install every applet symlink from `busybox --list` (except tc, off in config).
+# Set BUSYBOX_FULL=0 for the old small demo set.
+BUSYBOX_FULL="${BUSYBOX_FULL:-1}"
 FORCE_BUSYBOX="${FORCE_BUSYBOX:-${BUSYBOX_REBUILD:-0}}"
 # Stamp schema; bump when install/config policy changes in a way that must rebuild.
-BUSYBOX_STAMP_REV="1"
+BUSYBOX_STAMP_REV="2"
 
 fetch_busybox_source() {
 	local tarball="/tmp/busybox-${BUSYBOX_VERSION}.tar.bz2"
@@ -149,7 +151,6 @@ install_busybox_applets() {
 			fi
 		done
 
-		# Demo default: a small applet set (ls demo + shell). Set BUSYBOX_FULL=1 for all applets.
 		if [[ "${BUSYBOX_FULL}" == "1" ]]; then
 			for applet in $(./busybox --list); do
 				if [[ "$applet" == "busybox" ]]; then
@@ -158,6 +159,7 @@ install_busybox_applets() {
 				ln -sf busybox "$applet"
 			done
 		else
+			# Minimal bring-up set (BUSYBOX_FULL=0).
 			for applet in ls sh ash cat echo pwd true false test mkdir mount umount \
 				readlink stat ln cp mv rm clear uname env sleep sed; do
 				ln -sf busybox "$applet"

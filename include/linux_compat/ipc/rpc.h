@@ -107,11 +107,12 @@ typedef i64 (*ipc_rpc_server_handler_t)(u16 opcode, const kmsg_t* req,
 typedef void (*ipc_server_message_fn_t)(Message_t* msg, u16 service_id);
 
 /*
- * Advance parked work between accepts (e.g. tear down finished one-shots).
- * Must not schedule()-spin or skip the listen port: coop_loop always
- * try_recv / recv_msg after poll when the port is empty.
+ * Advance parked work between accepts (EXIT_NOTIFY try_send, etc.).
+ * Return true if parked work remains that may need a yield (peer progress)
+ * before the next recv — coop_loop then schedule() instead of blocking
+ * recv_msg. Must not busy-spin without schedule.
  */
-typedef void (*ipc_server_poll_fn_t)(void* ctx);
+typedef bool (*ipc_server_poll_fn_t)(void* ctx);
 
 /*
  * Cooperative one-way listen (clean_server reference). Not a worker pool.

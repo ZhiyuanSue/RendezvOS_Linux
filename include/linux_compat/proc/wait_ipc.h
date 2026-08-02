@@ -11,7 +11,7 @@
  *   - Child exit → KMSG_OP_PROC_EXIT_NOTIFY (authoritative wait wake / reap).
  *   - WAIT_INTERRUPT:
  *       (1) EINTR for non-SIGCHLD signals;
- *       (2) poke to drain pending_exits when async EXIT_NOTIFY spawn fails.
+ *       (2) poke to drain pending_exits when EXIT_NOTIFY park alloc/hard-fails.
  *     SIGCHLD alone must not post interrupt.
  */
 
@@ -25,10 +25,26 @@ bool linux_proc_wait_poke(pid_t parent_pid);
 
 /*
  * Blocking EXIT_NOTIFY to parent's wait_port (enqueue + send_msg).
- * Sent after THREAD_REAP when thread_number==0 (clean EXIT_NOTIFY path).
+ * Prefer linux_proc_try_post_exit_notify from clean listen (coop).
  */
 bool linux_proc_post_exit_notify(pid_t parent_pid, pid_t child_pid,
                                  i32 exit_code);
+
+/*
+ * Non-blocking EXIT_NOTIFY via ipc_system_try_deliver (no listen send_queue).
+ * DELIVERED: rendezvous done (or port closed — no waiter).
+ * AGAIN: parent not in recv yet — caller must park and retry from poll.
+ * FAIL: hard error (bad pid / create failed).
+ */
+typedef enum {
+        LINUX_PROC_TRY_DELIVERED = 0,
+        LINUX_PROC_TRY_AGAIN = 1,
+        LINUX_PROC_TRY_FAIL = 2,
+} linux_proc_try_result_t;
+
+linux_proc_try_result_t linux_proc_try_post_exit_notify(pid_t parent_pid,
+                                                        pid_t child_pid,
+                                                        i32 exit_code);
 
 /*
  * Blocking EXIT_NOTIFY to kernel_port for reparented / parent-dead zombies.

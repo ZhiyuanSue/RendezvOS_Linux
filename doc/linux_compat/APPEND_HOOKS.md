@@ -48,7 +48,7 @@ Compat-only helper（不在 hook 表内）：`linux_task_append_clone(dst, src, 
 | `task.copy` | **`sys_fork` / `sys_clone`** 在填好静态 proc 字段后 | signal/fs fork、共享或新建 heap 状态 |
 | `task.fini` | `delete_task` | reparent、unregister、signal/fs destroy |
 | `thread.init` | **`run_elf_program`** PT_LOAD + user SP 后 | brk、signal/fs attach、register_process、drop staging slice |
-| `thread.copy` | **`copy_thread`**（core 不拷 append 字节） | 新建 thread signal、继承 mask；清零 test_cookie/clear_tid |
+| `thread.copy` | **`copy_thread`**（core 不拷 append 字节） | 新建 thread signal、继承 mask；清零 boot_wait_cookie/clear_tid |
 | `thread.fini` | `del_thread_structure` | sleep_port teardown、thread signal destroy |
 
 **注意**：`run_elf_program` 里 `init` 失败只打日志，不 return——当前线程已在 loader 上下文，返回到 `thread_entry` 无意义。
@@ -101,7 +101,7 @@ linux_thread_append_t *ta = linux_thread_append(thread);
 
 ## 5. 测试相关
 
-- **`test_cookie`**：仅 runner 主线程在 `user_test_runner` 里设置；**`thread.copy` 必须清零**，避免子进程误触发 harness（见 [`doc/ai/DECISIONS.md`](../ai/DECISIONS.md)）。
+- **`boot_wait_cookie`**：仅 Path-B `/init` 在 `linux_boot.c` 里设置；**`thread.copy` 必须清零**，避免子进程误唤醒 boot wait（见 [`doc/ai/DECISIONS.md`](../ai/DECISIONS.md)）。
 - **`clear_tid`**：`set_tid_address` / clone；子线程 copy 时清零，clone 再按需写入。
 
 ---

@@ -209,7 +209,7 @@ WNOHANG subtest: both use `WNOHANG returned 0` → blocking wait → `Child exit
 3. **#44**: `PASS: SIG_IGN still works` present; no `rt_sigaction(SIG_IGN) returned error`.
 4. **#49 ordering**: `[TEST 49/52] PASS` **after** `=== Test Summary ===`.
 5. **#49 exit codes**: reaped 10, 20, 30 (not three×10).
-6. **Fork review**: `thread.append_hooks.copy` must clear runner-only fields (`test_cookie`, `clear_tid`) unless explicitly a runner main thread.
+6. **Fork review**: `thread.append_hooks.copy` must clear boot-wait-only fields (`boot_wait_cookie`, `clear_tid`) unless explicitly Path-B `/init`.
 
 ---
 

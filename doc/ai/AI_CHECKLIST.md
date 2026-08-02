@@ -357,9 +357,19 @@ When a new bug pattern appears during review/debug:
   VFS clients — never share `vfs_backend_caller`. Checklist: §2 +
   `protocols/IPC_RPC_FRAMEWORK.md` + `PORT_NAMING.md`.
 
-- 2026-07-26: **clean_server role split:** `THREAD_REAP` on single
-  `clean_listen` (`ipc_server_coop_loop`); async only for EXIT_NOTIFY.
+- 2026-07-26: **clean_server role split:** `THREAD_REAP` inline on listen
+  (`ipc_server_coop_loop`); async only for EXIT_NOTIFY. (BSP-only
+  `clean_listen` was a later misread — see 2026-08-02.)
   Checklist: §2 + `protocols/EXIT_CLEAN.md`.
+
+- 2026-08-02: **clean = shared `clean_listen` + one thread per CPU.** Not
+  per-CPU ports / owner_cpu routing (that blocks cross-CPU reap). Not
+  BSP-only. Bug was shared port + private per-msg pool + pending lies.
+  Checklist: §2 + `PORT_NAMING.md` §4 + `EXIT_CLEAN.md`.
+
+- 2026-08-02: **EXIT_NOTIFY coop park:** `try_deliver` + park; coop_loop
+  yields while parked (do not `gen_thread`; do not block `send_msg(wait_port)`
+  on listen). Checklist: §2 + `EXIT_CLEAN.md`.
 
 - 2026-04: **Field repurposing with union + type-safe caching (vmm_radix_tree_change_range_flags):**
   - **Pattern**: When repurposing struct fields as temporary cache, use union with
@@ -453,7 +463,7 @@ When a new bug pattern appears during review/debug:
     `clear_tid write failed` (red herring — warn before `THREAD_REAP` send).
   - Cause: listen waits for `thread_status_zombie` while exitor may already be
     `ready` (recv completed send) but not yet scheduled to store zombie;
-    single `clean_listen` livelocks in that wait.
+    the owner-CPU clean listen livelocks in that wait.
   - Fix: after IPC unfinished states clear, promote `ready` → zombie in
     `clean_handle_thread_reap`; drop noisy clear_tid warn.
   - Checklist: §0 + EXIT_CLEAN (send returns before exitor stores zombie).

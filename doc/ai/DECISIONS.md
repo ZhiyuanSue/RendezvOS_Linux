@@ -41,8 +41,24 @@ Format: Context / Decision / Consequences.
 ## 2026-07-26 | clean_server: THREAD_REAP on listen; EXIT_NOTIFY async only
 
 - Context: Routing every `THREAD_REAP` through a generic `per_msg_worker` pool, plus one listen thread per CPU on the same `clean_listen`, produced repeated `send THREAD_REAP done` with no `THREAD_REAP enter` (pending / handoff lies).
-- Decision: One BSP `clean_listen` inline THREAD_REAP / TASK_REAP*; one-shot **only** for EXIT_NOTIFY. No framework-wide worker pool.
-- Consequences: Harness orphans no longer depend on generic pool dispatch; link A still avoids listen↔SYNC deadlock.
+- Decision (partial, later corrected): Inline THREAD_REAP / TASK_REAP* on listen; one-shot **only** for EXIT_NOTIFY. No framework-wide worker pool. Temporarily collapsed to one BSP `clean_listen` — that collapse was a misread of the design (see 2026-08-02 entry below).
+- Consequences: Pool/handoff bug fixed; BSP-only listen was an unintended bottleneck.
+
+---
+
+## 2026-08-02 | clean_server: shared `clean_listen` + per-CPU threads
+
+- Context: BSP-only one thread starved AP reapers. A mistaken follow-up used per-CPU ports `clean_c{cpu}` + owner_cpu routing, which **prevents** cross-CPU cleanup (core0 reap handled on core1) — that contradicts the design.
+- Decision: **One global port** `clean_listen` (PORT_NAMING §4). **One coop thread per CPU**, all `recv` that port. Clients always send to `clean_listen`. Keep THREAD_REAP inline; **no** per-msg worker pool. Do not collapse to BSP-only; do not split into per-CPU listen names.
+- Consequences: Cross-CPU reap restored; AP threads participate; docs match.
+
+---
+
+## 2026-08-02 | EXIT_NOTIFY: listen try_deliver + park (drop gen_thread)
+
+- Context: One-shot EXIT_NOTIFY threads were a transitional escape from blocking listen on `wait_port`. Coop already had try/park; clean still spawned workers.
+- Decision: `linux_proc_try_post_exit_notify` via `ipc_system_try_deliver` (avoids listen `send_msg_queue`). AGAIN → per-CPU park list; `ipc_server_coop_loop` poll returns true → `schedule` instead of blocking `recv_msg`. Alloc/hard fail → pending_exits+poke. No EXIT_NOTIFY `gen_thread`.
+- Consequences: Same-thread coop FSM; TASK_REAP_SYNC can still be accepted on that CPU; fewer threads under ash `run_all`.
 
 ---
 
@@ -178,13 +194,25 @@ Format: Context / Decision / Consequences.
 
 ---
 
-## 2026-05 | Fork/clone children must not inherit `test_cookie`
+## 2026-08 | Do not advertise `HWCAP_CPUID` without EL0 MRS emulation
 
-- Context: Integrated user test runner waits on `linux_thread_append_t.test_cookie` via `clean_server` → `linux_user_test_notify_exit`. Fork children inherited the cookie and **prematurely completed** harness test #49 while the parent was still in `wait4`.
-- Decision: **`linux_thread_append_copy`** clears `test_cookie` and `clear_tid` on every `copy_thread` child. Only the ELF spawned by `gen_task_from_elf` keeps the runner cookie (set in `user_test_runner` after spawn).
+- Context: aarch64 busybox after PID1 exec merge trapped at `mrs x0, midr_el1` (ESR unknown/IL). QEMU log: branch from glibc after seeing AT_HWCAP bit 11.
+- Decision: `AT_HWCAP` advertises only features usable without kernel traps we do not handle (`FP|ASIMD|EVTSTRM`). Omit `HWCAP_CPUID` until core implements ID-register MRS emulation (Linux `do_el0_undef` path).
+- Consequences: No new arch forks in boot/exec paths; one auxv constant. x86 was unaffected (`AT_HWCAP=0`).
+
+## 2026-08 | Kernel boot is not a test harness (`test_*` → boot)
+
+- Context: Default boot is Path B `/init` → busybox `run_all.sh`. `linux_layer/tests/` and `test_runner.h` / `test_cookie` were leftover harness names blocking a clean `execve("/init")` path.
+- Decision: Move launcher to `linux_layer/init/linux_boot.c`; API `linux_boot_notify_exit` / `boot_wait.h`; field `boot_wait_cookie`. Delete kernel manifest loader, `elf_read_test`, and `test_*.h`. Keep `rootfs/tests/` as **userspace** suite dir.
+- Consequences: Prep for exec-based PID1; docs updated (`USER_TESTS.md`, `CODE_STRUCTURE.md`).
+
+## 2026-05 | Fork/clone children must not inherit boot wait cookie
+
+- Context: Boot wait used `linux_thread_append_t` cookie (then `test_cookie`) via `clean_server` → notify. Fork children inherited the cookie and **prematurely completed** the wait while the parent was still in `wait4`.
+- Decision: **`linux_thread_append_copy`** clears `boot_wait_cookie` (formerly `test_cookie`) and `clear_tid` on every `copy_thread` child. Only Path-B `/init` keeps the cookie (set in `linux_boot.c` after spawn).
 - Consequences:
   - Documented in [`APPEND_HOOKS.md`](linux_compat/APPEND_HOOKS.md) §5, [`BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md`](linux_compat/BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md) §B, and [`CROSS_ARCH_VERIFICATION_LOG.md`](linux_compat/CROSS_ARCH_VERIFICATION_LOG.md) checklist.
-  - Any new `copy_thread` consumer with integrated tests must keep `thread.copy` clearing runner-only fields.
+  - Any new `copy_thread` consumer must keep `thread.copy` clearing boot-wait-only fields.
 
 ---
 

@@ -125,11 +125,14 @@ def build_busybox_for_rootfs(
         sys.exit(2)
 
     user_cc = cross_prefix + "gcc"
+    # Full applet symlinks by default (build_busybox.sh BUSYBOX_FULL=1).
+    busybox_full = "1" if user_json.get("busybox_full", True) else "0"
     env = (
         f'ARCH="{arch}" '
         f'CROSS_PREFIX="{cross_prefix}" '
         f'CC="{user_cc}" '
-        f'BUSYBOX_AUTO_FETCH=1'
+        f'BUSYBOX_AUTO_FETCH=1 '
+        f'BUSYBOX_FULL="{busybox_full}"'
     )
     # build_busybox.sh caches under .cache/busybox-$ARCH and skips compile when
     # the stamp matches (survives make clean / config). FORCE_BUSYBOX=1 rebuilds.

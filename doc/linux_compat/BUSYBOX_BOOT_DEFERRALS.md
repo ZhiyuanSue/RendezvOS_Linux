@@ -13,29 +13,30 @@
 
 | 优先级 | 项 | 现状 | 应改为 / 备注 |
 |--------|-----|------|----------------|
-| **P0** | boot argv | 🔧 Path B bootstrap：`sh /tests/run_all.sh` | **内核 cmdline** 覆盖 |
+| **P0** | boot argv | ✅ 默认 `sh /tests/run_all.sh`（`linux_boot`） | **内核 cmdline** 覆盖 |
 | **P0** | `/init` | ✅ symlink → `bin/busybox` | — |
 | **P0** | 测例编排 | ✅ pack 生成 `run_all.sh`（显式 `run_one`） | — |
 | **P0** | **IPC reply 会合楔死** | ✅ 子项 2–4 | — |
 | **P0** | VFS client RPC | ✅ uninterruptible + ops gate | — |
 | **P0** | clone/fork `#PF` @ `0x57f485` | ✅ x86 `run_all` **52/52**（2026-08-02 log） | 与迁 busybox 前全绿对齐 |
-| **P0** | fake return + append hook 栈 | busybox PID1 仍 Path B | cmdline 后统一协议 |
+| **P0** | PID1 启动 | ✅ 空 task + `linux_exec_replace_image("/init")`（与 sys_execve 同栈/auxv） | 落入用户仍 Path B drop |
 | **P1** | VFS listen → coop | 框架 ✅ `ipc_rpc_coop_*`；server 仍 `ipc_rpc_server_loop` | 迁 listen（本轮暂缓） |
 | **P1** | 用户 pathname 读 | ✅ 按页 chunk 至 NUL（`linux_mm_load_cstring_from_user`） | — |
-| **P1** | auxv 长尾 | ✅ `AT_HWCAP` / `AT_EXECFN`；`AT_RANDOM` 混 pid/tid/cpu/nonce | 真 `getrandom` 熵源可再加 |
+| **P1** | auxv 长尾 | ✅ `AT_HWCAP` / `AT_EXECFN`；`AT_RANDOM` 用 `common/rand.h` | 硬件熵仍可选 |
 | **P1** | syscall stub 深度 | CONSOLE_IN=`POLLHUP`；无真 UART RX | 按需加深 |
 | **P1** | aarch64 多核体感慢 | SMP=1 很快；idle×QEMU | 日常 `SMP=1`；core idle WFI 另案 |
-| **P2** | busybox 构建妥协 | `CONFIG_STATIC`、applet 子集 | 可选 `BUSYBOX_FULL` |
-| **P3** | `_num_app` / link_app | ✅ 已删除（脚本/`task_test`/`_num_app` 全清） | — |
+| **P2** | busybox applet | ✅ 默认 `BUSYBOX_FULL=1`（`--list` 全 symlink；`tc` 仍因 UAPI 关） | `busybox_full:false` 可缩 |
+| **P3** | `_num_app` / link_app | ✅ 已删除 | — |
+| **P3** | 内核 `tests/` / `test_*` | ✅ → `init/linux_boot.c` + `boot_wait.h` | — |
 | **P3** | `/dev/*` | 未做 | 真 initramfs 形态 |
 | — | **VFS 定长 BSS / 栈炸弹** | — | ✅ |
 | — | **x86-64 red zone** | — | ✅ |
 
 **建议下一步**
 
-1. ✅ x86 busybox `run_all` 52/52；pathname/auxv/stub link_app 已回收  
-2. **cmdline → argv**（需 core 读 Multiboot/`/chosen/bootargs` + compat 接线；aarch64 当前 DTB 常无 `bootargs`）  
-3. **VFS** 改用 `ipc_rpc_coop_server_loop`（框架已齐；本轮按要求暂缓）
+1. ✅ PID1：`linux_exec_replace_image`（与 sys_execve 合并）；删 Path B bootstrap  
+2. **cmdline → argv**（需 core 读 bootargs）  
+3. **VFS** → `ipc_rpc_coop_server_loop`（暂缓）
 
 ---
 
@@ -304,9 +305,11 @@ QEMU 默认 **`MEM_SIZE=512M`**（仅 `run` 的 `-m`，**不必**为改内存而
 
 ---
 
-## P3 — 测试 harness（现状，待迁脚本）
+## P3 — 测试 harness（✅ 已迁：内核侧改名/删除）
 
-`linux_layer/tests/user_test_runner.c`（`LINUX_COMPAT_TEST`）当前是 **BSP 内核编排器**，不是用户态 init：
+> **2026-08-02**：入口为 `linux_layer/init/linux_boot.c` + `boot_wait_cookie`；内核 manifest 循环已删。下文保留演进叙事。
+
+原 `user_test_runner.c` 曾是 **BSP 内核编排器**，不是用户态 init：
 
 | 步骤 | 机制 |
 |------|------|
@@ -475,6 +478,9 @@ done < /tests/manifest
 
 | 日期 | 变更 |
 |------|------|
+| 2026-08-02 | **aarch64 MIDR undef**：`AT_HWCAP` 勿设 `HWCAP_CPUID`（无 EL0 MRS 模拟时 glibc `mrs midr_el1` → unknown trap） |
+| 2026-08-02 | **PID1 exec 合并**：`linux_exec_replace_image` 供 sys_execve + boot；空 task 起 `/init`；删除 bootstrap 栈特例 |
+| 2026-08-02 | **boot 命名重构**：删 `linux_layer/tests/*` 与 `test_*.h`；`linux_boot.c` + `boot_wait_cookie`；默认 `BUSYBOX_FULL=1` |
 | 2026-08-02 | **清除 link_app 整套**：删脚本/`task_test`/`_num_app`；`user.py` 仅 cpio/busybox；保留 rootfs.cpio `.incbin` |
 | 2026-08-02 | **不动 core / 不迁 VFS coop**：pathname 按页 chunk；auxv `AT_HWCAP`/`AT_EXECFN`+加强 `AT_RANDOM`；`init_thread`→`boot_thread` |
 | 2026-08-01 | **工作区盘点**：[`PROGRESS.md`](PROGRESS.md) §8（core ops gate / compat IPC / boot·FS stub 切分）；aarch64 相对 incbin 体感变慢记入开放项 |

@@ -84,11 +84,11 @@ If a change breaks or modifies an invariant, update this file in the same commit
   not run concurrently with the **owner CPU’s** scheduler
   on the same lists—unless a dedicated lock or owner-CPU-only execution is
   established.
-- Default `sys_exit` sends cleanup work to **global clean server port** (looked up
-  via `thread_lookup_port("clean_listen")`). Clean server threads on each CPU
-  receive messages from the shared port via `recv_msg`. A design that tears down
-  another CPU’s thread/task from a remote CPU must explicitly synchronize with that
-  CPU’s `Task_Manager` (and any IPC/port references), not rely on kmem routing alone.
+- Default `sys_exit` sends cleanup to the **shared** `clean_listen` port. Each
+  CPU runs a clean server thread that `recv_msg` on that same port, so a reap
+  from core0 may run on core1. Cross-CPU teardown must still honor
+  exit_requested→zombie handshake with the owner `Task_Manager`; do not rely on
+  kmem routing alone.
 
 - **Teardown split:** logical unlink (task list + scheduler ring) happens before
   dropping the last ref; final free drains owned resources and frees the object.

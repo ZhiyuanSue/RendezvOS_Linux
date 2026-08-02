@@ -179,7 +179,7 @@ integrated harness 里有两层，**不要混为一谈**：
 
 | 是什么 | 在哪 | 怎么跑 |
 |--------|------|--------|
-| **测例程序** | `rootfs/tests/*` + `manifest` → cpio | `user_test_runner` reads manifest via `vfs_kern_read_file_slice` + spawn |
+| **测例程序** | `rootfs/tests/*` + `run_all.sh` → cpio | `linux_boot` Path B `/init` → busybox 跑套件 |
 | **测例数据**（`./text.txt`、`./mnt/` 等） | `rootfs/` → `build/rootfs.cpio` | 测例里 `open("./text.txt")` 时由 **VFS 从 cpio 读** |
 
 因此实施顺序是：

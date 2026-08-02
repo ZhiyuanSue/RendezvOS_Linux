@@ -53,7 +53,7 @@
 | 字段 | 阶段 | 目的 |
 |------|------|------|
 | `clear_tid` | P1 | `set_tid_address` / `CLONE_CHILD_CLEARTID` |
-| `test_cookie` | 测例 | harness 与 clean_server 关联（fork 子进程须为 0，见 APPEND_HOOKS） |
+| `boot_wait_cookie` | boot | Path-B 等 `/init` 退出（fork 子进程须为 0，见 APPEND_HOOKS） |
 | `signal` / `sleep_port` | P2 | 每线程信号与 sleep IPC |
 
 ## 3. 进程登记簿（proc registry）
