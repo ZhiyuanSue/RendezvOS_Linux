@@ -569,3 +569,13 @@ When a new bug pattern appears during review/debug:
     after `/init` cookie wait in `linux_boot`.
   - Removed unused `core_test_phase_*` and multi-slot / legacy manifest
     boot branch; one boot wait cookie for PID1.
+
+- 2026-08-02: **RPC/coop schedule-spin (aarch64 “slow” profile):**
+  - IRQ ELR dominated by `schedule`/`ebr_try_reclaim` while RPC symbols ~0%.
+  - Cause class: compat loops doing `schedule()` without a port wait
+    (`coop_loop` `still_pending` spin; EXIT_NOTIFY `finished` before
+    `zombie`). Fix: block in `recv_msg` when port empty; zombie before
+    finished; drop TRACE stall dead code.
+  - Correctness (keep): reply `NO_MSG`/`AGAIN` → rebuild+retry; client
+    recv non-`PORT_CLOSED` → re-enter blocking `recv_msg` (not bare
+    `schedule`, not immediate `-EIO`).

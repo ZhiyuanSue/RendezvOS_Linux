@@ -1,6 +1,5 @@
 #include <linux_compat/append_hooks.h>
 #include <linux_compat/clone_flags.h>
-#include <linux_compat/debug_trace.h>
 #include <linux_compat/ipc/clean_protocol.h>
 #include <linux_compat/proc/linux_exec_stack.h>
 
@@ -57,9 +56,6 @@ void linux_task_append_fini(Tcb_Base *tcb)
         pid = task->pid;
         proc_reparent_children(pid, LINUX_INIT_REAP_PPID);
         proc_unregister_wait_port(pid);
-#if LINUX_COMPAT_TRACE_IPC_WEDGE
-        pr_info("[port] UNREG vfs_cli pid=%d\n", (int)pid);
-#endif
         ipc_rpc_unregister_port_by_pid(VFS_CLIENT_PORT_PREFIX, pid);
         ipc_rpc_unregister_port_by_pid(CLEAN_CLIENT_PORT_PREFIX, pid);
         unregister_process(task);
@@ -145,9 +141,6 @@ void linux_thread_append_fini(Thread_Base *thread)
                 if (proc_format_pid(kport + i, sizeof(kport) - i,
                                     (pid_t)thr->tid)
                     != 0) {
-#if LINUX_COMPAT_TRACE_IPC_WEDGE
-                        pr_info("[port] UNREG %s\n", kport);
-#endif
                         ipc_rpc_unregister_port_name(kport);
                 }
         }

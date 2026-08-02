@@ -105,7 +105,9 @@ typedef i64 (*ipc_rpc_server_handler_t)(u16 opcode, const kmsg_t* req,
 typedef void (*ipc_server_message_fn_t)(Message_t* msg, u16 service_id);
 
 /*
- * Advance parked work. Return true while jobs remain (do not block in recv).
+ * Advance parked work (e.g. finished one-shot workers). Return value is
+ * ignored by ipc_server_coop_loop (listen always blocks in recv_msg when
+ * the port is empty — no schedule-spin on "still pending").
  */
 typedef bool (*ipc_server_poll_fn_t)(void* ctx);
 
@@ -115,8 +117,6 @@ typedef bool (*ipc_server_poll_fn_t)(void* ctx);
 void ipc_server_coop_loop(const char* listen_port_name,
                           ipc_server_message_fn_t on_message,
                           ipc_server_poll_fn_t poll_pending, void* poll_ctx);
-
-bool ipc_server_coop_flag_pending(void* ctx);
 
 /*
  * Transitional request–reply listen: blocking recv → handler → blocking

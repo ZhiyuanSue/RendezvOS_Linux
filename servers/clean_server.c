@@ -151,12 +151,18 @@ static void *clean_exit_notify_thread(void *arg)
                         clean_exit_notify_fallback_pending(
                                 job->ppid, job->child_pid, job->exit_code);
                 }
-                job->finished = true;
         }
+        /*
+         * Zombie before finished: coop poll must not see finished=true
+         * while status is still running (that forced still_pending
+         * schedule-spins on clean_listen).
+         */
         if (self) {
                 thread_or_flags(self, THREAD_FLAG_EXIT_REQUESTED);
                 (void)thread_set_status(self, thread_status_zombie);
         }
+        if (job)
+                job->finished = true;
         for (;;)
                 schedule(percpu(core_tm));
         return NULL;

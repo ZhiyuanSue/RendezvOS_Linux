@@ -1,6 +1,5 @@
 #include <common/string.h>
 #include <common/types.h>
-#include <linux_compat/debug_trace.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/fault.h>
 #include <linux_compat/fs/linux_exec_image.h>
@@ -206,29 +205,13 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
                 return -LINUX_EFAULT;
         }
 
-#if LINUX_COMPAT_TRACE_IPC_WEDGE
-        pr_info("[exec] enter tid=%d pid=%d\n",
-                (int)current_thread->tid,
-                (int)current->pid);
-#endif
 
         e = linux_mm_load_cstring_from_user(
                 vs, user_filename, filename, sizeof(filename));
         if (e != REND_SUCCESS) {
-#if LINUX_COMPAT_TRACE_IPC_WEDGE
-                pr_error("[exec] path copy failed e=%d tid=%d\n",
-                         (int)e,
-                         (int)current_thread->tid);
-#endif
                 return (e == -E_IN_PARAM) ? -LINUX_EINVAL : -LINUX_EFAULT;
         }
 
-#if LINUX_COMPAT_TRACE_IPC_WEDGE
-        pr_info("[exec] path='%s' tid=%d pid=%d\n",
-                filename,
-                (int)current_thread->tid,
-                (int)current->pid);
-#endif
 
         ret = linux_exec_load_elf_slice(vs, filename, alloc, &elf_slice);
         if (ret != 0) {

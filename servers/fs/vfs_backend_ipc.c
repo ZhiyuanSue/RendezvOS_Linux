@@ -2,7 +2,6 @@
 
 #include <common/refcount.h>
 #include <common/string.h>
-#include <linux_compat/debug_trace.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/fs/vfs_protocol.h>
 #include <linux_compat/ipc/port_naming.h>
@@ -333,19 +332,6 @@ i64 vfs_backend_ipc_call(vfs_backend_req_t *req)
                 return -LINUX_ENOMEM;
         }
 
-#if LINUX_COMPAT_TRACE_VFS_IO || LINUX_COMPAT_TRACE_IPC_REPLY_STALL
-        {
-                Thread_Base *self = get_cpu_current_thread();
-
-                pr_info("[vfs-be] ipc_call enter port=%s op=%d tid=%d cpu=%lu "
-                        "reply='%s'\n",
-                        port,
-                        (int)req->op,
-                        self ? (int)self->tid : -1,
-                        (u64)percpu(cpu_number),
-                        reply->name);
-        }
-#endif
 
         /*
          * Nested VFS→backend: uninterruptible so a signal cannot abort mid-I/O
@@ -412,12 +398,6 @@ i64 vfs_backend_ipc_call(vfs_backend_req_t *req)
         }
 
         req->result = ret;
-#if LINUX_COMPAT_TRACE_VFS_IO || LINUX_COMPAT_TRACE_IPC_REPLY_STALL
-        pr_info("[vfs-be] ipc_call leave port=%s op=%d ret=%ld\n",
-                port,
-                (int)req->op,
-                (long)ret);
-#endif
         ref_put(&reply->refcount, free_message_port_ref);
         return ret;
 }

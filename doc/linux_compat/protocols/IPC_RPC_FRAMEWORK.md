@@ -49,8 +49,10 @@ recv_msg(reply)  ◄───────────  send_msg(reply)    # 应�
 - **禁止** 用直调 backend / 绕过 RPC 代替上述会合（与架构分层冲突）。
 - **core 不变量**（实现必须满足，否则会出现 `REPLY send` 后无 `SRV done` 的楔死）：
   1. 从 port `thread_queue` **出队** 的 waiter，要么完成 transfer 并唤醒对端，要么在放弃时 **显式唤醒**（不得静默丢弃后让对端永睡）。
-  2. `recv_msg`/`send_msg` 在 `ipc_transfer_message` 返回 `-E_REND_NO_MSG` / 需换对端时，必须 **释放当前 request、唤醒已出队对端（`THREAD_FLAG_IPC_XFER_FAIL`）、并重新 `try_match`/重试**；不得静默丢弃对端，也不得对同一 request 死循环 `continue`。对端被 `XFER_FAIL` 唤醒后不得假 SUCCESS，须重入会合。
+  2. `recv_msg`/`send_msg` 在 transfer 失败需换对端时，必须释放当前 request 并保证已出队 waiter 被正确收尾（唤醒或明确错误路径）；不得静默丢弃对端后让其永睡。
   3. `try_match` 若因 `status != block_on_{send,receive}` 丢弃队列项，被丢弃线程若仍停在对应 block 状态，必须被唤醒（否则已离队却无人 `ready`）。
+  4. Compat RPC：**禁止**在「未持有 port wait 身份」时用 `schedule()` 空转重试（会把墙钟打进 `ebr_try_reclaim`）。会合失败应 `recv_msg`/`send_msg` 阻塞，或返回错误；`ipc_server_coop_loop` 在 port 空时必须 `recv_msg`，不得因 poll_pending 而 yield-spin。
+  5. Reply：`send_msg` 返回 `-E_REND_NO_MSG` / `-E_REND_AGAIN` 时 payload **未**送达 → 允许 rebuild 再发；`SUCCESS`/`PORT_CLOSED` 后禁止再发（防双应答）。Client：commit 后仅 `PORT_CLOSED` → `-EIO`；其它 `recv_msg` 错误 → 再进阻塞 `recv_msg`。
 
 ---
 
