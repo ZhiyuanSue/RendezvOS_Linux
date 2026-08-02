@@ -3,6 +3,7 @@
  */
 
 #include <common/string.h>
+#include <linux_compat/debug_trace.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/ipc/block_wake.h>
 #include <linux_compat/ipc/port_naming.h>
@@ -21,36 +22,114 @@
 
 extern struct Port_Table* global_port_table;
 
-/* Append decimal @val to buf[n], return new length or 0 if overflow. */
-static size_t ipc_port_name_append_u32(char* buf, size_t bufsize, size_t n,
-                                       u32 val)
+#if LINUX_COMPAT_TRACE_IPC_REPLY_STALL
+/*
+ * Trace reply rendezvous on:
+ *   vfs_cli_k_t*  — nested VFS→backend (always when STALL=1)
+ *   vfs_cli_*     — user→VFS when STALL_USER=1 (munmap wedge)
+ */
+static bool ipc_rpc_trace_reply_port(const char* name)
 {
-        char digits[12];
-        u32 nd = 0;
-        u32 tmp = val;
-        u32 i;
+        const char* kpfx = "vfs_cli_k_t";
+        const char* upfx = "vfs_cli_";
+        size_t i;
 
-        if (!buf || n >= bufsize)
-                return 0;
-
-        if (tmp == 0) {
-                digits[nd++] = '0';
-        } else {
-                while (tmp && nd < sizeof(digits)) {
-                        digits[nd++] = (char)('0' + (tmp % 10u));
-                        tmp /= 10u;
+        if (!name) {
+                return false;
+        }
+        for (i = 0; kpfx[i]; i++) {
+                if (name[i] != kpfx[i]) {
+                        break;
                 }
         }
-        for (i = 0; i < nd; i++) {
-                if (n + 1 >= bufsize) {
-                        buf[0] = '\0';
-                        return 0;
-                }
-                buf[n++] = digits[nd - 1u - i];
+        if (!kpfx[i] && name[i] != '\0') {
+                return true;
         }
-        buf[n] = '\0';
-        return n;
+#if LINUX_COMPAT_TRACE_IPC_REPLY_STALL_USER
+        for (i = 0; upfx[i]; i++) {
+                if (name[i] != upfx[i]) {
+                        return false;
+                }
+        }
+        /* Exclude k_reg_* register noise; keep vfs_cli_<pid>. */
+        if (name[i] == 'k') {
+                return false;
+        }
+        return name[i] != '\0';
+#else
+        (void)upfx;
+        return false;
+#endif
 }
+
+/*
+ * Opcode namespaces collide (both start at SYSTEM_END+1). Pick by port:
+ *   vfs_cli_k_t* → backend LOOKUP/READ/…
+ *   vfs_cli_<pid> → VFS OPEN/READ/…
+ */
+static const char* ipc_rpc_stall_op_name(const char* port, u16 op)
+{
+        bool backend = false;
+        const char* kpfx = "vfs_cli_k_t";
+        size_t i;
+
+        if (port) {
+                for (i = 0; kpfx[i]; i++) {
+                        if (port[i] != kpfx[i]) {
+                                break;
+                        }
+                }
+                backend = (!kpfx[i] && port[i] != '\0');
+        }
+
+        if (backend) {
+                switch (op) {
+                case 7:
+                        return "BE_LOOKUP";
+                case 8:
+                        return "BE_READ";
+                case 9:
+                        return "BE_WRITE";
+                case 10:
+                        return "BE_TRUNC";
+                case 11:
+                        return "BE_FLUSH";
+                case 15:
+                        return "BE_CREATE";
+                default:
+                        return "BE_?";
+                }
+        }
+
+        switch (op) {
+        case 7:
+                return "VFS_OPEN";
+        case 8:
+                return "VFS_CLOSE";
+        case 9:
+                return "VFS_READ";
+        case 10:
+                return "VFS_WRITE";
+        case 11:
+                return "VFS_FSTAT";
+        case 13:
+                return "VFS_LSEEK";
+        case 29:
+                return "VFS_READLINKAT";
+        case 30:
+                return "VFS_FACCESSAT";
+        default:
+                return "VFS_?";
+        }
+}
+
+static u32 ipc_rpc_stall_seq;
+
+static u32 ipc_rpc_stall_next_seq(void)
+{
+        return ++ipc_rpc_stall_seq;
+}
+#endif
 
 static size_t ipc_port_name_copy_service(char* buf, size_t bufsize,
                                          const char* service)
@@ -72,52 +151,6 @@ static size_t ipc_port_name_copy_service(char* buf, size_t bufsize,
         }
         buf[n] = '\0';
         return n;
-}
-
-size_t ipc_port_name_listen_global(char* buf, size_t bufsize,
-                                   const char* service)
-{
-        size_t n = ipc_port_name_copy_service(buf, bufsize, service);
-        const char* suf = "_listen";
-        size_t i;
-
-        if (!n)
-                return 0;
-        for (i = 0; suf[i]; i++) {
-                if (n + 1 >= bufsize) {
-                        buf[0] = '\0';
-                        return 0;
-                }
-                buf[n++] = suf[i];
-        }
-        buf[n] = '\0';
-        return n;
-}
-
-size_t ipc_port_name_listen_cpu(char* buf, size_t bufsize, const char* service,
-                                u32 cpu)
-{
-        size_t n = ipc_port_name_copy_service(buf, bufsize, service);
-
-        if (!n || n + 2 >= bufsize)
-                return 0;
-        buf[n++] = '_';
-        buf[n++] = 'c';
-        buf[n] = '\0';
-        return ipc_port_name_append_u32(buf, bufsize, n, cpu);
-}
-
-size_t ipc_port_name_worker(char* buf, size_t bufsize, const char* service,
-                            u32 cpu, u32 wid)
-{
-        size_t n = ipc_port_name_listen_cpu(buf, bufsize, service, cpu);
-
-        if (!n || n + 2 >= bufsize)
-                return 0;
-        buf[n++] = '_';
-        buf[n++] = 'w';
-        buf[n] = '\0';
-        return ipc_port_name_append_u32(buf, bufsize, n, wid);
 }
 
 size_t ipc_port_name_cli(char* buf, size_t bufsize, const char* service,
@@ -249,6 +282,14 @@ void ipc_rpc_unregister_port_by_pid(const char* prefix, pid_t pid)
         }
         if (ipc_rpc_format_port_name(port_name, sizeof(port_name), prefix, pid)
             == 0) {
+                return;
+        }
+        (void)unregister_port(global_port_table, port_name);
+}
+
+void ipc_rpc_unregister_port_name(const char* port_name)
+{
+        if (!global_port_table || !port_name || !port_name[0]) {
                 return;
         }
         (void)unregister_port(global_port_table, port_name);
@@ -422,24 +463,87 @@ static i64 ipc_rpc_call_va_flags(Message_Port_t* server_port,
                 return -LINUX_EIO;
         }
 
+#if LINUX_COMPAT_TRACE_IPC_WEDGE
+        {
+                Thread_Base* self = get_cpu_current_thread();
+                Tcb_Base* task = get_cpu_current_task();
+
+                pr_info("[rpc] SEND srv='%s' reply='%s' op=%u tid=%d pid=%d\n",
+                        server_port->name ? server_port->name : "?",
+                        reply_port->name ? reply_port->name : "?",
+                        (unsigned)req_opcode,
+                        self ? (int)self->tid : -1,
+                        task ? (int)task->pid : -1);
+        }
+#endif
         err = send_msg(server_port);
         if (err != REND_SUCCESS) {
+#if LINUX_COMPAT_TRACE_IPC_WEDGE
+                pr_error("[rpc] SEND fail srv='%s' err=%d\n",
+                         server_port->name ? server_port->name : "?",
+                         (int)err);
+#endif
                 /* Includes -E_REND_PORT_CLOSED if listen/reply port was closed. */
                 return -LINUX_EIO;
         }
 
         /* Committed: wait for reply or reply-port close. Never -EINTR here. */
+#if LINUX_COMPAT_TRACE_IPC_WEDGE
+        pr_info("[rpc] RECV reply='%s' op=%u\n",
+                reply_port->name ? reply_port->name : "?",
+                (unsigned)req_opcode);
+#endif
+#if LINUX_COMPAT_TRACE_IPC_REPLY_STALL
+        u32 stall_seq = 0;
+
+        if (ipc_rpc_trace_reply_port(reply_port->name)) {
+                Thread_Base* self = get_cpu_current_thread();
+
+                stall_seq = ipc_rpc_stall_next_seq();
+                pr_info("[rpc-stall] #%u recv_enter port='%s' op=%u(%s) "
+                        "tid=%d cpu=%lu\n",
+                        stall_seq,
+                        reply_port->name,
+                        (unsigned)req_opcode,
+                        ipc_rpc_stall_op_name(reply_port->name, req_opcode),
+                        self ? (int)self->tid : -1,
+                        (u64)percpu(cpu_number));
+        }
+#endif
         for (;;) {
                 err = recv_msg(reply_port);
                 if (err == -E_REND_PORT_CLOSED) {
+#if LINUX_COMPAT_TRACE_IPC_REPLY_STALL
+                        if (stall_seq) {
+                                pr_info("[rpc-stall] #%u recv_leave port='%s' "
+                                        "PORT_CLOSED\n",
+                                        stall_seq,
+                                        reply_port->name);
+                        }
+#endif
                         ipc_rpc_drain_recv_queue();
                         return -LINUX_EIO;
                 }
                 if (err != REND_SUCCESS) {
                         /*
-                         * Transient recv failure must not abandon the
-                         * rendezvous — retry. Drain stale delivers first.
+                         * Transient recv failure (incl. after XFER_FAIL wake
+                         * from send-side NO_MSG) must not abandon — retry.
                          */
+#if LINUX_COMPAT_TRACE_IPC_REPLY_STALL
+                        if (stall_seq) {
+                                Thread_Base* self = get_cpu_current_thread();
+
+                                pr_info("[rpc-stall] #%u recv_retry port='%s' "
+                                        "err=%d flags=0x%llx st=%lu tid=%d\n",
+                                        stall_seq,
+                                        reply_port->name,
+                                        (int)err,
+                                        self ? (unsigned long long)self->flags
+                                             : 0ull,
+                                        self ? thread_get_status(self) : 0ul,
+                                        self ? (int)self->tid : -1);
+                        }
+#endif
                         ipc_rpc_drain_recv_queue();
                         schedule(percpu(core_tm));
                         continue;
@@ -447,6 +551,14 @@ static i64 ipc_rpc_call_va_flags(Message_Port_t* server_port,
 
                 msg = dequeue_recv_msg();
                 if (!msg) {
+#if LINUX_COMPAT_TRACE_IPC_REPLY_STALL
+                        if (stall_seq) {
+                                pr_info("[rpc-stall] #%u recv_empty port='%s' "
+                                        "(SUCCESS but no msg)\n",
+                                        stall_seq,
+                                        reply_port->name);
+                        }
+#endif
                         continue;
                 }
 
@@ -483,6 +595,15 @@ static i64 ipc_rpc_call_va_flags(Message_Port_t* server_port,
                 }
 
                 ref_put(&msg->ms_queue_node.refcount, free_message_ref);
+#if LINUX_COMPAT_TRACE_IPC_REPLY_STALL
+                if (stall_seq) {
+                        pr_info("[rpc-stall] #%u recv_leave port='%s' ok "
+                                "result=%ld\n",
+                                stall_seq,
+                                reply_port->name,
+                                result);
+                }
+#endif
                 return result;
         }
 }
@@ -672,11 +793,77 @@ bool ipc_rpc_send_reply(u16 module, u16 resp_opcode, const char* resp_fmt,
                  * PORT_CLOSED: client tore down while we blocked; core dropped
                  * the orphan — treat as handled so listen continues.
                  */
+#if LINUX_COMPAT_TRACE_IPC_WEDGE
+                pr_info("[rpc] REPLY send reply='%s' result=%ld\n",
+                        reply_port_name,
+                        result);
+#endif
+#if LINUX_COMPAT_TRACE_IPC_REPLY_STALL
+                u32 reply_seq = 0;
+
+                if (ipc_rpc_trace_reply_port(reply_port_name)) {
+                        Thread_Base* self = get_cpu_current_thread();
+
+                        reply_seq = ipc_rpc_stall_next_seq();
+                        pr_info("[rpc-stall] #%u reply_enter port='%s' "
+                                "result=%ld tid=%d cpu=%lu flags=0x%llx "
+                                "st=%lu\n",
+                                reply_seq,
+                                reply_port_name,
+                                result,
+                                self ? (int)self->tid : -1,
+                                (u64)percpu(cpu_number),
+                                self ? (unsigned long long)self->flags : 0ull,
+                                self ? thread_get_status(self) : 0ul);
+                }
+#endif
                 send_err = send_msg(reply_port);
                 ref_put(&reply_port->refcount, free_message_port_ref);
+#if LINUX_COMPAT_TRACE_IPC_REPLY_STALL
+                if (reply_seq) {
+                        Thread_Base* self = get_cpu_current_thread();
+
+                        pr_info("[rpc-stall] #%u reply_leave port='%s' "
+                                "err=%d flags=0x%llx st=%lu\n",
+                                reply_seq,
+                                reply_port_name,
+                                (int)send_err,
+                                self ? (unsigned long long)self->flags : 0ull,
+                                self ? thread_get_status(self) : 0ul);
+                }
+#endif
                 if (send_err == REND_SUCCESS
                     || send_err == -E_REND_PORT_CLOSED) {
+#if LINUX_COMPAT_TRACE_IPC_WEDGE
+                        if (send_err == -E_REND_PORT_CLOSED) {
+                                pr_info("[rpc] REPLY PORT_CLOSED reply='%s'\n",
+                                        reply_port_name);
+                        }
+#endif
                         return true;
+                }
+                /*
+                 * -E_REND_NO_MSG: transfer abandoned; core woke the receiver
+                 * with XFER_FAIL. Payload was not delivered — safe to rebuild
+                 * and retry (not a duplicate).
+                 */
+                if (send_err == -E_REND_NO_MSG || send_err == -E_REND_AGAIN) {
+#if LINUX_COMPAT_TRACE_IPC_REPLY_STALL
+                        if (reply_seq) {
+                                pr_info("[rpc-stall] #%u reply_retry port='%s' "
+                                        "err=%d result=%ld\n",
+                                        reply_seq,
+                                        reply_port_name,
+                                        (int)send_err,
+                                        result);
+                        }
+#endif
+                        pr_warn("[IPC-RPC] reply send err=%d port='%s' — "
+                                "retry\n",
+                                (int)send_err,
+                                reply_port_name);
+                        schedule(percpu(core_tm));
+                        continue;
                 }
                 pr_error("[IPC-RPC] reply send failed port='%s' err=%d "
                          "result=%ld (client may still be in recv)\n",
@@ -718,6 +905,109 @@ void ipc_rpc_reply(const kmsg_t* km, const char* reply_port_name, u16 module,
         }
 }
 
+bool ipc_server_coop_flag_pending(void* ctx)
+{
+        bool* flag = (bool*)ctx;
+
+        return flag && *flag;
+}
+
+static Message_Port_t* ipc_server_coop_lookup(const char* listen_port_name)
+{
+        Message_Port_t* port = NULL;
+
+        while (!port) {
+                port = thread_lookup_port(listen_port_name);
+                if (!port) {
+                        schedule(percpu(core_tm));
+                }
+        }
+        return port;
+}
+
+static void ipc_server_coop_drain(Message_Port_t** port_io,
+                                  const char* listen_port_name,
+                                  ipc_server_message_fn_t on_message)
+{
+        Message_Port_t* port = *port_io;
+
+        while (1) {
+                Message_t* msg = dequeue_recv_msg();
+
+                if (!msg) {
+                        break;
+                }
+                if (linux_ipc_kmsg_is_port_closed(port, msg)) {
+                        ref_put(&msg->ms_queue_node.refcount, free_message_ref);
+                        ref_put(&port->refcount, free_message_port_ref);
+                        *port_io = ipc_server_coop_lookup(listen_port_name);
+                        break;
+                }
+                on_message(msg, port->service_id);
+                ref_put(&msg->ms_queue_node.refcount, free_message_ref);
+        }
+}
+
+void ipc_server_coop_loop(const char* listen_port_name,
+                          ipc_server_message_fn_t on_message,
+                          ipc_server_poll_fn_t poll_pending, void* poll_ctx)
+{
+        Message_Port_t* port;
+
+        if (!listen_port_name || !on_message) {
+                return;
+        }
+
+        port = ipc_server_coop_lookup(listen_port_name);
+
+        while (1) {
+                error_t ret;
+                bool still_pending = false;
+
+                if (poll_pending) {
+                        still_pending = poll_pending(poll_ctx);
+                }
+
+                ret = ipc_try_recv_msg(port);
+                if (ret == REND_SUCCESS) {
+                        ipc_server_coop_drain(&port,
+                                              listen_port_name,
+                                              on_message);
+                        continue;
+                }
+
+                if (ret == -E_REND_PORT_CLOSED) {
+                        ref_put(&port->refcount, free_message_port_ref);
+                        port = ipc_server_coop_lookup(listen_port_name);
+                        continue;
+                }
+
+                if (still_pending) {
+                        schedule(percpu(core_tm));
+                        continue;
+                }
+
+                ret = recv_msg(port);
+                if (ret != REND_SUCCESS) {
+                        if (ret == -E_REND_PORT_CLOSED) {
+                                ref_put(&port->refcount,
+                                        free_message_port_ref);
+                                port = ipc_server_coop_lookup(
+                                        listen_port_name);
+                        } else {
+                                schedule(percpu(core_tm));
+                        }
+                        continue;
+                }
+
+                ipc_server_coop_drain(&port, listen_port_name, on_message);
+        }
+}
+
+/*
+ * Same-thread blocking request–reply. Not a worker pool: handler and
+ * send_msg(reply) run on the listen thread (can wedge the whole service).
+ */
 void ipc_rpc_server_loop(const char* listen_port_name, u16 service_id,
                          u16 resp_opcode, const char* resp_fmt,
                          ipc_rpc_server_handler_t handler)
@@ -792,76 +1082,12 @@ void ipc_rpc_server_loop(const char* listen_port_name, u16 service_id,
                         }
 
                         result = handler(km->hdr.opcode, km, &reply_port);
-                        /*
-                         * Live request–reply: blocking rendezvous. Client is
-                         * in ipc_rpc_call's recv (or will be). try_send here
-                         * raced backends at boot ("reply best-effort failed
-                         * port=vfs_backend_caller"). Abandoned clients: port
-                         * teardown wakes block_on_send (core port_clean).
-                         */
                         ipc_rpc_reply(km,
                                       reply_port,
                                       service_id,
                                       resp_opcode,
                                       resp_fmt,
                                       result);
-                        ref_put(&msg->ms_queue_node.refcount, free_message_ref);
-                }
-        }
-}
-
-void ipc_server_recv_loop(const char* listen_port_name,
-                          ipc_server_message_fn_t on_message)
-{
-        Message_Port_t* port = NULL;
-
-        if (!listen_port_name || !on_message) {
-                return;
-        }
-
-        while (!port) {
-                port = thread_lookup_port(listen_port_name);
-                if (!port) {
-                        schedule(percpu(core_tm));
-                }
-        }
-
-        while (1) {
-                error_t ret = recv_msg(port);
-                u16 service_id = port->service_id;
-
-                if (ret != REND_SUCCESS) {
-                        ref_put(&port->refcount, free_message_port_ref);
-                        port = NULL;
-                        while (!port) {
-                                port = thread_lookup_port(listen_port_name);
-                                if (!port) {
-                                        schedule(percpu(core_tm));
-                                }
-                        }
-                        continue;
-                }
-
-                while (1) {
-                        Message_t* msg = dequeue_recv_msg();
-                        if (!msg) {
-                                break;
-                        }
-                        if (linux_ipc_kmsg_is_port_closed(port, msg)) {
-                                ref_put(&msg->ms_queue_node.refcount,
-                                        free_message_ref);
-                                ref_put(&port->refcount, free_message_port_ref);
-                                port = NULL;
-                                while (!port) {
-                                        port = thread_lookup_port(
-                                                listen_port_name);
-                                        if (!port) {
-                                                schedule(percpu(core_tm));
-                                        }
-                                }
-                                break;
-                        }
-                        on_message(msg, service_id);
                         ref_put(&msg->ms_queue_node.refcount, free_message_ref);
                 }
         }

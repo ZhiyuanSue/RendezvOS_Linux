@@ -14,6 +14,7 @@
 #include <rendezvos/task/thread_loader.h>
 #include <rendezvos/sync/cas_lock.h>
 #include <linux_compat/errno.h>
+#include <linux_compat/ipc/block_wake.h>
 #include <linux_compat/ipc/clean_protocol.h>
 #include <linux_compat/ipc/rpc.h>
 #include <linux_compat/initcall.h>
@@ -42,10 +43,14 @@ static i64 clean_claim_and_delete_task(pid_t pid);
 /*
  * Protocol: doc/linux_compat/protocols/EXIT_CLEAN.md
  *
- * Single global clean_listen handles THREAD_REAP / TASK_REAP* inline.
- * Async workers exist ONLY for EXIT_NOTIFY (blocks on parent's wait_port).
- * Never route every THREAD_REAP through a generic IPC worker pool — that
- * made "send done" with no "THREAD_REAP enter".
+ * Single global clean_listen (ipc_server_coop_loop):
+ *   THREAD_REAP / TASK_REAP*  — on listen (not a worker pool)
+ *   EXIT_NOTIFY              — one-shot only (must not block listen on
+ *                              wait_port; parent needs TASK_REAP_SYNC)
+ *
+ * THREAD_REAP zombie wait stays inline (schedule + ready→zombie promote).
+ * Parking it left Link A children without EXIT_NOTIFY → ash wait4 hung
+ * after the first run_all test (END printed, next test never started).
  */
 
 typedef struct clean_exit_notify_job {
@@ -72,28 +77,53 @@ static void clean_exit_notify_jobs_ensure(void)
         clean_exit_notify_jobs_ready = true;
 }
 
-static void clean_reap_exit_notify_jobs(void)
+/*
+ * Non-blocking: never schedule() here (would wedge coop listen the same way
+ * parking THREAD_REAP did). Promote ready→zombie like THREAD_REAP; return
+ * true while a finished worker still needs another poll.
+ */
+static bool clean_poll_exit_notify_jobs(void)
 {
         struct list_entry *pos;
         struct list_entry *n;
         struct allocator *alloc = percpu(kallocator);
+        bool still_pending = false;
 
         clean_exit_notify_jobs_ensure();
         list_for_each_safe(pos, n, &clean_exit_notify_jobs) {
                 clean_exit_notify_job_t *job =
                         list_entry(pos, clean_exit_notify_job_t, node);
+                Thread_Base *thr;
+                u64 st;
 
-                if (!job->finished || !job->thread)
+                /*
+                 * In-flight workers (!finished) block on wait_port in their
+                 * own threads — do not busy-spin the listen loop on them.
+                 */
+                if (!job->finished)
                         continue;
-                if (thread_get_status(job->thread) != thread_status_zombie) {
-                        schedule(percpu(core_tm));
-                        if (!job->thread
-                            || thread_get_status(job->thread)
-                                       != thread_status_zombie)
-                                continue;
+                thr = job->thread;
+                if (!thr) {
+                        list_del_init(&job->node);
+                        if (alloc && alloc->m_free)
+                                alloc->m_free(alloc, job);
+                        continue;
                 }
+
+                st = thread_get_status(thr);
+                if (st != thread_status_zombie) {
+                        if ((thr->flags & THREAD_FLAG_EXIT_REQUESTED)
+                            && st == thread_status_ready) {
+                                (void)thread_set_status(thr,
+                                                        thread_status_zombie);
+                        } else {
+                                still_pending = true;
+                                continue;
+                        }
+                }
+
                 list_del_init(&job->node);
-                if (delete_thread(job->thread) != REND_SUCCESS) {
+                if (delete_thread(thr) != REND_SUCCESS) {
                         pr_error(
                                 "[clean_server] EXIT_NOTIFY worker delete failed\n");
                 }
@@ -102,6 +132,7 @@ static void clean_reap_exit_notify_jobs(void)
                 if (alloc && alloc->m_free)
                         alloc->m_free(alloc, job);
         }
+        return still_pending;
 }
 
 static void *clean_exit_notify_thread(void *arg)
@@ -172,7 +203,7 @@ static void clean_async_exit_notify(pid_t ppid, pid_t child_pid, i32 exit_code)
         char *name;
         error_t e;
 
-        clean_reap_exit_notify_jobs();
+        (void)clean_poll_exit_notify_jobs();
 
         if (!alloc || !alloc->m_alloc || ppid <= 0 || child_pid <= 0) {
                 clean_exit_notify_fallback_pending(ppid, child_pid, exit_code);
@@ -227,11 +258,42 @@ static void clean_async_exit_notify(pid_t ppid, pid_t child_pid, i32 exit_code)
         job->thread = thr;
 }
 
+/*
+ * Handshake (EXIT_CLEAN): after THREAD_REAP rendezvous the exitor may be
+ * ready but not yet scheduled to store zombie. Promote ready→zombie; only
+ * schedule while still blocked on IPC or running on another CPU.
+ */
+static bool clean_wait_exitor_zombie(Thread_Base *target)
+{
+        if (!target || !(target->flags & THREAD_FLAG_EXIT_REQUESTED)) {
+                return target && thread_get_status(target) == thread_status_zombie;
+        }
+
+        for (;;) {
+                u64 st = thread_get_status(target);
+
+                if (st == thread_status_zombie) {
+                        return true;
+                }
+                if (st != thread_status_block_on_send
+                    && st != thread_status_block_on_receive
+                    && st == thread_status_ready) {
+                        (void)thread_set_status(target, thread_status_zombie);
+                        return true;
+                }
+                schedule(percpu(core_tm));
+        }
+}
+
 static void clean_handle_thread_reap(const kmsg_t *km)
 {
         void *vthread;
         i64 exit_code;
-        bool do_notify = false;
+        enum {
+                REAP_NONE = 0,
+                REAP_LINK_B, /* REAPED → claim + delete_task */
+                REAP_LINK_A, /* ZOMBIE → async EXIT_NOTIFY */
+        } after = REAP_NONE;
         pid_t task_pid = 0;
         pid_t ppid = 0;
         i32 notify_exit_code = 0;
@@ -267,37 +329,7 @@ static void clean_handle_thread_reap(const kmsg_t *km)
                 return;
         }
 
-        /*
-         * Exitor sets zombie only after THREAD_REAP send_msg returns. Listen
-         * runs the handler on the same thread that completed recv — so the
-         * exitor may already be thread_status_ready on another CPU (or this
-         * one) but not yet scheduled to store zombie. Busy-waiting solely on
-         * zombie then livelocks the single clean_listen (seen as hang right
-         * after "[PROC] sys_exit: clear_tid write failed", which is only a
-         * warn before send). Once IPC is done (not block_on_*), promote a
-         * ready exitor to zombie here so delete_thread can proceed.
-         */
-        if (target->flags & THREAD_FLAG_EXIT_REQUESTED) {
-                for (;;) {
-                        u64 st = thread_get_status(target);
-
-                        if (st == thread_status_zombie) {
-                                break;
-                        }
-                        if (st != thread_status_block_on_send
-                            && st != thread_status_block_on_receive) {
-                                if (st == thread_status_ready) {
-                                        (void)thread_set_status(
-                                                target, thread_status_zombie);
-                                        break;
-                                }
-                                /* running on another CPU — yield */
-                        }
-                        schedule(percpu(core_tm));
-                }
-        }
-
-        if (thread_get_status(target) != thread_status_zombie) {
+        if (!clean_wait_exitor_zombie(target)) {
                 pr_error(
                         "[clean_server] THREAD_REAP: not zombie (status=%lu)\n",
                         thread_get_status(target));
@@ -305,37 +337,50 @@ static void clean_handle_thread_reap(const kmsg_t *km)
         }
 
 #ifdef LINUX_COMPAT_TEST
-        linux_thread_append_t *ta = linux_thread_append(target);
-        if (ta && ta->test_cookie != 0 && target->tm) {
-                linux_user_test_notify_exit(
-                        (i32)target->tm->owner_cpu, ta->test_cookie, exit_code);
+        {
+                /*
+                 * Boot harness cookie (usually /init). Per-test ELFs under
+                 * ash run_all are Link A — progress depends on EXIT_NOTIFY,
+                 * not this cookie.
+                 */
+                linux_thread_append_t *ta = linux_thread_append(target);
+
+                if (ta && ta->test_cookie != 0 && target->tm) {
+                        linux_user_test_notify_exit((i32)target->tm->owner_cpu,
+                                                    ta->test_cookie,
+                                                    exit_code);
+                }
         }
 #endif
 
-        error_t e = delete_thread(target);
-        if (e != REND_SUCCESS) {
-                pr_error(
-                        "[clean_server] THREAD_REAP: delete_thread failed e=%d\n",
-                        (int)e);
+        {
+                error_t e = delete_thread(target);
+
+                if (e != REND_SUCCESS) {
+                        pr_error("[clean_server] THREAD_REAP: delete_thread "
+                                 "failed e=%d\n",
+                                 (int)e);
+                        return;
+                }
+        }
+
+        if (!task) {
                 return;
         }
 
-        if (!task)
-                return;
-
         {
                 linux_proc_append_t *pa = linux_proc_append(task);
-                bool do_link_b_task = false;
 
                 lock_cas(&task->thread_list_lock);
                 if (task->thread_number == 0 && pa) {
                         if (pa->exit_state == LINUX_EXIT_REAPED) {
-                                do_link_b_task = true;
+                                /* Link B: orphan / no wait reaper. */
+                                after = REAP_LINK_B;
                                 task_pid = task->pid;
                         } else if (pa->exit_state == LINUX_EXIT_ZOMBIE
                                    && !pa->exit_notify_sent) {
-                                pa->exit_notify_sent = 1;
-                                do_notify = true;
+                                /* Candidate Link A; confirm parent unlocked. */
+                                after = REAP_LINK_A;
                                 task_pid = task->pid;
                                 ppid = pa->ppid;
                                 notify_exit_code = pa->exit_code;
@@ -343,23 +388,45 @@ static void clean_handle_thread_reap(const kmsg_t *km)
                 }
                 unlock_cas(&task->thread_list_lock);
 
-                if (do_link_b_task && task_pid > 0) {
-                        (void)clean_claim_and_delete_task(task_pid);
-                        return;
+                if (after == REAP_LINK_A) {
+                        /*
+                         * Parent gone since sys_exit → demote to Link B.
+                         * Never set exit_notify_sent then skip notify (zombie
+                         * would be unreapable).
+                         */
+                        if (ppid > 0 && find_task_by_pid(ppid)) {
+                                lock_cas(&task->thread_list_lock);
+                                if (pa->exit_state == LINUX_EXIT_ZOMBIE
+                                    && !pa->exit_notify_sent) {
+                                        pa->exit_notify_sent = 1;
+                                } else {
+                                        after = REAP_NONE;
+                                }
+                                unlock_cas(&task->thread_list_lock);
+                        } else {
+                                lock_cas(&task->thread_list_lock);
+                                if (pa->exit_state == LINUX_EXIT_ZOMBIE) {
+                                        pa->exit_state = LINUX_EXIT_REAPED;
+                                        after = REAP_LINK_B;
+                                } else {
+                                        after = REAP_NONE;
+                                }
+                                unlock_cas(&task->thread_list_lock);
+                        }
                 }
         }
 
-        if (!do_notify || task_pid <= 0) {
+        if (after == REAP_LINK_B && task_pid > 0) {
+                (void)clean_claim_and_delete_task(task_pid);
                 return;
         }
 
-        if (ppid > 0 && find_task_by_pid(ppid)) {
+        if (after == REAP_LINK_A && task_pid > 0) {
+                /*
+                 * Must return to listen after spawn — parent wait4 will
+                 * TASK_REAP_SYNC on the same clean_listen.
+                 */
                 clean_async_exit_notify(ppid, task_pid, notify_exit_code);
-        } else {
-                pr_error("[clean_server] THREAD_REAP: ZOMBIE without live "
-                         "parent (pid=%lu ppid=%lu); skip EXIT_NOTIFY\n",
-                         (u64)task_pid,
-                         (u64)ppid);
         }
 }
 
@@ -488,7 +555,7 @@ static void clean_handle_message(Message_t *msg)
 {
         const kmsg_t *km;
 
-        clean_reap_exit_notify_jobs();
+        (void)clean_poll_exit_notify_jobs();
 
         if (!msg || !msg->data) {
                 pr_error("[clean_server] NULL msg or msg->data\n");
@@ -584,17 +651,21 @@ static void clean_server_ensure_port(void)
                 (u64)percpu(cpu_number));
 }
 
+static bool clean_server_poll_pending(void *ctx)
+{
+        (void)ctx;
+        /* Only EXIT_NOTIFY worker teardown is pending; THREAD_REAP is inline. */
+        return clean_poll_exit_notify_jobs();
+}
+
 void clean_server_thread(void)
 {
         clean_server_ensure_port();
         clean_exit_notify_jobs_ensure();
-        /*
-         * Inline recv loop — not per_msg_worker. Client send_msg completes
-         * when this thread recv's; handler runs on the same thread (may
-         * schedule while waiting for exitor zombie). That is the legal
-         * rendezvous for THREAD_REAP.
-         */
-        ipc_server_recv_loop(CLEAN_SERVER_PORT_NAME, clean_server_on_message);
+        ipc_server_coop_loop(CLEAN_SERVER_PORT_NAME,
+                             clean_server_on_message,
+                             clean_server_poll_pending,
+                             NULL);
 }
 
 static void clean_server_init(void)

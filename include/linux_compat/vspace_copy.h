@@ -11,9 +11,8 @@
  * @param child_vs_ptr: Output pointer for newly created child vspace
  * @return: 0 on success, negative error code on failure
  *
- * This is a Linux wrapper over core's vspace clone primitive.
- * Current policy: user 4K pages only + COW preparation (share ppn, downgrade
- * parent/child writable leaves to read-only).
+ * Wrapper over core `clone_vspace(COW_PREP)`: share PPN, clear PTE WRITE on
+ * parent and child, radix keeps write intent + `PAGE_ENTRY_COW`.
  */
 error_t linux_copy_vspace(VSpace *parent_vs, VSpace **child_vs_ptr);
 

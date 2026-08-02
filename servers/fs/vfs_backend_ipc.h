@@ -11,9 +11,9 @@
 
 /*
  * Reply ports follow PORT_NAMING: vfs_cli_k_<tag>
- *   vfs_cli_k_srv          — VFS listen thread → backend (serialized)
+ *   vfs_cli_k_t<tid>       — per-thread backend RPC reply (listen + kern load)
  *   vfs_cli_k_reg_<fstype> — backend register → VFS (one per backend thread)
- * Do not share a single "vfs_backend_caller" across concurrent callers.
+ * Never share one reply port across concurrent callers (preemption / SMP).
  */
 
 #define VFS_BACKEND_IPC_OPC_FIRST (KMSG_OP_SYSTEM_END + 1u)

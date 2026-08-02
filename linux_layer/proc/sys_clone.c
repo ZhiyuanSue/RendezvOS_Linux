@@ -223,6 +223,12 @@ i64 sys_clone(u64 flags, u64 stack, u64 parent_tid, u64 child_tid, u64 tls)
                 arch_set_user_tls_base(&child_thread->ctx, tls);
         }
 
+        if (!(flags & CLONE_VM) && parent->vs) {
+                linux_mm_cow_break_user_stack(
+                        parent->vs,
+                        arch_get_thread_user_sp(&parent_thread->ctx));
+        }
+
         e = add_thread_to_manager(percpu(core_tm), child_thread);
         if (e != REND_SUCCESS) {
                 pr_error(

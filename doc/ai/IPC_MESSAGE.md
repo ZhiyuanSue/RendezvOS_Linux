@@ -87,7 +87,7 @@ Authoritative protocol: [`doc/linux_compat/protocols/EXIT_CLEAN.md`](../linux_co
 - `sys_exit`: always `THREAD_REAP`; orphans mark `REAPED` and listen finishes `delete_task` inline; waitable children stay `ZOMBIE` until wait.
 - `wait4` / init: `exit_state=REAPED` then `TASK_REAP_SYNC` (reply after `delete_task`).
 - Task delete is claimed by `REAPED→TASK_CLAIMED` so concurrent paths cannot double-`delete_task`.
-- clean_server: one BSP `ipc_server_recv_loop`; EXIT_NOTIFY only is async.
+- clean_server: one BSP `ipc_server_coop_loop`; EXIT_NOTIFY only is async one-shot.
 
 ## Init and layering
 

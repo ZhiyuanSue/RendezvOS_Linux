@@ -358,7 +358,7 @@ When a new bug pattern appears during review/debug:
   `protocols/IPC_RPC_FRAMEWORK.md` + `PORT_NAMING.md`.
 
 - 2026-07-26: **clean_server role split:** `THREAD_REAP` on single
-  `clean_listen` (`ipc_server_recv_loop`); async only for EXIT_NOTIFY.
+  `clean_listen` (`ipc_server_coop_loop`); async only for EXIT_NOTIFY.
   Checklist: §2 + `protocols/EXIT_CLEAN.md`.
 
 - 2026-04: **Field repurposing with union + type-safe caching (vmm_radix_tree_change_range_flags):**
@@ -491,3 +491,81 @@ When a new bug pattern appears during review/debug:
     wait; `ipc_rpc_send_reply` / `post_exit_notify` retry alloc; EXIT_NOTIFY
     worker falls back to `pending_exits`+poke; `PORT_CLOSED` = handled.
   - Checklist: §0 + IPC_RPC_FRAMEWORK §7–8; EXIT_CLEAN; BUSYBOX IPC P0 §3–4.
+
+- 2026-08-01: **execve must reset caught signal dispositions (not only pending):**
+  - Symptom: after ash `execve /tests/{clone,fork,exit}`, child runs OK then
+    parent `#PF pc=far=0x57f485` (`present=0`, `rdi=SIGCHLD`); VA is busybox
+    `.text`, outside the test ELF (`LOAD` ends ~`0x4037b1`).
+  - Cause: `linux_signal_proc_reset` cleared pending/`sigreturn_page` but left
+    catchers from the previous image; SIGCHLD delivery jumped to stale handler.
+  - Fix: on exec reset, caught handlers → `SIG_DFL` (keep `SIG_IGN`); do not
+    chase with post-fork COW PTE reinstall bandaids.
+  - Checklist: §5 (lifecycle across image replace) + Pattern Log.
+
+- 2026-08-01: **VFS backend reply port must be per-thread (not shared `srv`):**
+  - Symptom: hang at `/tests/oscomp_munmap` after ash `copy_thread`, before any
+    test printf; DUMP mostly `schedule`, brief `ipc_port_try_match`.
+  - Cause: `vfs_backend_ipc_call` used one `vfs_cli_k_srv` for all callers.
+    `vfs_server` (nested backend) and syscall-context `vfs_kern_read_file_slice`
+    (execve) can overlap when listen blocks in `recv_msg` → reply misdelivery /
+    rendezvous wedge.
+  - Fix: reply tag `t<tid>` per caller; TRACE_IPC_WEDGE / TRACE_VFS_IO breadcrumbs.
+  - Checklist: §0 (single-threaded listen ≠ single global reply port).
+
+- 2026-08-01: **Backend reply rendezvous wedge (do not bypass with local dispatch):**
+  - Symptom: execve LOOKUP log stops after `[rpc] REPLY send … vfs_cli_k_t<tid>`
+    (no `SRV done`); same LOOKUP often succeeds on another tid.
+  - Rejected: in-process `vfs_backend_dispatch` short-circuit — breaks VFS→backend
+    RPC architecture; may only be used as a temporary A/B to localize the bug.
+  - Protocol (unchanged): blocking `send_msg(reply)` ↔ `recv_msg(reply)`; server
+    may arrive first. See IPC_RPC_FRAMEWORK §5.1.
+  - Evidence (rpc-stall): both `recv_enter` and `reply_enter` then neither leave
+    on `vfs_cli_k_t*` READ — wedge inside rendezvous (not “client never recv”).
+  - Core fix (symmetric, §5.1 “dequeue ⇒ complete or wake”):
+    (1) `recv_msg`/`try_recv` on `-E_REND_NO_MSG` wake sender `XFER_FAIL` →
+    `send_msg` retries; (2) `send_msg`/`try_send` on `-E_REND_NO_MSG` wake
+    receiver `XFER_FAIL` → `recv_msg` retries (was missing — silent drop of
+    dequeued `block_on_receive`); (3) stale `try_match` wakes with
+    `PORT_CLOSED`. Same class: early boot `vfs_cli_*` READLINKAT and
+    munmap nested `vfs_cli_k_t*` — intermittent either side first.
+  - Framework: `ipc_server_coop_loop` for single-thread servers; no worker pool.
+  - Checklist: §0 + IPC_RPC_FRAMEWORK §5.1.
+
+- 2026-08-02: **Park THREAD_REAP → Path B run_all stuck after first test:**
+  - Symptom: `END test_brk` then silence (no next `=== /tests/… ===`).
+  - Misread: harness cookie / Link B. Truth: `/init`→ash `run_all` children are
+    **Link A**; missing `EXIT_NOTIFY` leaves parent `wait4` forever.
+  - Cause: parking THREAD_REAP zombie wait without guaranteed
+    `delete_thread`+`EXIT_NOTIFY`; also `schedule()` inside coop poll.
+  - Fix: zombie wait stays inline (EXIT_CLEAN); Link A only if live parent
+    else demote REAPED+`delete_task`; poll only non-blocking EXIT_NOTIFY
+    worker teardown.
+  - Checklist: §0 + EXIT_CLEAN Link A/B.
+
+- 2026-08-02: **IPC `port_ptr` claim-after-enqueue → stale hold / ghost wait:**
+  - Symptom: nested RPC or `wait4` hang; probes showed `enqueue cas_fail`
+    (held prior reply port) then `try_match drop_port_ptr` (no wake).
+  - Cause: request visible before `CAS(NULL→port)`; peer matched with
+    `port_ptr==NULL` then local CAS wrote a post-match stale hold. Also
+    enqueue-fail path `store NULL` then unconditional `CAS(NULL→port)`.
+  - Invariant: claim `port_ptr` before queue visibility; enqueue fail rolls
+    back with `store NULL`; `try_match` succeeds only if identity is `port`
+    (NULL is not success). Blocking send/recv ⇒ at most one wait identity.
+  - Claim CAS fail must `store NULL` (stale poison) so caller AGAIN can
+    proceed; otherwise same-CPU send can spin and never schedule powerd
+    (core suite PASS but no `[powerd] shutdown request`).
+  - Core-test footgun (2026-08-02 log): `BSP_test`/`AP_test` used
+    `thread_set_status(init_thread, ready)` while init was in
+    `recv_msg(kernel_port)`. That bypasses `try_match` clear →
+    `STALE_AFTER_WAIT` / `claim_fail` busy loop (no `schedule`) → powerd
+    starved. Fix: do not force-ready IPC-blocked waiters; shutdown only via
+    `rendezvos_request_poweroff()` → `send_msg(powerd)`.
+  - Checklist: §2 (lockless linearization) + §5 (wait lifecycle).
+
+- 2026-08-02: **Drop core↔compat test phase gate; simplify poweroff:**
+  - Core-only (`RENDEZVOS_TEST`): `BSP_test` ends with
+    `rendezvos_request_poweroff()` (no `CORE_AUTO_POWEROFF` feature).
+  - Full root: undef `RENDEZVOS_TEST`; `RENDEZVOS_ROOT_AUTO_POWEROFF`
+    after `/init` cookie wait in `linux_boot`.
+  - Removed unused `core_test_phase_*` and multi-slot / legacy manifest
+    boot branch; one boot wait cookie for PID1.

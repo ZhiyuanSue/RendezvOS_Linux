@@ -25,8 +25,7 @@ bool linux_proc_wait_poke(pid_t parent_pid);
 
 /*
  * Blocking EXIT_NOTIFY to parent's wait_port (enqueue + send_msg).
- * Sent by a clean_server per-message worker after THREAD_REAP when
- * thread_number==0.
+ * Sent after THREAD_REAP when thread_number==0 (clean EXIT_NOTIFY path).
  */
 bool linux_proc_post_exit_notify(pid_t parent_pid, pid_t child_pid,
                                  i32 exit_code);
@@ -46,9 +45,8 @@ bool linux_proc_reap_zombie_by_pid(pid_t child_pid);
 
 /*
  * Queue @p child_pid for init reap on a dedicated thread. The kernel_port
- * EXIT_NOTIFY handler must return quickly so clean workers blocked in
- * send_msg(kernel_port) can complete; doing TASK_REAP_SYNC in that handler
- * deadlocks a per-CPU worker pool (protocols/EXIT_CLEAN.md).
+ * EXIT_NOTIFY handler must return quickly so a blocked send_msg(kernel_port)
+ * from clean can complete (protocols/EXIT_CLEAN.md).
  */
 void linux_proc_schedule_init_reap(pid_t child_pid);
 

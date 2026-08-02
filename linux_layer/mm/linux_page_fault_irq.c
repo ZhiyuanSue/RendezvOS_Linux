@@ -64,106 +64,11 @@ static error_t linux_handle_cow_fault(vaddr fault_addr, bool is_write,
                                       bool is_present)
 {
         VSpace *vs = percpu(current_vspace);
-        struct map_handler *handler = &percpu(Map_Handler);
-        struct pmm *pmm = vs->pmm;
 
-        if (!vs || !handler || !pmm) {
-                pr_error("[MM] COW: NULL vs/handler/pmm\n");
+        if (!vs || !is_write || !is_present)
                 return -E_RENDEZVOS;
-        }
 
-        /* Step 1: Query current mapping */
-        ENTRY_FLAGS_t old_flags;
-        int entry_level;
-        ppn_t old_ppn = have_mapped(
-                vs, VPN(fault_addr), &old_flags, &entry_level, handler);
-
-        if (old_ppn <= 0 || !(old_flags & PAGE_ENTRY_VALID)) {
-                /* Page not present - not a COW fault */
-                return -E_RENDEZVOS;
-        }
-
-        /* Step 2: Verify COW condition
-         *
-         * COW semantics after the fix:
-         * - Radix_node_t: stores original permissions (e.g., RW)
-         * - Page table: read-only (COW protection)
-         *
-         * When a write fault occurs on a COW page:
-         * - old_flags (from page table): read-only
-         * - But the page should be writable according to radix tree flags
-         *
-         * We can't directly check radix tree flags here without a query
-         * interface, so we rely on the fact that:
-         * - If page is mapped and read-only, it might be COW
-         * - linux_mm_remap_user_leaf verifies radix tree state
-         */
-        if (old_flags & PAGE_ENTRY_WRITE) {
-                /* Page already writable - not a COW fault */
-                pr_error("[MM] COW: Page already writable at vaddr=0x%lx\n",
-                         fault_addr);
-                return -E_RENDEZVOS;
-        }
-
-        if (!is_write || !is_present) {
-                /* Not a write fault on present page */
-                return -E_RENDEZVOS;
-        }
-
-        /*
-         * At this point, we have a write fault on a present, read-only page.
-         * This could be:
-         * 1. A COW page (radix tree says writable, page table says read-only)
-         * 2. A true read-only page (both radix tree and page table say
-         * read-only)
-         *
-         * We attempt COW split; remap helper distinguishes
-         * between these cases and return appropriate error codes.
-         */
-
-        /* Step 3: Allocate new physical page */
-        size_t alloced_page_number;
-        ppn_t new_ppn = pmm->pmm_alloc(pmm, 1, &alloced_page_number);
-        if (invalid_ppn(new_ppn) || alloced_page_number != 1) {
-                pr_error("[MM] COW: Failed to allocate new physical page\n");
-                return -E_RENDEZVOS;
-        }
-
-        /* Step 4: Copy page content using map_handler_copy_page() */
-        error_t e = map_handler_copy_page(handler, new_ppn, old_ppn);
-        if (e != REND_SUCCESS) {
-                pr_error("[MM] COW: Failed to copy page content (e=%d)\n",
-                         (int)e);
-                pmm->pmm_free(pmm, new_ppn, 1);
-                return e;
-        }
-
-        if (!vs->root_radix) {
-                pr_error("[MM] COW: vs has no radix root va=0x%lx\n",
-                         fault_addr);
-                pmm->pmm_free(pmm, new_ppn, 1);
-                return -E_RENDEZVOS;
-        }
-
-        ENTRY_FLAGS_t new_flags = old_flags | PAGE_ENTRY_WRITE;
-
-        e = linux_mm_remap_user_leaf(
-                vs, fault_addr, new_ppn, new_flags, old_ppn);
-
-        if (e != REND_SUCCESS) {
-                pr_error("[MM] COW: Failed to remap page (e=%d)\n", (int)e);
-                pr_error(
-                        "[MM] COW: Details: va=0x%lx, new_ppn=0x%lx, old_ppn=0x%lx, flags=0x%lx, entry_level=%d\n",
-                        fault_addr,
-                        (u64)new_ppn,
-                        (u64)old_ppn,
-                        (u64)new_flags,
-                        entry_level);
-                pmm->pmm_free(pmm, new_ppn, 1);
-                return e;
-        }
-
-        return REND_SUCCESS;
+        return linux_mm_cow_split_page(vs, fault_addr);
 }
 
 static void linux_pf_log_user_context(struct trap_frame *tf, vaddr fault_addr,
@@ -352,12 +257,16 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
          * We determine this is a write fault based on radix tree flags, not
          * hardware registers.
          */
-        if (page_mapped && radix_is_write && is_present
+        /*
+         * COW: hardware write + present RO PTE + radix still wants WRITE
+         * (clone_vspace cleared PTE WRITE, kept write intent in radix + COW).
+         * Must use hardware is_write — do not treat insn/read faults as COW.
+         */
+        if (page_mapped && is_write && is_present && radix_is_write
             && !(pt_flags & PAGE_ENTRY_WRITE)) {
                 if (in_radix && (nflags & PAGE_ENTRY_WRITE)) {
-                        /* COW: radix writable, PTE read-only */
                         error_t e = linux_handle_cow_fault(
-                                fault_addr, radix_is_write, is_present);
+                                fault_addr, is_write, is_present);
                         if (e == REND_SUCCESS) {
                                 return;
                         }
@@ -365,10 +274,8 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
                                  fault_addr,
                                  (int)e);
                         goto unhandled_fault;
-                } else {
-                        /* Not COW - this is a true read-only violation */
-                        goto handle_read_only_violation;
                 }
+                goto handle_read_only_violation;
         }
 
         /*

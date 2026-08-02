@@ -14,6 +14,13 @@
 #include <rendezvos/mm/vmm.h>
 #include <rendezvos/mm/vmm_radix_tree.h>
 #include <rendezvos/smp/percpu.h>
+#if defined(_X86_64_)
+#include <arch/x86_64/boot/arch_setup.h>
+#include <arch/x86_64/tcb_arch.h>
+#elif defined(_AARCH64_)
+#include <arch/aarch64/boot/arch_setup.h>
+#include <arch/aarch64/tcb_arch.h>
+#endif
 
 static bool linux_mm_user_vspace_ok(const VSpace* vs)
 {
@@ -94,6 +101,35 @@ static ENTRY_FLAGS_t linux_mm_leaf_pte_flags(ENTRY_FLAGS_t leaf_flags)
         return pte;
 }
 
+/*
+ * Resolve Page* from a radix leaf's rmap node. leaf->rmap_list is a *list node*
+ * on Page::rmap_list (see radix_leaf_link_rmap); after COW there may be several
+ * leaves, so leaf->rmap_list.next is not always the Page head.
+ *
+ * phy_Page_ppn() returns a physical address (misnamed); callers must PPN().
+ */
+static Page* linux_mm_page_from_leaf_rmap(Radix_node_t* leaf)
+{
+        struct list_entry* pos;
+
+        if (!leaf || list_node_is_detached(&leaf->rmap_list))
+                return NULL;
+
+        pos = leaf->rmap_list.next;
+        while (pos != &leaf->rmap_list) {
+                Page* cand = list_entry(pos, Page, rmap_list);
+                MemSection* sec = cand->sec;
+
+                if (sec && sec->page_count > 0) {
+                        Page* base = &sec->pages[0];
+                        if (cand >= base && cand < base + sec->page_count)
+                                return cand;
+                }
+                pos = pos->next;
+        }
+        return NULL;
+}
+
 error_t linux_mm_reinstall_user_pte(VSpace* vs, vaddr page_va)
 {
         struct map_handler* handler = &percpu(Map_Handler);
@@ -103,6 +139,7 @@ error_t linux_mm_reinstall_user_pte(VSpace* vs, vaddr page_va)
         Radix_node_t* leaf = NULL;
         Page* page = NULL;
         ppn_t ppn;
+        ENTRY_FLAGS_t pt_flags = 0;
         ENTRY_FLAGS_t pte_flags;
         error_t err = -E_REND_NOFOUND;
 
@@ -132,13 +169,24 @@ error_t linux_mm_reinstall_user_pte(VSpace* vs, vaddr page_va)
                 goto out_unlock;
         }
 
-        page = list_entry(leaf->rmap_list.next, Page, rmap_list);
-        ppn = (ppn_t)phy_Page_ppn(page);
-        if (invalid_ppn(ppn)) {
-                goto out_unlock;
+        /*
+         * Prefer PTE PPN (sync-after-clone: PTE already present). Do not use
+         * list_entry(leaf->rmap_list.next, Page, ...) — after COW that next
+         * is often another leaf; bogus ppn then fails map as
+         * old=0x7db5000 new=0x7db5000000 (PADDR applied to a paddr).
+         */
+        ppn = have_mapped(vs, VPN(page_va), &pt_flags, NULL, handler);
+        if (invalid_ppn(ppn) || !(pt_flags & PAGE_ENTRY_VALID)) {
+                page = linux_mm_page_from_leaf_rmap(leaf);
+                if (!page)
+                        goto out_unlock;
+                ppn = (ppn_t)PPN(phy_Page_ppn(page));
+                if (invalid_ppn(ppn))
+                        goto out_unlock;
         }
 
         pte_flags = linux_mm_leaf_pte_flags(leaf->flags);
+        /* Same PPN, flags-only update (no PAGE_ENTRY_REMAP). */
         err = map(vs, ppn, VPN(page_va), 3, pte_flags, handler);
 
 out_unlock:
@@ -425,6 +473,142 @@ error_t linux_mm_remap_user_leaf(VSpace* vs, vaddr page_va, ppn_t new_ppn,
                 vs, page_va, new_ppn, new_flags, expect_old_ppn);
         (void)vmm_radix_tree_unlock_range_big(vs, l0_lo, page_end);
         return err;
+}
+
+error_t linux_mm_cow_split_page(VSpace* vs, vaddr page_va)
+{
+        struct map_handler* handler = &percpu(Map_Handler);
+        struct pmm* pmm;
+        ENTRY_FLAGS_t pt_flags = 0;
+        ENTRY_FLAGS_t radix_flags = 0;
+        ENTRY_FLAGS_t new_flags;
+        vaddr nstart = 0;
+        ppn_t old_ppn;
+        ppn_t new_ppn;
+        size_t alloced = 0;
+        error_t e;
+
+        if (!linux_mm_user_vspace_ok(vs) || !handler)
+                return -E_IN_PARAM;
+
+        pmm = vs->pmm;
+        page_va = ROUND_DOWN(page_va, PAGE_SIZE);
+
+        old_ppn = have_mapped(vs, VPN(page_va), &pt_flags, NULL, handler);
+        if (invalid_ppn(old_ppn) || !(pt_flags & PAGE_ENTRY_VALID))
+                return REND_SUCCESS; /* unmapped: nothing to split */
+
+        if (pt_flags & PAGE_ENTRY_WRITE)
+                return REND_SUCCESS; /* already private writable */
+
+        e = linux_mm_query_vaddr(vs, page_va, &nstart, &radix_flags);
+        if (e != REND_SUCCESS)
+                return e;
+        /*
+         * Contract after clone_vspace(COW_PREP): PTE is RO, radix keeps
+         * write intent (+ PAGE_ENTRY_COW). Split only when radix says
+         * writable — never promote a true RO mapping.
+         */
+        if (!(radix_flags & PAGE_ENTRY_WRITE))
+                return -E_IN_PARAM;
+
+        new_ppn = pmm->pmm_alloc(pmm, 1, &alloced);
+        if (invalid_ppn(new_ppn) || alloced != 1)
+                return -E_RENDEZVOS;
+
+        e = map_handler_copy_page(handler, new_ppn, old_ppn);
+        if (e != REND_SUCCESS) {
+                pmm->pmm_free(pmm, new_ppn, 1);
+                return e;
+        }
+
+        /*
+         * Radix is the permission truth (MM_AND_COW). Drop COW/LAZY/REMAP,
+         * keep USER/READ/EXEC from radix, restore WRITE for the private copy.
+         * Do not rebuild flags from PTE alone — PTE was intentionally RO.
+         */
+        new_flags = entry_flags_rm_sw_flags(radix_flags) | PAGE_ENTRY_VALID
+                    | PAGE_ENTRY_WRITE | PAGE_ENTRY_READ;
+
+        e = linux_mm_remap_user_leaf(
+                vs, page_va, new_ppn, new_flags, old_ppn);
+        if (e != REND_SUCCESS) {
+                pmm->pmm_free(pmm, new_ppn, 1);
+                return e;
+        }
+        return REND_SUCCESS;
+}
+
+error_t linux_mm_sync_cow_ptes(VSpace* vs)
+{
+        vaddr iter;
+        vaddr end = (vaddr)USER_SPACE_TOP + 1;
+
+        if (!linux_mm_user_vspace_ok(vs))
+                return -E_IN_PARAM;
+
+        iter = PAGE_SIZE;
+        while (iter < end) {
+                vaddr range_start = 0;
+                vaddr range_end = 0;
+                ENTRY_FLAGS_t range_flags = 0;
+                vaddr va;
+
+                if (!vmm_radix_tree_find_first_occupied_interval(
+                            vs,
+                            iter,
+                            end,
+                            &range_start,
+                            &range_end,
+                            &range_flags)) {
+                        break;
+                }
+                if (range_end <= range_start || range_start < iter)
+                        break;
+
+                if ((range_flags & PAGE_ENTRY_VALID)
+                    && (range_flags & PAGE_ENTRY_COW)) {
+                        for (va = range_start; va < range_end;
+                             va += PAGE_SIZE) {
+                                error_t e = linux_mm_reinstall_user_pte(vs, va);
+                                if (e != REND_SUCCESS
+                                    && e != -E_REND_NOFOUND) {
+                                        return e;
+                                }
+                        }
+                }
+                iter = range_end;
+        }
+        return REND_SUCCESS;
+}
+
+void linux_mm_cow_break_user_stack(VSpace* vs, vaddr user_sp)
+{
+        vaddr page;
+        unsigned i;
+
+        if (!linux_mm_user_vspace_ok(vs) || user_sp < PAGE_SIZE)
+                return;
+
+        /*
+         * Prefer live syscall scratch SP when available (same source
+         * arch_ctx_refresh uses inside copy_thread).
+         */
+#if defined(_X86_64_)
+        if (percpu(user_rsp_scratch) >= PAGE_SIZE)
+                user_sp = (vaddr)percpu(user_rsp_scratch);
+#elif defined(_AARCH64_)
+        /* SP_EL0 is refreshed into ctx by arch_ctx_refresh; caller passes ctx. */
+#endif
+
+        page = ROUND_DOWN(user_sp, PAGE_SIZE);
+        /* A few frames below SP — wait/fork locals often span >1 page. */
+        for (i = 0; i < 4; i++) {
+                if (page < PAGE_SIZE)
+                        break;
+                (void)linux_mm_cow_split_page(vs, page);
+                page -= PAGE_SIZE;
+        }
 }
 
 error_t linux_mm_update_range_flags(VSpace* vs, vaddr start, u64 length_bytes,

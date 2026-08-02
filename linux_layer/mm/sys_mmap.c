@@ -1,12 +1,14 @@
 #include <common/stdbool.h>
 #include <common/mm.h>
 #include <common/types.h>
+#include <linux_compat/debug_trace.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/fs/fs_ipc.h>
 #include <linux_compat/fs/linux_fd_table.h>
 #include <linux_compat/fs/vfs_protocol.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/linux_mm_radix.h>
+#include <modules/log/log.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/tcb.h>
 #include <syscall.h>
@@ -106,11 +108,22 @@ static u64 linux_mmap_file(Tcb_Base *tcb, linux_proc_append_t *pa, u64 addr,
                 return (u64)(-LINUX_EINVAL);
         }
 
+#if LINUX_COMPAT_TRACE_MMAP_FS
+        pr_info("[mmap-fs] enter fd=%d off=%llu len=%llu pages=%llu\n",
+                (int)fd,
+                (unsigned long long)offset,
+                (unsigned long long)len_aligned,
+                (unsigned long long)page_num);
+#endif
+
         file_size = vfs_ipc_request_response(KMSG_OP_VFS_LSEEK,
                                              VFS_KMSG_FMT_LSEEK,
                                              ent->vfs_handle,
                                              0,
                                              2);
+#if LINUX_COMPAT_TRACE_MMAP_FS
+        pr_info("[mmap-fs] lseek_end → size=%lld\n", (long long)file_size);
+#endif
         if (file_size < 0) {
                 return (u64)file_size;
         }
@@ -127,6 +140,10 @@ static u64 linux_mmap_file(Tcb_Base *tcb, linux_proc_append_t *pa, u64 addr,
                                         page_num,
                                         page_flags,
                                         fixed);
+#if LINUX_COMPAT_TRACE_MMAP_FS
+        pr_info("[mmap-fs] map_range → addr=0x%llx\n",
+                (unsigned long long)map_addr);
+#endif
         if ((i64)map_addr < 0) {
                 return map_addr;
         }
@@ -143,22 +160,39 @@ static u64 linux_mmap_file(Tcb_Base *tcb, linux_proc_append_t *pa, u64 addr,
                 return map_addr;
         }
 
+#if LINUX_COMPAT_TRACE_MMAP_FS
+        pr_info("[mmap-fs] lseek_set off=%llu (before READ %lld)\n",
+                (unsigned long long)offset,
+                (long long)read_len);
+#endif
         n = vfs_ipc_request_response(KMSG_OP_VFS_LSEEK,
                                      VFS_KMSG_FMT_LSEEK,
                                      ent->vfs_handle,
                                      offset,
                                      0);
+#if LINUX_COMPAT_TRACE_MMAP_FS
+        pr_info("[mmap-fs] lseek_set → %lld\n", (long long)n);
+#endif
         if (n < 0) {
                 (void)linux_mm_unmap_user_range(
                         tcb->vs, (vaddr)map_addr, (size_t)page_num);
                 return (u64)n;
         }
 
+#if LINUX_COMPAT_TRACE_MMAP_FS
+        pr_info("[mmap-fs] READ enter va=0x%llx len=%lld "
+                "(nested BE_READ rendezvous next)\n",
+                (unsigned long long)map_addr,
+                (long long)read_len);
+#endif
         n = vfs_ipc_request_response(KMSG_OP_VFS_READ,
                                      VFS_KMSG_FMT_READ,
                                      ent->vfs_handle,
                                      map_addr,
                                      (u64)read_len);
+#if LINUX_COMPAT_TRACE_MMAP_FS
+        pr_info("[mmap-fs] READ leave n=%lld\n", (long long)n);
+#endif
         if (n < 0) {
                 (void)linux_mm_unmap_user_range(
                         tcb->vs, (vaddr)map_addr, (size_t)page_num);

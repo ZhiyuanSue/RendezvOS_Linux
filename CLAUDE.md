@@ -252,8 +252,8 @@ DEFINE_INIT(my_server_init);
 ```c
 void clean_server_thread(void)
 {
-        // THREAD_REAP 等在 listen 上内联；勿对 clean 用 per_msg_worker
-        ipc_server_recv_loop(CLEAN_SERVER_PORT_NAME, on_message);
+        // 合作式 listen（勿再引入 per-msg worker 池）
+        ipc_server_coop_loop(CLEAN_SERVER_PORT_NAME, on_message, poll, NULL);
 }
 ```
 

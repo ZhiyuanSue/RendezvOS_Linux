@@ -21,8 +21,8 @@
 | 角色 | 谁 | 职责 |
 |------|-----|------|
 | **Exitor** | 退出中的用户线程 | `THREAD_REAP` → zombie → `schedule` |
-| **Listen** | **唯一** `clean_listen` 线程（BSP） | `recv` 后 **内联**处理 `THREAD_REAP` / `TASK_REAP*` |
-| **EXIT_NOTIFY worker** | listen 按需 spawn 的 one-shot | **仅**阻塞 `EXIT_NOTIFY`→父 `wait_port` |
+| **Listen** | **唯一** `clean_listen` 线程（BSP） | `ipc_server_coop_loop`：`try_recv` + 推进 pending（今日仅 EXIT_NOTIFY worker 收尸）；`THREAD_REAP` zombie 等待 **inline** `schedule`（协议允许；勿 park，见下） |
+| **EXIT_NOTIFY worker** | listen 按需 spawn 的 one-shot（过渡） | **仅**阻塞 `EXIT_NOTIFY`→父 `wait_port`；目标改为 listen 内 `try_send` + pending |
 | **Parent** | 活父 | `wait4`：收 notify → `REAPED` → `TASK_REAP_SYNC` |
 
 ### 为何曾经反复 `send done` / 无 `enter`
@@ -37,9 +37,10 @@
 
 **裁定：**
 
-- `THREAD_REAP` / `TASK_REAP*` 在 **listen 上内联**（`ipc_server_recv_loop`）。
+- `THREAD_REAP` / `TASK_REAP*` 在 **listen 上**处理；zombie 等待 **inline**（handshake §2）。
 - 仅 `EXIT_NOTIFY` 异步（listen 不得堵在父 `wait_port` 上，否则无法收 `TASK_REAP_SYNC`）。
 - **禁止**再为 clean 的 client 消息使用通用 per-msg worker pool。
+- **禁止**把 `THREAD_REAP` zombie 等待 park 成 pending 却不保证随后 `delete_thread`+`EXIT_NOTIFY`：Path B `run_all` 下测例是 ash 的 **链路 A** 孩子，缺 `EXIT_NOTIFY` → 父 `wait4` 永挂（串口停在 `END test_*` 之后）。
 
 ---
 
@@ -60,10 +61,9 @@ sys_exit:
   send THREAD_REAP          // 与 listen recv 会合 → send 返回
   zombie; schedule
 
-Listen (inline):
+Listen (`ipc_server_coop_loop`):
   THREAD_REAP enter
-  wait until target zombie    // schedule，让 exitor 跑完
-  cookie (tests)
+  wait until target zombie   // inline schedule + ready→zombie promote
   delete_thread
   if last && REAPED: claim + delete_task
 ```
@@ -75,8 +75,9 @@ Exitor **不**另发 one-way `TASK_REAP`。
 ```
 Exitor --THREAD_REAP--> Listen
   |                     |-- wait zombie, delete_thread
-  |                     |-- spawn EXIT_NOTIFY worker --wait_port--> Parent
-  | zombie              |-- (listen 立刻回到 recv)
+  |                     |-- if live parent: spawn EXIT_NOTIFY --wait_port--> Parent
+  |                     |-- else parent gone: demote REAPED + delete_task (→B)
+  | zombie              |-- (listen 立刻回到 recv / try_recv)
 Parent wait4:
   recv EXIT_NOTIFY
   REAPED
@@ -84,6 +85,8 @@ Parent wait4:
 ```
 
 多孩子：多个 EXIT_NOTIFY worker 可同时堵在父 `wait_port`；listen 仍可收 `TASK_REAP_SYNC` / 其它 `THREAD_REAP`。
+
+**Path B 验收误判**：`/init`→`sh /tests/run_all.sh` 时，内核 cookie 只盯 `/init`；单个 `/tests/*` 退出走链路 A。串口有 `END test_*` 却无下一测例 → 先查 ash `wait4` / `EXIT_NOTIFY`，不要先怪 harness cookie。
 
 ---
 
@@ -177,7 +180,7 @@ Parent wait4:
 |------|------|
 | 协议 / `proc_has_wait_reaper` | 本文；`sys_proc_registry.c` |
 | 客户端 | `linux_layer/proc/clean_ipc.c` |
-| Server | `servers/clean_server.c`（`ipc_server_recv_loop` + async EXIT_NOTIFY） |
+| Server | `servers/clean_server.c`（`ipc_server_coop_loop` + async EXIT_NOTIFY） |
 | exit / SIGCHLD queue | `linux_layer/syscall/thread_syscall.c` |
 | wait4 / EINTR 判定 | `linux_layer/proc/sys_wait.c`；`linux_signal_wait4_should_return_eintr` |
 | wait 唤醒 | `linux_layer/proc/proc_wait_ipc.c`（EXIT_NOTIFY / WAIT_INTERRUPT） |

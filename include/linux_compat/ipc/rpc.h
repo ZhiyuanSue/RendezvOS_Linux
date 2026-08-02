@@ -2,6 +2,7 @@
 #define _LINUX_COMPAT_IPC_RPC_H_
 
 #include <common/stdarg.h>
+#include <common/stdbool.h>
 #include <common/types.h>
 #include <linux_compat/ipc/port_naming.h>
 #include <rendezvos/ipc/kmsg.h>
@@ -10,12 +11,13 @@
 #include <rendezvos/task/tcb.h>
 
 /*
- * Shared request–reply IPC helpers for linux_layer servers (VFS, future RPC
- * services). Built on core send_msg/recv_msg + kmsg TLV (reply port = 't').
+ * IPC helpers on core send_msg/recv_msg + kmsg TLV (reply port = 't').
  *
- * One-way servers (e.g. clean_server) use ipc_server_recv_loop() only.
- * Long-running work (EXIT_NOTIFY) is spawned by the service itself — there is
- * no generic per-message worker pool in this framework.
+ * Listen models (no per-message OS worker pool — do not reintroduce):
+ *   ipc_server_coop_loop  — preferred: try_recv + poll parked work
+ *   ipc_rpc_server_loop   — transitional: same-thread blocking
+ *                           recv → handler → send_msg(reply)
+ *                           (VFS/backends today; not a thread pool)
  */
 
 #define IPC_RPC_RESP_OPCODE_DEFAULT 0u
@@ -43,6 +45,9 @@ Message_Port_t* ipc_rpc_port_lookup_or_create(const char* port_name);
  * (idempotent).
  */
 void ipc_rpc_unregister_port_by_pid(const char* prefix, pid_t pid);
+
+/* Remove one registered port by exact name (idempotent). */
+void ipc_rpc_unregister_port_name(const char* port_name);
 
 /*
  * Blocking RPC: variadic args match @req_fmt; reply port TLV 't' appended.
@@ -97,18 +102,29 @@ void ipc_rpc_reply(const kmsg_t* km, const char* reply_port_name, u16 module,
 typedef i64 (*ipc_rpc_server_handler_t)(u16 opcode, const kmsg_t* req,
                                         char** reply_port_out);
 
-/* Block forever: recv on listen port, dispatch, blocking reply. */
+typedef void (*ipc_server_message_fn_t)(Message_t* msg, u16 service_id);
+
+/*
+ * Advance parked work. Return true while jobs remain (do not block in recv).
+ */
+typedef bool (*ipc_server_poll_fn_t)(void* ctx);
+
+/*
+ * Cooperative one-way listen (clean_server). Not a worker pool.
+ */
+void ipc_server_coop_loop(const char* listen_port_name,
+                          ipc_server_message_fn_t on_message,
+                          ipc_server_poll_fn_t poll_pending, void* poll_ctx);
+
+bool ipc_server_coop_flag_pending(void* ctx);
+
+/*
+ * Transitional request–reply listen: blocking recv → handler → blocking
+ * reply on the same thread. Does not spawn workers. Used by VFS/backends
+ * until reply/nested IPC can be parked into ipc_server_coop_loop.
+ */
 void ipc_rpc_server_loop(const char* listen_port_name, u16 service_id,
                          u16 resp_opcode, const char* resp_fmt,
                          ipc_rpc_server_handler_t handler);
-
-/*
- * One-way server loop: recv and invoke callback per message; no automatic
- * reply. Handler runs on the listen thread (blocks the loop if it blocks).
- */
-typedef void (*ipc_server_message_fn_t)(Message_t* msg, u16 service_id);
-
-void ipc_server_recv_loop(const char* listen_port_name,
-                          ipc_server_message_fn_t on_message);
 
 #endif /* _LINUX_COMPAT_IPC_RPC_H_ */

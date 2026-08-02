@@ -20,7 +20,7 @@
 | auxv（syscall execve） | ⚠️ | ⚠️ | 与 Path B 共用 builder；缺 HWCAP/EXECFN/真随机 |
 | auxv（busybox Path B spawn） | ⚠️ | ⚠️ | `/init`→busybox PID1 |
 | de_thread before exec | ❌ | ❌ | Multi-thread exec unsafe |
-| Full post-exec reset | ⚠️ | ⚠️ | Only brk/mmap_hint/pending; not dispositions/altstack |
+| Full post-exec reset | ⚠️ | ⚠️ | pending + **caught→SIG_DFL** (2026-08-01); altstack/blocked via thread reinit; SIG_IGN kept |
 | FS path (open + load) | ✅ | ✅ | CPIO slice + initramfs |
 | shebang / PT_INTERP | ❌ | ❌ | Out of scope (no dynamic linking) |
 | Boot orchestration | ✅ | ✅ | Path B `/init` + `run_all.sh`（非内核 for-manifest） |

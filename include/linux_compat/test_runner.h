@@ -4,14 +4,10 @@
 #include <common/types.h>
 
 /*
- * Notify the linux compat user test runner that a test-managed user thread
- * has exited. Intended to be called from the clean server before freeing the
- * thread.
+ * Notify linux_boot that the cookie'd user thread (/init) has exited.
+ * Called from clean_server on THREAD_REAP before the thread is freed.
  *
- * Parameters:
- * - owner_cpu: the CPU that owns the exiting thread's Task_Manager
- * - cookie:    per-thread cookie set by the runner (non-zero)
- * - exit_code: syscall-provided exit code
+ * owner_cpu is unused (single boot wait slot); kept for call-site stability.
  */
 void linux_user_test_notify_exit(i32 owner_cpu, u64 cookie, i64 exit_code);
 

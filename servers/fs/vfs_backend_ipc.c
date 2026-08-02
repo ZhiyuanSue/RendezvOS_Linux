@@ -16,9 +16,35 @@
 
 extern struct Port_Table *global_port_table;
 
+/* Append decimal digits of @val; return new length or 0 on overflow. */
+static size_t vfs_be_append_u32(char *buf, size_t bufsize, size_t n, u32 val)
+{
+        char digits[12];
+        u32 nd = 0;
+        u32 tmp = val;
+        u32 i;
+
+        if (!buf || n >= bufsize)
+                return 0;
+        if (tmp == 0) {
+                digits[nd++] = '0';
+        } else {
+                while (tmp && nd < sizeof(digits)) {
+                        digits[nd++] = (char)('0' + (tmp % 10u));
+                        tmp /= 10u;
+                }
+        }
+        if (n + nd >= bufsize)
+                return 0;
+        for (i = 0; i < nd; i++)
+                buf[n + i] = digits[nd - 1u - i];
+        buf[n + nd] = '\0';
+        return n + nd;
+}
+
 /*
  * Kernel-side VFS client reply: vfs_cli_k_<tag> (PORT_NAMING §3.2 sentinel).
- * tag must be unique among concurrent callers (srv vs reg_<fstype>).
+ * tag must be unique among concurrent callers.
  */
 static Message_Port_t *vfs_backend_ipc_cli_port(const char *tag)
 {
@@ -49,6 +75,27 @@ static Message_Port_t *vfs_backend_ipc_cli_port(const char *tag)
         }
 
         return ipc_rpc_port_lookup_or_create(name);
+}
+
+/*
+ * Per-thread reply tag. Shared "srv" raced when vfs_server blocked in
+ * backend recv and a syscall-context kern load (execve) reused the same
+ * port — hang before test START after ash copy_thread (DUMP: schedule +
+ * ipc_port_try_match).
+ */
+static Message_Port_t *vfs_backend_ipc_thread_reply_port(void)
+{
+        char tag[24];
+        Thread_Base *self = get_cpu_current_thread();
+        u32 tid = self ? (u32)self->tid : 0;
+        size_t n = 0;
+
+        tag[0] = 't';
+        n = 1;
+        n = vfs_be_append_u32(tag, sizeof(tag), n, tid);
+        if (n == 0)
+                return NULL;
+        return vfs_backend_ipc_cli_port(tag);
 }
 
 i64 vfs_backend_ipc_rpc_handler(u16 opcode, const kmsg_t *km,
@@ -276,14 +323,28 @@ i64 vfs_backend_ipc_call(vfs_backend_req_t *req)
                 return -LINUX_EINVAL;
         }
 
-        /* VFS listen is single-threaded: one srv reply port is enough. */
-        reply = vfs_backend_ipc_cli_port("srv");
+        reply = vfs_backend_ipc_thread_reply_port();
         if (!reply) {
+                Thread_Base *self = get_cpu_current_thread();
+
+                pr_error("[vfs-be] reply port alloc failed tid=%d op=%d\n",
+                         self ? (int)self->tid : -1,
+                         (int)req->op);
                 return -LINUX_ENOMEM;
         }
 
-#if LINUX_COMPAT_TRACE_VFS_IO
-        pr_info("[vfs-be] ipc_call enter port=%s op=%d\n", port, (int)req->op);
+#if LINUX_COMPAT_TRACE_VFS_IO || LINUX_COMPAT_TRACE_IPC_REPLY_STALL
+        {
+                Thread_Base *self = get_cpu_current_thread();
+
+                pr_info("[vfs-be] ipc_call enter port=%s op=%d tid=%d cpu=%lu "
+                        "reply='%s'\n",
+                        port,
+                        (int)req->op,
+                        self ? (int)self->tid : -1,
+                        (u64)percpu(cpu_number),
+                        reply->name);
+        }
 #endif
 
         /*
@@ -350,14 +411,14 @@ i64 vfs_backend_ipc_call(vfs_backend_req_t *req)
                 break;
         }
 
-        ref_put(&reply->refcount, free_message_port_ref);
         req->result = ret;
-#if LINUX_COMPAT_TRACE_VFS_IO
+#if LINUX_COMPAT_TRACE_VFS_IO || LINUX_COMPAT_TRACE_IPC_REPLY_STALL
         pr_info("[vfs-be] ipc_call leave port=%s op=%d ret=%ld\n",
                 port,
                 (int)req->op,
                 (long)ret);
 #endif
+        ref_put(&reply->refcount, free_message_port_ref);
         return ret;
 }
 

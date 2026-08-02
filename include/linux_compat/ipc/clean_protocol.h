@@ -9,9 +9,9 @@
  * clean_server IPC — full protocol:
  *   doc/linux_compat/protocols/EXIT_CLEAN.md
  * Port names: doc/linux_compat/protocols/PORT_NAMING.md
- *   listen  = CLEAN_SERVER_PORT_NAME ("clean_listen")
- *   workers = clean_c{cpu}_w{wid}
- *   client  = clean_cli_{pid}
+ *   listen = CLEAN_SERVER_PORT_NAME ("clean_listen")
+ *   client = clean_cli_{pid}
+ *   (no worker work-ports; listen is ipc_server_coop_loop)
  *
  * kmsg_hdr.module = clean listen port->service_id
  */

@@ -65,6 +65,13 @@ def read_manifest_order(order_file: str, elf_names: list[str]) -> list[str]:
     return ordered
 
 
+# Tests that intentionally exit with a non-zero status (Linux 8-bit).
+# Key: basename of /tests/<name>; value: expected $? after wait.
+EXPECTED_EXIT_STATUS = {
+    "ch2b_exit": 1234 & 0xFF,  # MAGIC=1234 → 210
+}
+
+
 def write_run_all(path: str, test_paths: list[str]) -> None:
     """
     Emit a busybox ash script with an explicit run_one per test.
@@ -83,18 +90,26 @@ def write_run_all(path: str, test_paths: list[str]) -> None:
         "",
         "run_one() {",
         '	t="$1"',
+        '	expect="${2:-0}"',
         '	echo "=== $t ==="',
-        '	if "$t"; then',
+        '	"$t"',
+        '	st=$?',
+        '	if [ "$st" -eq "$expect" ]; then',
         "		pass=$((pass + 1))",
         "	else",
-        '		echo "FAIL $t (status=$?)"',
+        '		echo "FAIL $t (status=$st expect=$expect)"',
         "		fail=$((fail + 1))",
         "	fi",
         "}",
         "",
     ]
     for p in test_paths:
-        lines.append(f'run_one "{p}"')
+        base = os.path.basename(p)
+        expect = EXPECTED_EXIT_STATUS.get(base, 0)
+        if expect == 0:
+            lines.append(f'run_one "{p}"')
+        else:
+            lines.append(f'run_one "{p}" {expect}')
     lines.extend(
         [
             "",

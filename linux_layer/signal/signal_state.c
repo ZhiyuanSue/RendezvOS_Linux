@@ -182,13 +182,32 @@ error_t linux_signal_proc_fork(Tcb_Base *child, Tcb_Base *parent)
 void linux_signal_proc_reset(Tcb_Base *task)
 {
         linux_signal_proc_state_t *ps = linux_signal_proc_state(task);
+        int i;
 
         if (!ps) {
                 return;
         }
 
+        /*
+         * execve(2): clear pending; reset *caught* handlers to SIG_DFL.
+         * SIG_IGN stays SIG_IGN (Linux/POSIX). Leaving busybox catchers
+         * (e.g. SIGCHLD to 0x57f485) after ash execve of a test binary causes
+         * parent #PF present=0 on the stale handler VA when the child exits.
+         */
         sigemptyset(&ps->pending_signals);
         ps->sigreturn_page = 0;
+        for (i = 0; i < NSIG; i++) {
+                __sighandler_t h = ps->dispositions[i].sa_handler;
+
+                if (linux_signal_handler_is_dfl(h)
+                    || linux_signal_handler_is_ign(h)) {
+                        continue;
+                }
+                ps->dispositions[i].sa_handler = SIG_DFL;
+                ps->dispositions[i].sa_flags = 0;
+                sigemptyset(&ps->dispositions[i].sa_mask);
+                ps->dispositions[i].sa_restorer = NULL;
+        }
 }
 
 error_t linux_signal_thread_attach(Thread_Base *thread)

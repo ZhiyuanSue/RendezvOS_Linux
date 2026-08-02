@@ -45,9 +45,12 @@ static error_t proc_put_wstatus_helper(Tcb_Base *task, u64 user_wstatus,
 
 static i32 wait4_encode_status(i32 exit_code)
 {
-        if (exit_code >= 0 && exit_code <= 255)
-                return (exit_code << 8) | 0x00;
-        return (255 << 8) | 0x00;
+        /*
+         * Linux: only the low 8 bits of the exit status are visible via wait.
+         * (exit(1234) → WEXITSTATUS == 210). Do not clamp oversized codes to
+         * 255 — that made ash report status=255 for ch2b_exit.
+         */
+        return ((exit_code & 0xff) << 8) | 0x00;
 }
 
 static bool wait4_pid_matches(i32 want_pid, pid_t child_pid, Tcb_Base *parent,

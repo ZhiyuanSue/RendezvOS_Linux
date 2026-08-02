@@ -62,7 +62,8 @@ void sys_exit(i64 exit_code)
         if (task) {
                 linux_proc_append_t* pa = linux_proc_append(task);
                 if (pa) {
-                        pa->exit_code = (i32)exit_code;
+                        /* Linux exit status is 8-bit (see wait4 WEXITSTATUS). */
+                        pa->exit_code = (i32)(exit_code & 0xff);
                         pa->exit_state = LINUX_EXIT_ZOMBIE;
                 }
         }
@@ -152,7 +153,7 @@ void linux_fatal_user_fault(i64 exit_code)
         if (task) {
                 linux_proc_append_t* pa = linux_proc_append(task);
                 if (pa) {
-                        pa->exit_code = (i32)exit_code;
+                        pa->exit_code = (i32)(exit_code & 0xff);
                         pa->exit_state = LINUX_EXIT_ZOMBIE;
                         reaper_exists = proc_has_wait_reaper(pa);
                 }

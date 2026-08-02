@@ -1,5 +1,6 @@
 #include <common/string.h>
 #include <common/types.h>
+#include <linux_compat/debug_trace.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/append_hooks.h>
@@ -13,6 +14,11 @@
 #include <rendezvos/sync/cas_lock.h>
 #include <rendezvos/task/tcb.h>
 #include <syscall.h>
+#if defined(_X86_64_)
+#include <arch/x86_64/tcb_arch.h>
+#elif defined(_AARCH64_)
+#include <arch/aarch64/tcb_arch.h>
+#endif
 
 /*
  * Simplified fork implementation for Linux compatibility.
@@ -141,6 +147,21 @@ i64 sys_fork(void)
                 pr_warn("[PROC] fork: Failed to register child PID: %d\n",
                         (int)e);
         }
+
+        /*
+         * Eagerly private the parent's stack page(s). Seen in busybox run_all:
+         * child runs, parent wait returns, then #PF at a non-.text PC — classic
+         * smashed user return address when COW stack pages stayed shared.
+         */
+        linux_mm_cow_break_user_stack(
+                parent->vs, arch_get_thread_user_sp(&parent_thread->ctx));
+
+#if LINUX_COMPAT_TRACE_IPC_WEDGE
+        pr_info("[fork] ready child_pid=%d child_tid=%d parent_tid=%d\n",
+                (int)child->pid,
+                (int)child_thread->tid,
+                (int)parent_thread->tid);
+#endif
 
         return (i64)child->pid;
 

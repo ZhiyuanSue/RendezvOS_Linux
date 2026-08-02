@@ -66,7 +66,7 @@
 | **2** | **unregister 时唤醒 port 等待者** | ✅ 2026-08-01 | per-port **ops gate**（见下） |
 | **3** | interruptible RPC：`send` 成功后禁止弃 recv | ✅ 2026-08-01 | `ipc_rpc_call_va_flags`：EINTR 仅 commit 前；之后 drain interrupt / 重试 recv |
 | **4** | reply / EXIT_NOTIFY 勿静默丢消息 | ✅ 2026-08-01 | `ipc_rpc_send_reply` 分配失败重试；EXIT_NOTIFY OOM 重试 + 失败走 pending+poke；`PORT_CLOSED` 视为已处理 |
-| **5** | clone/fork `#PF` 0x57f485 | ⏳ 主剩余 | `run_all` 11 fail 中约 9 个 status=139，同一 `pc=far=0x57f485`（用户取指、不在测例 `.text`）；见 [`BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md`](BUGFIX_FORK_SYSCALL_STALE_USER_CONTEXT.md) |
+| **5** | clone/fork `#PF` 0x57f485 | 🔧 根因已改待重跑 | **非 COW**：ash exec 后未把 catcher 重置为 `SIG_DFL`，子退出投递 SIGCHLD 跳到 busybox `0x57f485`。已修 `linux_signal_proc_reset`；已撤 `linux_copy_vspace` 上过度的 `sync_cow_ptes`。待重跑 `run_all` |
 
 ### 子项 2 说明：为什么说「unregister 时就要 clean」，会不会「每次减 ref 都 clean」？
 

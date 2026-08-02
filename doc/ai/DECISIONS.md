@@ -41,8 +41,16 @@ Format: Context / Decision / Consequences.
 ## 2026-07-26 | clean_server: THREAD_REAP on listen; EXIT_NOTIFY async only
 
 - Context: Routing every `THREAD_REAP` through a generic `per_msg_worker` pool, plus one listen thread per CPU on the same `clean_listen`, produced repeated `send THREAD_REAP done` with no `THREAD_REAP enter` (pending / handoff lies).
-- Decision: One BSP `clean_listen` using `ipc_server_recv_loop` (inline THREAD_REAP / TASK_REAP*). Spawn one-shot workers **only** for EXIT_NOTIFY. Link B finishes `delete_task` on the listen thread after `delete_thread`. No framework-wide worker pool.
+- Decision: One BSP `clean_listen` inline THREAD_REAP / TASK_REAP*; one-shot **only** for EXIT_NOTIFY. No framework-wide worker pool.
 - Consequences: Harness orphans no longer depend on generic pool dispatch; link A still avoids listen↔SYNC deadlock.
+
+---
+
+## 2026-08-02 | Single-thread server = cooperative event loop (not blocking handler)
+
+- Context: VFS/clean need one listen thread. Blocking handlers wedge everyone. The old per-msg worker pool was already gone, but dead APIs remained (`ipc_server_recv_loop`, unused `ipc_port_name_worker*`) and `ipc_rpc_server_loop` comments looked like a dispatch/pool model.
+- Decision: **`ipc_server_coop_loop`** in `rpc.c` (preferred). **`ipc_rpc_server_loop`** kept only as transitional same-thread blocking request–reply for VFS/backends — it does **not** spawn workers. Deleted unused `ipc_server_recv_loop` and worker port-name helpers. Core rendezvous fix separate and required. **THREAD_REAP zombie wait stays inline** (EXIT_CLEAN handshake); parking it without guaranteed `EXIT_NOTIFY` hung ash `wait4` after the first Path B `run_all` test (Link A). Coop `poll_pending` only advances EXIT_NOTIFY worker teardown (no `schedule` inside poll).
+- Consequences: Less API surface; docs match code; VFS migration to coop is explicit follow-up.
 
 ---
 

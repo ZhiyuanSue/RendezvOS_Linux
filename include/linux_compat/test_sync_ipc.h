@@ -5,10 +5,10 @@
 #include <linux_compat/ipc/clean_protocol.h>
 
 /*
- * Linux-compat test synchronization:
- * - sys_exit() asks clean_server to reap the thread
- * - clean_server calls linux_user_test_notify_exit with the test cookie
- * - user_test_runner waits for linux_test_done_cookie[cpu] to match
+ * Boot wait glue (until PID1 can be waited with wait4 alone):
+ * - /init is spawned with a test_cookie on its thread append
+ * - sys_exit → clean_server THREAD_REAP → linux_user_test_notify_exit(cookie)
+ * - linux_boot waits until that cookie is published, then may poweroff
  *
  * Uses KMSG_OP_CLEAN_THREAD_REAP / LINUX_KMSG_FMT_THREAD_REAP from
  * clean_protocol.h.

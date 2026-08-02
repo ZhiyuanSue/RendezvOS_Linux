@@ -8,16 +8,17 @@
 /*
  * Canonical port-name grammar: doc/linux_compat/protocols/PORT_NAMING.md
  *
- *   {service}_listen              global listen (documented singleton)
- *   {service}_c{cpu}              per-CPU listen
- *   {service}_c{cpu}_w{wid}       worker work-port
- *   {service}_cli_{id}            client reply (usually pid)
+ * Live names today:
+ *   {service}_listen     global listen (clean_listen, vfs_listen)
+ *   {service}_cli_{id}   client reply (usually pid; vfs_cli_k_* for kern)
+ *
+ * Historical (do not use): per-CPU listen / worker work-ports for a removed
+ * per-message worker pool.
  */
 
 #define IPC_PORT_SERVICE_CLEAN "clean"
 #define IPC_PORT_SERVICE_VFS   "vfs"
 
-/* Well-known listen names (global singleton services). */
 #define CLEAN_SERVER_PORT_NAME "clean_listen"
 #define VFS_SERVER_PORT_NAME   "vfs_listen"
 
@@ -30,16 +31,7 @@
 #define CLEAN_CLIENT_PORT_NAME_MAX PORT_NAME_LEN_MAX
 #define VFS_CLIENT_PORT_NAME_MAX   PORT_NAME_LEN_MAX
 
-/*
- * Formatters: write NUL-terminated name into @buf, return length, or 0 on
- * error (buf left empty when possible).
- */
-size_t ipc_port_name_listen_global(char *buf, size_t bufsize,
-                                   const char *service);
-size_t ipc_port_name_listen_cpu(char *buf, size_t bufsize, const char *service,
-                                u32 cpu);
-size_t ipc_port_name_worker(char *buf, size_t bufsize, const char *service,
-                            u32 cpu, u32 wid);
+/* "{service}_cli_{caller_id}" — length or 0 on error. */
 size_t ipc_port_name_cli(char *buf, size_t bufsize, const char *service,
                          pid_t caller_id);
 

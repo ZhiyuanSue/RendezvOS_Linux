@@ -75,6 +75,26 @@ error_t linux_mm_query_vaddr(VSpace* vs, vaddr va, vaddr* out_start,
 error_t linux_mm_remap_user_leaf(VSpace* vs, vaddr page_va, ppn_t new_ppn,
                                  ENTRY_FLAGS_t new_flags, ppn_t expect_old_ppn);
 
+/**
+ * Eager COW split for one user page (radix writable + PTE read-only).
+ * No-op success if already private-writable or unmapped.
+ * New leaf flags are taken from **radix** (truth), not raw PTE bits.
+ */
+error_t linux_mm_cow_split_page(VSpace* vs, vaddr page_va);
+
+/**
+ * After core clone_vspace COW prep: reinstall PTEs for every COW leaf so the
+ * PTE is RO while radix keeps write intent. Defends against PTE/radix drift
+ * (core clears child WRITE; compat fault/reinstall must keep that contract).
+ */
+error_t linux_mm_sync_cow_ptes(VSpace* vs);
+
+/**
+ * After fork/clone(!CLONE_VM): break COW on the parent stack page(s) so the
+ * child's later writes / teardown cannot smash the parent's return path.
+ */
+void linux_mm_cow_break_user_stack(VSpace* vs, vaddr user_sp);
+
 /** mprotect-style: update each uniform occupied sub-interval in [@p start,
  * end). */
 error_t linux_mm_update_range_flags(VSpace* vs, vaddr start, u64 length_bytes,
