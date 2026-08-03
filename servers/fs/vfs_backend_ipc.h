@@ -3,8 +3,10 @@
 
 #include <common/types.h>
 #include <linux_compat/ipc/rpc.h>
+#include <rendezvos/error.h>
 #include <rendezvos/ipc/kmsg.h>
 #include <rendezvos/ipc/kmsg_system.h>
+#include <rendezvos/ipc/port.h>
 #include <rendezvos/task/tcb.h>
 
 #include "vfs_backend.h"
@@ -31,9 +33,17 @@
 #define VFS_BACKEND_IPC_OPC_RENAME   (VFS_BACKEND_IPC_OPC_FIRST + 10u)
 #define VFS_BACKEND_IPC_OPC_LINK     (VFS_BACKEND_IPC_OPC_FIRST + 11u)
 
-typedef i64 (*vfs_backend_service_fn)(vfs_backend_req_t *req);
-
 i64 vfs_backend_ipc_call(vfs_backend_req_t *req);
+
+/* Unique vfs_cli_k_j<seq> for coop nested VFS→backend (per parked job). */
+Message_Port_t *vfs_backend_ipc_job_reply_port(u32 job_seq);
+
+/*
+ * Start nested backend RPC from a coop job (try_send path).
+ * SUCCESS → NESTED_RECV; -E_REND_AGAIN → NESTED_SEND / slot busy.
+ */
+error_t vfs_backend_ipc_coop_nested(ipc_rpc_coop_job_t *job,
+                                    vfs_backend_req_t *req);
 
 i64 vfs_backend_ipc_rpc_handler(u16 opcode, const kmsg_t *km,
                                 char **reply_port_out,
@@ -47,5 +57,33 @@ error_t vfs_backend_ipc_server_spawn(const char *port_name,
 
 i64 vfs_backend_ipc_register(const char *port_name, const char *fstype,
                              u32 caps, u32 reg_flags);
+
+/*
+ * Leaf request–reply coop loop: decode via vfs_backend_ipc_rpc_handler then
+ * blocking ipc_rpc_reply (IPC_RPC_COOP_REPLIED). Do not use NEED_REPLY/try_send
+ * here: nested VFS callers only try_recv and never wait on the reply port.
+ * @q must be unique per server thread.
+ */
+void vfs_backend_ipc_coop_server_loop(const char *listen_port_name,
+                                      u16 service_id,
+                                      ipc_rpc_coop_queue_t *q,
+                                      vfs_backend_service_fn service);
+
+/*
+ * Register (+ optional mark_online when reg_flags != 0) then enter coop loop.
+ * Returns <0 if register failed; otherwise does not return (blocks in loop).
+ */
+i64 vfs_backend_ipc_leaf_run(const char *port_name, const char *fstype,
+                             u32 caps, u32 reg_flags, u16 service_id,
+                             ipc_rpc_coop_queue_t *q,
+                             vfs_backend_service_fn service);
+
+/* Idempotent spawn used by DEFINE_INIT leaf backends. */
+error_t vfs_backend_ipc_leaf_spawn(const char *port_name,
+                                   const char *thread_name,
+                                   const char *log_tag, u16 *service_id_out,
+                                   Thread_Base **thread_out,
+                                   void (*thread_entry)(void),
+                                   bool *once_done);
 
 #endif /* _VFS_BACKEND_IPC_H_ */

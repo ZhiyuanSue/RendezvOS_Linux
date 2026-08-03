@@ -20,7 +20,7 @@ error_t linux_vfs_root_ensure_init(void)
                 return -E_IN_PARAM;
         }
 
-        return vfs_root_ensure_init(rootfs_cpio_start, len);
+        return vfs_root_init(rootfs_cpio_start, len);
 }
 
 void linux_vfs_wait_backends_ready(void)

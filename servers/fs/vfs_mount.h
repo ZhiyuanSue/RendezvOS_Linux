@@ -18,7 +18,16 @@ typedef struct vfs_mount_view {
 
 void vfs_mount_reset(void);
 
-i64 vfs_mount_register(const char *target, const char *fstype, u64 flags);
+/*
+ * Insert/activate mount record.
+ *   0 — already mounted (done)
+ *   1 — registered; if *@need_mkdir, park nested MKDIR then cover, else cover
+ *  <0 — errno
+ */
+i64 vfs_mount_register_prepare(const char *target, const char *fstype,
+                               u64 flags, const char **port_out,
+                               char *norm_out, u64 norm_cap, bool *need_mkdir);
+
 i64 vfs_mount_unregister(const char *target, u64 flags);
 
 bool vfs_mount_is_mountpoint(const char *path);

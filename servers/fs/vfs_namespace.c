@@ -296,50 +296,6 @@ static vfs_ns_node_t *vfs_ns_ensure_path_nodes(const char *path, bool is_dir)
         return node;
 }
 
-static i64 vfs_ns_fill_inode(const vfs_ns_node_t *node, vfs_inode_t *out)
-{
-        const char *port;
-        char path[VFS_PATH_MAX];
-
-        if (!node || !out) {
-                return -LINUX_EINVAL;
-        }
-
-        if (!vfs_ns_path_of(node, path, sizeof(path))) {
-                return -LINUX_ENAMETOOLONG;
-        }
-
-        /*
-         * Overlay vs root catalog (mount paths resolve in
-         * vfs_namespace_lookup):
-         * 1. Writable overlay node → overlay backend.
-         * 2. Cpio catalog node → root backend (boot image).
-         */
-        if (node->overlay) {
-                port = vfs_backend_overlay_port();
-                if (!port) {
-                        return -LINUX_ENXIO;
-                }
-                if (vfs_backend_lookup(port, path, out)) {
-                        return 0;
-                }
-                return -LINUX_EIO;
-        }
-
-        if (node->in_cpio) {
-                port = vfs_backend_root_port();
-                if (!port) {
-                        return -LINUX_ENXIO;
-                }
-                if (vfs_backend_lookup(port, path, out)) {
-                        return 0;
-                }
-                return -LINUX_EIO;
-        }
-
-        return vfs_ns_err_noent();
-}
-
 static i64 vfs_ns_check_parent_writable(const char *path)
 {
         char parent[VFS_PATH_MAX];
@@ -462,16 +418,21 @@ u32 vfs_namespace_count(void)
         return vfs_ns_count_live_nodes(&vfs_ns_root);
 }
 
-i64 vfs_namespace_lookup(const char *path, vfs_inode_t *out)
+i64 vfs_namespace_lookup_prepare(const char *path, vfs_inode_t *out,
+                                 const char **port_out, char *be_path,
+                                 u64 be_path_cap)
 {
         char norm[VFS_PATH_MAX];
         const vfs_ns_node_t *node;
         vfs_mount_view_t mount_view;
+        const char *port;
+        char path_buf[VFS_PATH_MAX];
 
-        if (!path || !out) {
+        if (!path || !out || !port_out || !be_path || be_path_cap == 0) {
                 return -LINUX_EINVAL;
         }
 
+        *port_out = NULL;
         memset(out, 0, sizeof(*out));
         vfs_path_normalize(path, norm, sizeof(norm));
 
@@ -481,10 +442,13 @@ i64 vfs_namespace_lookup(const char *path, vfs_inode_t *out)
         }
 
         if (vfs_mount_view_for_path(norm, &mount_view)) {
-                if (vfs_backend_lookup(mount_view.backend_port, norm, out)) {
-                        return 0;
+                if (strlen(norm) + 1 > be_path_cap) {
+                        return -LINUX_ENAMETOOLONG;
                 }
-                return vfs_ns_err_noent();
+                strncpy(be_path, norm, be_path_cap - 1);
+                be_path[be_path_cap - 1] = '\0';
+                *port_out = mount_view.backend_port;
+                return 1;
         }
 
         node = vfs_ns_lookup_node(norm, false);
@@ -492,21 +456,77 @@ i64 vfs_namespace_lookup(const char *path, vfs_inode_t *out)
                 return vfs_ns_err_noent();
         }
 
-        return vfs_ns_fill_inode(node, out);
+        if (!vfs_ns_path_of(node, path_buf, sizeof(path_buf))) {
+                return -LINUX_ENAMETOOLONG;
+        }
+        if (strlen(path_buf) + 1 > be_path_cap) {
+                return -LINUX_ENAMETOOLONG;
+        }
+        strncpy(be_path, path_buf, be_path_cap - 1);
+        be_path[be_path_cap - 1] = '\0';
+
+        if (node->overlay) {
+                port = vfs_backend_overlay_port();
+                if (!port) {
+                        return -LINUX_ENXIO;
+                }
+                *port_out = port;
+                return 1;
+        }
+
+        if (node->in_cpio) {
+                port = vfs_backend_root_port();
+                if (!port) {
+                        return -LINUX_ENXIO;
+                }
+                *port_out = port;
+                return 1;
+        }
+
+        return vfs_ns_err_noent();
 }
 
-i64 vfs_namespace_mkdir(const char *path, u32 mode)
+i64 vfs_namespace_lookup(const char *path, vfs_inode_t *out)
+{
+        const char *port = NULL;
+        char be_path[VFS_PATH_MAX];
+        i64 prep;
+
+        prep = vfs_namespace_lookup_prepare(
+                path, out, &port, be_path, sizeof(be_path));
+        if (prep <= 0) {
+                return prep;
+        }
+        if (vfs_backend_lookup(port, be_path, out)) {
+                return 0;
+        }
+        return vfs_ns_err_noent();
+}
+
+i64 vfs_namespace_mkdir_prepare(const char *path, u32 mode,
+                                const char **port_out, char *norm_out,
+                                u64 norm_cap, u32 *mode_out,
+                                bool *need_commit)
 {
         char norm[VFS_PATH_MAX];
         vfs_ns_node_t *node;
         const char *port;
         i64 ret;
 
-        if (!path) {
+        if (!path || !port_out || !norm_out || norm_cap == 0 || !mode_out
+            || !need_commit) {
                 return -LINUX_EINVAL;
         }
 
+        *port_out = NULL;
+        *need_commit = false;
         vfs_path_normalize(path, norm, sizeof(norm));
+        if (strlen(norm) + 1 > norm_cap) {
+                return -LINUX_ENAMETOOLONG;
+        }
+        strncpy(norm_out, norm, norm_cap - 1);
+        norm_out[norm_cap - 1] = '\0';
+
         if (vfs_path_is_root(norm)) {
                 return vfs_ns_err_exists();
         }
@@ -517,7 +537,10 @@ i64 vfs_namespace_mkdir(const char *path, u32 mode)
         }
 
         if (vfs_mount_view_for_path(norm, NULL)) {
-                return vfs_backend_mkdir(port, norm, mode);
+                *port_out = port;
+                *mode_out = mode;
+                *need_commit = false;
+                return 1;
         }
 
         node = vfs_ns_lookup_node(norm, true);
@@ -530,14 +553,27 @@ i64 vfs_namespace_mkdir(const char *path, u32 mode)
                 return ret;
         }
 
-        ret = vfs_backend_mkdir(port, norm, mode);
-        if (ret < 0) {
-                return ret;
+        *port_out = port;
+        *mode_out = mode;
+        *need_commit = true;
+        return 1;
+}
+
+i64 vfs_namespace_mkdir_commit(const char *norm, u32 mode)
+{
+        vfs_ns_node_t *node;
+        const char *port;
+
+        if (!norm) {
+                return -LINUX_EINVAL;
         }
 
         node = vfs_ns_ensure_path_nodes(norm, true);
         if (!node) {
-                (void)vfs_backend_unlink(port, norm);
+                port = vfs_ns_backend_port(norm);
+                if (port) {
+                        (void)vfs_backend_unlink(port, norm);
+                }
                 return vfs_ns_err_nomem();
         }
 
@@ -549,19 +585,31 @@ i64 vfs_namespace_mkdir(const char *path, u32 mode)
         return 0;
 }
 
-i64 vfs_namespace_create_file(const char *path, u32 mode, vfs_inode_t *out)
+i64 vfs_namespace_create_prepare(const char *path, u32 mode, vfs_inode_t *out,
+                                 const char **port_out, char *norm_out,
+                                 u64 norm_cap, u32 *mode_out,
+                                 bool *need_commit)
 {
         char norm[VFS_PATH_MAX];
         vfs_ns_node_t *node;
         const char *port;
         i64 ret;
-        vfs_inode_t existing;
+        char path_buf[VFS_PATH_MAX];
 
-        if (!path) {
+        if (!path || !port_out || !norm_out || norm_cap == 0 || !mode_out
+            || !need_commit) {
                 return -LINUX_EINVAL;
         }
 
+        (void)out;
+        *port_out = NULL;
+        *need_commit = false;
         vfs_path_normalize(path, norm, sizeof(norm));
+        if (strlen(norm) + 1 > norm_cap) {
+                return -LINUX_ENAMETOOLONG;
+        }
+        strncpy(norm_out, norm, norm_cap - 1);
+        norm_out[norm_cap - 1] = '\0';
 
         port = vfs_ns_backend_port(norm);
         if (!port) {
@@ -569,14 +617,10 @@ i64 vfs_namespace_create_file(const char *path, u32 mode, vfs_inode_t *out)
         }
 
         if (vfs_mount_view_for_path(norm, NULL)) {
-                ret = vfs_backend_create(port, norm, mode);
-                if (ret < 0) {
-                        return ret;
-                }
-                if (out && vfs_namespace_lookup(norm, out) < 0) {
-                        return -LINUX_EIO;
-                }
-                return 0;
+                *port_out = port;
+                *mode_out = mode;
+                *need_commit = false;
+                return 1;
         }
 
         node = vfs_ns_lookup_node(norm, true);
@@ -584,16 +628,32 @@ i64 vfs_namespace_create_file(const char *path, u32 mode, vfs_inode_t *out)
                 if (node->is_dir) {
                         return -LINUX_EISDIR;
                 }
-                if (vfs_ns_fill_inode(node, &existing) == 0) {
-                        if (!existing.writable) {
-                                return vfs_ns_err_exists();
-                        }
-                        if (out) {
-                                *out = existing;
-                        }
-                        return 0;
+                /*
+                 * Existing file: caller must LOOKUP (return 2) to check
+                 * writable / fill @out — do not block here.
+                 */
+                if (!vfs_ns_path_of(node, path_buf, sizeof(path_buf))) {
+                        return -LINUX_ENAMETOOLONG;
                 }
-                return -LINUX_EIO;
+                if (strlen(path_buf) + 1 > norm_cap) {
+                        return -LINUX_ENAMETOOLONG;
+                }
+                strncpy(norm_out, path_buf, norm_cap - 1);
+                norm_out[norm_cap - 1] = '\0';
+                if (node->overlay) {
+                        port = vfs_backend_overlay_port();
+                } else if (node->in_cpio) {
+                        port = vfs_backend_root_port();
+                } else {
+                        return vfs_ns_err_noent();
+                }
+                if (!port) {
+                        return -LINUX_ENXIO;
+                }
+                *port_out = port;
+                *mode_out = mode;
+                *need_commit = false;
+                return 2;
         }
 
         ret = vfs_ns_check_parent_writable(norm);
@@ -601,14 +661,28 @@ i64 vfs_namespace_create_file(const char *path, u32 mode, vfs_inode_t *out)
                 return ret;
         }
 
-        ret = vfs_backend_create(port, norm, mode);
-        if (ret < 0) {
-                return ret;
+        *port_out = port;
+        *mode_out = mode;
+        *need_commit = true;
+        return 1;
+}
+
+i64 vfs_namespace_create_commit(const char *norm, u32 mode, vfs_inode_t *out)
+{
+        vfs_ns_node_t *node;
+        const char *port;
+
+        (void)out;
+        if (!norm) {
+                return -LINUX_EINVAL;
         }
 
         node = vfs_ns_ensure_path_nodes(norm, false);
         if (!node) {
-                (void)vfs_backend_unlink(port, norm);
+                port = vfs_ns_backend_port(norm);
+                if (port) {
+                        (void)vfs_backend_unlink(port, norm);
+                }
                 return vfs_ns_err_nomem();
         }
 
@@ -617,26 +691,33 @@ i64 vfs_namespace_create_file(const char *path, u32 mode, vfs_inode_t *out)
         node->in_cpio = false;
         node->overlay = true;
         node->mode = (mode & 0777u) | 0100000u;
-
-        if (out && vfs_ns_fill_inode(node, out) < 0) {
-                return -LINUX_EIO;
-        }
-
         return 0;
 }
 
-i64 vfs_namespace_unlink(const char *path)
+i64 vfs_namespace_unlink_prepare(const char *path, const char **port_out,
+                                 char *norm_out, u64 norm_cap,
+                                 bool *need_backend, bool *need_commit)
 {
         char norm[VFS_PATH_MAX];
         vfs_ns_node_t *node;
         const char *port;
         i64 ret;
 
-        if (!path) {
+        if (!path || !port_out || !norm_out || norm_cap == 0 || !need_backend
+            || !need_commit) {
                 return -LINUX_EINVAL;
         }
 
+        *port_out = NULL;
+        *need_backend = false;
+        *need_commit = false;
         vfs_path_normalize(path, norm, sizeof(norm));
+        if (strlen(norm) + 1 > norm_cap) {
+                return -LINUX_ENAMETOOLONG;
+        }
+        strncpy(norm_out, norm, norm_cap - 1);
+        norm_out[norm_cap - 1] = '\0';
+
         if (vfs_path_is_root(norm)) {
                 return -LINUX_EINVAL;
         }
@@ -660,10 +741,32 @@ i64 vfs_namespace_unlink(const char *path)
                 if (!port) {
                         return -LINUX_ENXIO;
                 }
-                ret = vfs_backend_unlink(port, norm);
-                if (ret < 0) {
-                        return ret;
-                }
+                *port_out = port;
+                *need_backend = true;
+                *need_commit = true;
+                return 1;
+        }
+
+        /* Catalog-only delete: mark deleted locally, no backend. */
+        *need_backend = false;
+        *need_commit = true;
+        return 0;
+}
+
+i64 vfs_namespace_unlink_commit(const char *norm)
+{
+        vfs_ns_node_t *node;
+
+        if (!norm) {
+                return -LINUX_EINVAL;
+        }
+
+        node = vfs_ns_lookup_node(norm, false);
+        if (!node) {
+                return vfs_ns_err_noent();
+        }
+
+        if (node->overlay) {
                 node->overlay = false;
         }
 
@@ -672,7 +775,9 @@ i64 vfs_namespace_unlink(const char *path)
         return 0;
 }
 
-i64 vfs_namespace_readdir(const char *dirpath, u64 index, vfs_dirent_t *out)
+i64 vfs_namespace_readdir_prepare(const char *dirpath, u64 index,
+                                  vfs_dirent_t *out, const char **port_out,
+                                  char *be_path, u64 be_path_cap)
 {
         char norm[VFS_PATH_MAX];
         char path_buf[VFS_PATH_MAX];
@@ -681,15 +786,21 @@ i64 vfs_namespace_readdir(const char *dirpath, u64 index, vfs_dirent_t *out)
         vfs_mount_view_t mount_view;
         u64 i;
 
-        if (!dirpath || !out) {
+        if (!dirpath || !out || !port_out || !be_path || be_path_cap == 0) {
                 return -LINUX_EINVAL;
         }
 
+        *port_out = NULL;
         vfs_path_normalize(dirpath, norm, sizeof(norm));
 
         if (vfs_mount_view_for_path(norm, &mount_view)) {
-                return vfs_backend_readdir(
-                        mount_view.backend_port, norm, index, out);
+                if (strlen(norm) + 1 > be_path_cap) {
+                        return -LINUX_ENAMETOOLONG;
+                }
+                strncpy(be_path, norm, be_path_cap - 1);
+                be_path[be_path_cap - 1] = '\0';
+                *port_out = mount_view.backend_port;
+                return 2;
         }
 
         dir = vfs_ns_lookup_node(norm, false);
@@ -792,7 +903,10 @@ i64 vfs_namespace_set_mount_cover(const char *target, bool covered)
         return 0;
 }
 
-i64 vfs_namespace_rename(const char *oldpath, const char *newpath)
+i64 vfs_namespace_rename_prepare(const char *oldpath, const char *newpath,
+                                 const char **port_out, char *old_out,
+                                 u64 old_cap, char *new_out, u64 new_cap,
+                                 bool *need_commit)
 {
         char old_norm[VFS_PATH_MAX];
         char new_norm[VFS_PATH_MAX];
@@ -802,14 +916,24 @@ i64 vfs_namespace_rename(const char *oldpath, const char *newpath)
         vfs_ns_node_t *existing;
         const char *port;
         i64 perm_err;
-        i64 ret;
 
-        if (!oldpath || !newpath) {
+        if (!oldpath || !newpath || !port_out || !old_out || old_cap == 0
+            || !new_out || new_cap == 0 || !need_commit) {
                 return -LINUX_EINVAL;
         }
 
+        *port_out = NULL;
+        *need_commit = false;
         vfs_path_normalize(oldpath, old_norm, sizeof(old_norm));
         vfs_path_normalize(newpath, new_norm, sizeof(new_norm));
+
+        if (strlen(old_norm) + 1 > old_cap || strlen(new_norm) + 1 > new_cap) {
+                return -LINUX_ENAMETOOLONG;
+        }
+        strncpy(old_out, old_norm, old_cap - 1);
+        old_out[old_cap - 1] = '\0';
+        strncpy(new_out, new_norm, new_cap - 1);
+        new_out[new_cap - 1] = '\0';
 
         if (vfs_path_is_root(old_norm) || vfs_path_is_root(new_norm)) {
                 return -LINUX_EINVAL;
@@ -852,13 +976,39 @@ i64 vfs_namespace_rename(const char *oldpath, const char *newpath)
                 if (!port) {
                         return -LINUX_ENXIO;
                 }
-                ret = vfs_backend_rename(port, old_norm, new_norm);
-                if (ret < 0) {
-                        return ret;
-                }
-        } else if (node->in_cpio) {
+                *port_out = port;
+                *need_commit = true;
+                return 1;
+        }
+        if (node->in_cpio) {
                 return -LINUX_EROFS;
-        } else {
+        }
+        return vfs_ns_err_noent();
+}
+
+i64 vfs_namespace_rename_commit(const char *old_norm, const char *new_norm)
+{
+        char new_name[64];
+        vfs_ns_node_t *node;
+        vfs_ns_node_t *dest_parent;
+        char parent_path[VFS_PATH_MAX];
+
+        if (!old_norm || !new_norm) {
+                return -LINUX_EINVAL;
+        }
+
+        node = vfs_ns_lookup_node(old_norm, false);
+        if (!node) {
+                return vfs_ns_err_noent();
+        }
+        if (!vfs_path_basename(new_norm, new_name, sizeof(new_name))) {
+                return -LINUX_EINVAL;
+        }
+        if (!vfs_path_parent(new_norm, parent_path, sizeof(parent_path))) {
+                return -LINUX_EINVAL;
+        }
+        dest_parent = vfs_ns_lookup_node(parent_path, false);
+        if (!dest_parent || !dest_parent->is_dir) {
                 return vfs_ns_err_noent();
         }
 
@@ -873,7 +1023,10 @@ i64 vfs_namespace_rename(const char *oldpath, const char *newpath)
         return 0;
 }
 
-i64 vfs_namespace_link(const char *oldpath, const char *newpath)
+i64 vfs_namespace_link_prepare(const char *oldpath, const char *newpath,
+                               const char **port_out, char *old_out,
+                               u64 old_cap, char *new_out, u64 new_cap,
+                               bool *need_commit)
 {
         char old_norm[VFS_PATH_MAX];
         char new_norm[VFS_PATH_MAX];
@@ -881,17 +1034,26 @@ i64 vfs_namespace_link(const char *oldpath, const char *newpath)
         vfs_ns_node_t *node;
         vfs_ns_node_t *dest_parent;
         vfs_ns_node_t *existing;
-        vfs_ns_node_t *link_node;
         const char *port;
         i64 perm_err;
-        i64 ret;
 
-        if (!oldpath || !newpath) {
+        if (!oldpath || !newpath || !port_out || !old_out || old_cap == 0
+            || !new_out || new_cap == 0 || !need_commit) {
                 return -LINUX_EINVAL;
         }
 
+        *port_out = NULL;
+        *need_commit = false;
         vfs_path_normalize(oldpath, old_norm, sizeof(old_norm));
         vfs_path_normalize(newpath, new_norm, sizeof(new_norm));
+
+        if (strlen(old_norm) + 1 > old_cap || strlen(new_norm) + 1 > new_cap) {
+                return -LINUX_ENAMETOOLONG;
+        }
+        strncpy(old_out, old_norm, old_cap - 1);
+        old_out[old_cap - 1] = '\0';
+        strncpy(new_out, new_norm, new_cap - 1);
+        new_out[new_cap - 1] = '\0';
 
         if (vfs_path_is_root(old_norm) || vfs_path_is_root(new_norm)) {
                 return -LINUX_EINVAL;
@@ -943,14 +1105,46 @@ i64 vfs_namespace_link(const char *oldpath, const char *newpath)
                 return -LINUX_ENXIO;
         }
 
-        ret = vfs_backend_link(port, old_norm, new_norm);
-        if (ret < 0) {
-                return ret;
+        *port_out = port;
+        *need_commit = true;
+        return 1;
+}
+
+i64 vfs_namespace_link_commit(const char *old_norm, const char *new_norm)
+{
+        char new_name[64];
+        char parent_path[VFS_PATH_MAX];
+        vfs_ns_node_t *node;
+        vfs_ns_node_t *dest_parent;
+        vfs_ns_node_t *link_node;
+
+        if (!old_norm || !new_norm) {
+                return -LINUX_EINVAL;
+        }
+
+        node = vfs_ns_lookup_node(old_norm, false);
+        if (!node) {
+                return vfs_ns_err_noent();
+        }
+        if (!vfs_path_basename(new_norm, new_name, sizeof(new_name))) {
+                return -LINUX_EINVAL;
+        }
+        if (!vfs_path_parent(new_norm, parent_path, sizeof(parent_path))) {
+                return -LINUX_EINVAL;
+        }
+        dest_parent = vfs_ns_lookup_node(parent_path, false);
+        if (!dest_parent || !dest_parent->is_dir) {
+                return vfs_ns_err_noent();
         }
 
         link_node = vfs_ns_alloc_node(dest_parent, new_name, false);
         if (!link_node) {
-                (void)vfs_backend_unlink(port, new_norm);
+                const char *port = vfs_ns_backend_port(old_norm);
+
+                /* Rare: backend already linked; sync rollback only. */
+                if (port) {
+                        (void)vfs_backend_unlink(port, new_norm);
+                }
                 return vfs_ns_err_nomem();
         }
 

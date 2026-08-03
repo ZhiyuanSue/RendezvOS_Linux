@@ -104,18 +104,7 @@ i64 vfs_backend_dispatch(vfs_backend_req_t *req);
 
 bool vfs_backend_lookup(const char *port, const char *path, vfs_inode_t *out);
 
-i64 vfs_backend_readdir(const char *port, const char *dirpath, u64 index,
-                        vfs_dirent_t *out);
-
-i64 vfs_backend_readlink(const char *port, const char *path, char *buf,
-                         u64 buf_cap);
-
 i64 vfs_backend_mkdir(const char *port, const char *path, u32 mode);
-i64 vfs_backend_create(const char *port, const char *path, u32 mode);
 i64 vfs_backend_unlink(const char *port, const char *path);
-i64 vfs_backend_rename(const char *port, const char *oldpath,
-                       const char *newpath);
-i64 vfs_backend_link(const char *port, const char *oldpath,
-                     const char *newpath);
 
 #endif /* _VFS_BACKEND_H_ */

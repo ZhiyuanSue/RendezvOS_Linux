@@ -18,20 +18,18 @@
 #define VFS_O_APPEND    0x400
 #define VFS_O_DIRECTORY 0x10000
 
-i64 vfs_open_path(const char *path, i32 flags, u32 mode);
-i64 vfs_read_handle(pid_t pid, u32 handle, u64 user_buf, u64 count);
-i64 vfs_write_handle(pid_t pid, u32 handle, u64 user_buf, u64 count);
+/*
+ * After lookup/create produced @ino (trunc already applied if needed):
+ * permission checks + handle_open. Returns handle|IS_DIR bit or -errno.
+ */
+i64 vfs_open_install(const vfs_inode_t *ino, i32 flags);
+
+bool vfs_inode_symlink_target(const vfs_inode_t *ino, char *out, u64 cap);
+void vfs_join_symlink_target(const char *base, const char *target, char *out,
+                             u64 cap);
+
 i64 vfs_lseek_handle(u32 handle, i64 offset, i32 whence);
 i64 vfs_fstat_handle(pid_t pid, u32 handle, u64 user_statbuf);
-i64 vfs_stat_path(pid_t pid, const char *path, u64 user_statbuf, i32 flags);
-i64 vfs_mkdir_path(const char *path, u32 mode);
-i64 vfs_unlink_path(const char *path, i32 flags);
-i64 vfs_rename_path(const char *path, const char *newpath, i32 flags);
-i64 vfs_link_path(const char *path, const char *newpath, i32 flags);
-i64 vfs_validate_dir(const char *path);
-i64 vfs_getdents64_handle(pid_t pid, u32 handle, u64 user_dirp, u64 count);
-i64 vfs_readlink_path(pid_t pid, const char *path, u64 user_buf, u64 bufsiz);
-i64 vfs_faccessat_path(pid_t pid, const char *path, u32 mode, u32 flags);
 
 /* Lookup @path into @out; follow one symlink level when @follow_symlink. */
 i64 vfs_lookup_path(const char *path, vfs_inode_t *out, bool follow_symlink);

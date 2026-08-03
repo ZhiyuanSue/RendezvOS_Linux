@@ -371,6 +371,22 @@ When a new bug pattern appears during review/debug:
   yields while parked (do not `gen_thread`; do not block `send_msg(wait_port)`
   on listen). Checklist: §2 + `EXIT_CLEAN.md`.
 
+- 2026-08-02: **VFS READ/WRITE nested coop:** per-job cookie +
+  `vfs_cli_k_j*`; do not reuse `vfs_cli_k_t<tid>` for concurrent parked
+  nested calls. Checklist: §2 + `IPC_RPC_FRAMEWORK.md`.
+
+- 2026-08-02: **try_send ↔ try_recv livelock:** if one side only
+  `ipc_try_recv_msg` (no port wait), the peer must **blocking `send_msg`**
+  (or otherwise enqueue a SEND waiter). Leaf backends use
+  `IPC_RPC_COOP_REPLIED` + `ipc_rpc_reply`; do not `NEED_REPLY`+`try_send`
+  to nested VFS reply ports. Symptom: hang after `Boot: exec /init`.
+  Checklist: §2 + `IPC_RPC_FRAMEWORK.md` + DECISIONS.
+
+- 2026-08-03: **VFS path nested FSM:** namespace prepare/commit + 
+  `vfs_coop_path` for OPEN/MKDIR/UNLINK/STAT/CHDIR/FACCESSAT. Do not
+  block listen in `vfs_backend_ipc_call` for those opcodes. Checklist: §2
+  + `IPC_RPC_FRAMEWORK.md`.
+
 - 2026-04: **Field repurposing with union + type-safe caching (vmm_radix_tree_change_range_flags):**
   - **Pattern**: When repurposing struct fields as temporary cache, use union with
     correct target types, document safety conditions, and ensure symmetric cleanup.

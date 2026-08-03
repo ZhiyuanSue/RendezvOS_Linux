@@ -154,6 +154,12 @@ typedef enum {
         IPC_RPC_COOP_HANDLED = 0,
         /* Job stays parked (nested in flight / cookie work); no auto-reply. */
         IPC_RPC_COOP_PARKED = 1,
+        /*
+         * Handler already sent the client reply (typically blocking
+         * ipc_rpc_reply). Framework only releases the job — do not
+         * set_result / try_send again.
+         */
+        IPC_RPC_COOP_REPLIED = 2,
 } ipc_rpc_coop_disp_t;
 
 struct ipc_rpc_coop_queue;
@@ -188,6 +194,7 @@ typedef struct ipc_rpc_coop_queue {
  * Coop handler: job->reply_port already set from request TLV 't'.
  * HANDLED: set *result_out (unless already NEED_REPLY via set_result).
  * PARKED: nested_call / cookie; resume_fn or later set_result completes.
+ * REPLIED: handler already replied; framework releases job only.
  */
 typedef ipc_rpc_coop_disp_t (*ipc_rpc_coop_handler_t)(ipc_rpc_coop_job_t* job,
                                                       u16 opcode,

@@ -235,6 +235,15 @@ i64 vfs_backend_dispatch(vfs_backend_req_t *req)
         return vfs_backend_ipc_call(req);
 }
 
+static void vfs_backend_req_init(vfs_backend_req_t *req, const char *port,
+                                 vfs_backend_op_t op)
+{
+        memset(req, 0, sizeof(*req));
+        req->port = port;
+        req->op = op;
+        req->result = -LINUX_EINVAL;
+}
+
 bool vfs_backend_lookup(const char *port, const char *path, vfs_inode_t *out)
 {
         vfs_backend_req_t req;
@@ -243,69 +252,13 @@ bool vfs_backend_lookup(const char *port, const char *path, vfs_inode_t *out)
                 return false;
         }
 
-        req.port = port;
-        req.op = VFS_BACKEND_OP_LOOKUP;
+        vfs_backend_req_init(&req, port, VFS_BACKEND_OP_LOOKUP);
         req.path = path;
-        req.ino = NULL;
         req.ino_out = out;
-        req.offset = 0;
-        req.len = 0;
-        req.buf = NULL;
-        req.wbuf = NULL;
-        req.size_arg = 0;
-        req.result = -LINUX_EINVAL;
-
         if (vfs_backend_dispatch(&req) != 0) {
                 return false;
         }
-
         return req.result == 0;
-}
-
-i64 vfs_backend_readdir(const char *port, const char *dirpath, u64 index,
-                        vfs_dirent_t *out)
-{
-        vfs_backend_req_t req;
-
-        if (!port || !dirpath || !out) {
-                return -LINUX_EINVAL;
-        }
-
-        req.port = port;
-        req.op = VFS_BACKEND_OP_READDIR;
-        req.path = dirpath;
-        req.dir_index = index;
-        req.dirent_out = out;
-        req.result = -LINUX_EINVAL;
-
-        if (vfs_backend_dispatch(&req) != 0) {
-                return req.result;
-        }
-
-        return req.result;
-}
-
-i64 vfs_backend_readlink(const char *port, const char *path, char *buf,
-                         u64 buf_cap)
-{
-        vfs_backend_req_t req;
-
-        if (!port || !path || !buf || buf_cap == 0) {
-                return -LINUX_EINVAL;
-        }
-
-        req.port = port;
-        req.op = VFS_BACKEND_OP_READLINK;
-        req.path = path;
-        req.readlink_buf = buf;
-        req.readlink_cap = buf_cap;
-        req.result = -LINUX_EINVAL;
-
-        if (vfs_backend_dispatch(&req) != 0) {
-                return req.result;
-        }
-
-        return req.result;
 }
 
 static i64 vfs_backend_path_op(const char *port, vfs_backend_op_t op,
@@ -317,17 +270,11 @@ static i64 vfs_backend_path_op(const char *port, vfs_backend_op_t op,
                 return -LINUX_EINVAL;
         }
 
-        req.port = port;
-        req.op = op;
+        vfs_backend_req_init(&req, port, op);
         req.path = path;
         req.path2 = path2;
         req.mode_arg = mode;
-        req.result = -LINUX_EINVAL;
-
-        if (vfs_backend_dispatch(&req) != 0) {
-                return req.result;
-        }
-
+        (void)vfs_backend_dispatch(&req);
         return req.result;
 }
 
@@ -337,34 +284,7 @@ i64 vfs_backend_mkdir(const char *port, const char *path, u32 mode)
                 port, VFS_BACKEND_OP_MKDIR, path, NULL, mode);
 }
 
-i64 vfs_backend_create(const char *port, const char *path, u32 mode)
-{
-        return vfs_backend_path_op(
-                port, VFS_BACKEND_OP_CREATE, path, NULL, mode);
-}
-
 i64 vfs_backend_unlink(const char *port, const char *path)
 {
         return vfs_backend_path_op(port, VFS_BACKEND_OP_UNLINK, path, NULL, 0);
-}
-
-i64 vfs_backend_rename(const char *port, const char *oldpath,
-                       const char *newpath)
-{
-        if (!oldpath || !newpath) {
-                return -LINUX_EINVAL;
-        }
-
-        return vfs_backend_path_op(
-                port, VFS_BACKEND_OP_RENAME, oldpath, newpath, 0);
-}
-
-i64 vfs_backend_link(const char *port, const char *oldpath, const char *newpath)
-{
-        if (!oldpath || !newpath) {
-                return -LINUX_EINVAL;
-        }
-
-        return vfs_backend_path_op(
-                port, VFS_BACKEND_OP_LINK, oldpath, newpath, 0);
 }

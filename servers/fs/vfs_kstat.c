@@ -5,6 +5,10 @@
 #include "vfs_kstat.h"
 
 #include <common/string.h>
+#include <linux_compat/errno.h>
+#include <linux_compat/linux_mm_radix.h>
+#include <rendezvos/mm/vmm.h>
+#include <rendezvos/task/tcb.h>
 
 u64 vfs_path_to_ino(const char *path)
 {
@@ -69,4 +73,25 @@ void linux_user_stat_from_kstat(const vfs_kstat_t *in, linux_user_stat_t *out)
         out->st_mtime_nsec = in->st_mtime_nsec;
         out->st_ctime_sec = in->st_ctime_sec;
         out->st_ctime_nsec = in->st_ctime_nsec;
+}
+
+i64 vfs_store_inode_stat(Tcb_Base *task, u64 user_statbuf,
+                         const vfs_inode_t *ino)
+{
+        vfs_kstat_t kstat;
+        linux_user_stat_t ustat;
+        error_t e;
+
+        if (!task || !task->vs || !ino) {
+                return -LINUX_EINVAL;
+        }
+
+        vfs_kstat_from_inode(ino, &kstat);
+        linux_user_stat_from_kstat(&kstat, &ustat);
+        e = linux_mm_store_to_user(
+                task->vs, user_statbuf, &ustat, sizeof(ustat));
+        if (e != REND_SUCCESS) {
+                return -LINUX_EFAULT;
+        }
+        return 0;
 }

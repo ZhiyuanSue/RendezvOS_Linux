@@ -47,7 +47,7 @@ doc/ai/DECISIONS.md      非显然设计选择（ADR-lite）
 
 **busybox / run_all（工作区）**: 2026-08-02 x86_64 `x86_64_run.log` → **`pass=52 fail=0`**（`#PF @ 0x57f485` 簇已消；与迁移 busybox 前 harness 全绿对齐）。aarch64 多核墙钟慢：偏 **idle busy-`schedule` × QEMU**（`SMP=1` 很快）；见 deferrals。
 
-**RPC coop 框架**: `ipc_rpc_coop_*` 已落地（park reply / nested）；**VFS 仍用** `ipc_rpc_server_loop`（下一刀迁 server）。见 [`protocols/IPC_RPC_FRAMEWORK.md`](protocols/IPC_RPC_FRAMEWORK.md)。
+**RPC coop**: VFS/backends 已切 coop；**READ/WRITE** 嵌套 park（`vfs_coop.c`）；OPEN/namespace 等仍同步嵌套。见 [`protocols/IPC_RPC_FRAMEWORK.md`](protocols/IPC_RPC_FRAMEWORK.md)。
 
 **core**: port ops gate 等若仍在子模块工作区，需维护者单独审阅。
 
@@ -72,7 +72,7 @@ doc/ai/DECISIONS.md      非显然设计选择（ADR-lite）
 | spawn 仍 `gen_task_from_elf` + Path B 二次 bootstrap | ⬜ 应改 `execve("/init")` / cmdline |
 | IPC reply 会合楔死（VFS uninterruptible + ops gate + post-send 不弃 recv） | ✅ |
 | fork/clone `#PF` @ `0x57f485`（status=139） | ✅ 2026-08-02 x86 `run_all` 52/52（`linux_signal_proc_reset`） |
-| RPC reply-aware coop 框架 | ✅ API；⬜ VFS/backends 改用 `ipc_rpc_coop_server_loop` |
+| RPC reply-aware coop 框架 | ✅ API；✅ VFS/backends 改用（⬜ nested park） |
 
 详见 [`BOOT_PATH_EVOLUTION.md`](BOOT_PATH_EVOLUTION.md)、[`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md)。
 

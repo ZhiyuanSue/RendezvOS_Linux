@@ -8,8 +8,7 @@
 
 /*
  * Middle-layer inode handle. Path resolution lives in vfs_namespace.c.
- * I/O goes to backend_port via vfs_backend_dispatch(); VFS does not care
- * which concrete backend owns that port.
+ * I/O goes to backend_port via vfs_backend_dispatch() / coop nested RPC.
  */
 
 typedef struct vfs_inode {
@@ -26,10 +25,6 @@ typedef struct vfs_inode {
 } vfs_inode_t;
 
 void vfs_inode_init_synthetic_root(vfs_inode_t *out);
-
-i64 vfs_inode_read(const vfs_inode_t *ino, u64 offset, void *buf, u64 len);
-i64 vfs_inode_write(vfs_inode_t *ino, u64 offset, const void *buf, u64 len);
-i64 vfs_inode_truncate(vfs_inode_t *ino, u64 size);
-i64 vfs_inode_flush_backing(const vfs_inode_t *ino);
+void vfs_inode_fill_path(vfs_inode_t *ino, const char *path);
 
 #endif /* _VFS_BACKEND_OPS_H_ */

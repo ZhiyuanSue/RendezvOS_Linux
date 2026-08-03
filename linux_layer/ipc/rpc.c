@@ -1414,7 +1414,15 @@ void ipc_rpc_coop_server_loop(const char* listen_port_name, u16 service_id,
                         }
 
                         disp = handler(job, km->hdr.opcode, km, &result);
-                        if (disp == IPC_RPC_COOP_HANDLED) {
+                        if (disp == IPC_RPC_COOP_REPLIED) {
+                                /*
+                                 * Handler used blocking ipc_rpc_reply (leaf
+                                 * backends). Nested callers only try_recv and
+                                 * never enqueue a RECV wait — try_send reply
+                                 * livelocks against that. Release only.
+                                 */
+                                ipc_rpc_coop_job_release(job);
+                        } else if (disp == IPC_RPC_COOP_HANDLED) {
                                 if (job->state != IPC_RPC_COOP_ST_NEED_REPLY)
                                         ipc_rpc_coop_job_set_result(job,
                                                                     result);

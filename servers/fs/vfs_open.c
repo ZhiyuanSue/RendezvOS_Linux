@@ -1,57 +1,24 @@
 /*
- * VFS server open/read front-end — path + handle API (scheme B).
+ * VFS path/handle front-end (scheme B).
+ *
+ * Listen-side opcodes are handled by vfs_coop*.c. This file keeps: kern
+ * lookup, open_install, and local handle helpers (lseek/fstat).
  */
 
 #include "vfs_open.h"
 
 #include "vfs_handle.h"
 #include <linux_compat/fs/vfs_path.h>
-#include "vfs_backend.h"
-#include "vfs_mount.h"
-#include "vfs_perm.h"
-#include "vfs_root.h"
+#include "vfs_namespace.h"
+#include "vfs_rpc.h"
 
 #include <common/string.h>
-#include <common/mm.h>
-#include <linux_compat/debug_trace.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/fs/vfs_protocol.h>
 #include <linux_compat/linux_mm_radix.h>
-#include <linux_compat/proc_registry.h>
-#include <modules/log/log.h>
-#include <rendezvos/mm/allocator.h>
 #include <rendezvos/mm/vmm.h>
-#include <rendezvos/smp/percpu.h>
 
-#if PAGE_SIZE < 4096u
-#define VFS_READ_CHUNK PAGE_SIZE
-#else
-#define VFS_READ_CHUNK 4096u
-#endif
-
-#define VFS_S_IFREG 0100000u
-
-/* vfs_listen is single-threaded: one PAGE_SIZE I/O scratch (not on kstack). */
-static u8 *vfs_io_chunk;
-
-static u8 *vfs_io_chunk_get(void)
-{
-        struct allocator *alloc;
-
-        if (vfs_io_chunk) {
-                return vfs_io_chunk;
-        }
-
-        alloc = percpu(kallocator);
-        if (!alloc || !alloc->m_alloc) {
-                return NULL;
-        }
-
-        vfs_io_chunk = (u8 *)alloc->m_alloc(alloc, PAGE_SIZE);
-        return vfs_io_chunk;
-}
-
-static bool vfs_inode_symlink_target(const vfs_inode_t *ino, char *out, u64 cap)
+bool vfs_inode_symlink_target(const vfs_inode_t *ino, char *out, u64 cap)
 {
         u64 len;
 
@@ -68,8 +35,8 @@ static bool vfs_inode_symlink_target(const vfs_inode_t *ino, char *out, u64 cap)
         return true;
 }
 
-static void vfs_join_symlink_target(const char *base, const char *target,
-                                    char *out, u64 cap)
+void vfs_join_symlink_target(const char *base, const char *target, char *out,
+                             u64 cap)
 {
         char parent[VFS_PATH_MAX];
 
@@ -90,14 +57,17 @@ static void vfs_join_symlink_target(const char *base, const char *target,
         (void)vfs_path_join(parent, target, out, cap);
 }
 
-static i64 vfs_lookup_follow(const char *path, vfs_inode_t *out,
-                             bool follow_symlink)
+i64 vfs_lookup_path(const char *path, vfs_inode_t *out, bool follow_symlink)
 {
         char target[VFS_PATH_MAX];
         char resolved[VFS_PATH_MAX];
         i64 ret;
 
-        ret = vfs_root_lookup(path, out);
+        if (!path || !out) {
+                return -LINUX_EINVAL;
+        }
+
+        ret = vfs_namespace_lookup(path, out);
         if (ret < 0) {
                 return ret;
         }
@@ -113,290 +83,44 @@ static i64 vfs_lookup_follow(const char *path, vfs_inode_t *out,
                 return -LINUX_EINVAL;
         }
 
-        return vfs_root_lookup(resolved, out);
+        return vfs_namespace_lookup(resolved, out);
 }
 
-i64 vfs_lookup_path(const char *path, vfs_inode_t *out, bool follow_symlink)
+i64 vfs_open_install(const vfs_inode_t *ino, i32 flags)
 {
-        if (!path || !out) {
-                return -LINUX_EINVAL;
-        }
-        return vfs_lookup_follow(path, out, follow_symlink);
-}
-
-static Tcb_Base *vfs_task_for_pid(pid_t pid)
-{
-        Tcb_Base *task = find_task_by_pid(pid);
-
-        if (!task || !task->vs || !linux_vspace_is_user_table(task->vs)) {
-                return NULL;
-        }
-
-        return task;
-}
-
-static i64 vfs_store_kstat(Tcb_Base *task, u64 user_statbuf,
-                           const vfs_kstat_t *st)
-{
-        linux_user_stat_t ustat;
-        error_t e;
-
-        if (!task || !st) {
-                return -LINUX_EINVAL;
-        }
-
-        linux_user_stat_from_kstat(st, &ustat);
-        e = linux_mm_store_to_user(
-                task->vs, user_statbuf, &ustat, sizeof(ustat));
-        if (e != REND_SUCCESS) {
-                return -LINUX_EFAULT;
-        }
-
-        return 0;
-}
-
-i64 vfs_open_path(const char *path, i32 flags, u32 mode)
-{
-        vfs_inode_t ino;
-        i64 ret;
         i32 acc = flags & VFS_O_ACCMODE;
         u32 handle;
 
-        if (!path) {
+        if (!ino) {
                 return -LINUX_EINVAL;
         }
 
-        ret = vfs_lookup_follow(path, &ino, true);
-
-        if (ret < 0) {
-                if (!(flags & VFS_O_CREAT)) {
-                        return ret;
-                }
-
-                if (flags & VFS_O_DIRECTORY) {
-                        ret = vfs_root_mkdir(path, mode);
-                        if (ret < 0) {
-                                return ret;
-                        }
-                        ret = vfs_root_lookup(path, &ino);
-                        if (ret < 0) {
-                                return ret;
-                        }
-                } else {
-                        u32 create_mode = (mode & 0777u) | VFS_S_IFREG;
-
-                        ret = vfs_root_create_file(path, create_mode, &ino);
-                        if (ret < 0) {
-                                return ret;
-                        }
-                }
-        } else {
-                if ((flags & (VFS_O_CREAT | VFS_O_EXCL))
-                    == (VFS_O_CREAT | VFS_O_EXCL)) {
-                        return -LINUX_EEXIST;
-                }
-
-                if ((flags & VFS_O_DIRECTORY) && !ino.is_dir) {
-                        return -LINUX_ENOTDIR;
-                }
-
-                if (!(flags & VFS_O_DIRECTORY) && ino.is_dir
-                    && acc != VFS_O_RDONLY) {
-                        return -LINUX_EISDIR;
-                }
-
-                if ((flags & VFS_O_TRUNC) && !ino.is_dir
-                    && (acc == VFS_O_WRONLY || acc == VFS_O_RDWR)) {
-                        if (!ino.writable) {
-                                return -LINUX_EROFS;
-                        }
-                        ret = vfs_root_truncate(&ino, 0);
-                        if (ret < 0) {
-                                return ret;
-                        }
-                }
+        if ((flags & VFS_O_DIRECTORY) && !ino->is_dir) {
+                return -LINUX_ENOTDIR;
         }
 
-        if (ino.is_dir && acc != VFS_O_RDONLY) {
+        if (!(flags & VFS_O_DIRECTORY) && ino->is_dir && acc != VFS_O_RDONLY) {
+                return -LINUX_EISDIR;
+        }
+
+        if (ino->is_dir && acc != VFS_O_RDONLY) {
                 if (acc == VFS_O_WRONLY || acc == VFS_O_RDWR) {
                         return -LINUX_EISDIR;
                 }
         }
 
-        if (!ino.is_dir && acc != VFS_O_RDONLY) {
-                if (!ino.writable) {
+        if (!ino->is_dir && acc != VFS_O_RDONLY) {
+                if (!ino->writable) {
                         return -LINUX_EACCES;
                 }
         }
 
-        handle = vfs_handle_open(&ino, flags);
+        handle = vfs_handle_open(ino, flags);
         if (handle == 0) {
                 return -LINUX_EMFILE;
         }
 
-        /* Bit 31 marks directory opens so compat can set is_dir without RPC. */
-        return (i64)handle | (ino.is_dir ? VFS_OPEN_RET_IS_DIR_BIT : 0);
-}
-
-i64 vfs_read_handle(pid_t pid, u32 handle, u64 user_buf, u64 count)
-{
-        Tcb_Base *task = vfs_task_for_pid(pid);
-        vfs_open_handle_t *file;
-        u8 *chunk;
-        u64 remaining = count;
-        u64 total = 0;
-        i64 n;
-
-        if (!task) {
-                return -LINUX_ESRCH;
-        }
-
-        file = vfs_handle_get(handle);
-        if (!file) {
-                return -LINUX_EBADF;
-        }
-
-#if LINUX_COMPAT_TRACE_VFS_IO
-        pr_info("[vfs] read_handle enter pid=%d h=%u path=%s off=%llu cnt=%llu\n",
-                (int)pid,
-                handle,
-                file->ino.path,
-                (unsigned long long)file->offset,
-                (unsigned long long)count);
-#endif
-
-        if (file->ino.is_dir) {
-                return -LINUX_EISDIR;
-        }
-
-        if ((file->open_flags & VFS_O_ACCMODE) == VFS_O_WRONLY) {
-                return -LINUX_EBADF;
-        }
-
-        chunk = vfs_io_chunk_get();
-        if (!chunk) {
-                return -LINUX_ENOMEM;
-        }
-
-        while (remaining > 0) {
-                u64 chunk_len = remaining;
-
-                if (chunk_len > VFS_READ_CHUNK) {
-                        chunk_len = VFS_READ_CHUNK;
-                }
-
-#if LINUX_COMPAT_TRACE_VFS_IO
-                pr_info("[vfs] read_handle ->root_read off=%llu len=%llu\n",
-                        (unsigned long long)file->offset,
-                        (unsigned long long)chunk_len);
-#endif
-                n = vfs_root_read(&file->ino, file->offset, chunk, chunk_len);
-#if LINUX_COMPAT_TRACE_VFS_IO
-                pr_info("[vfs] read_handle <-root_read n=%ld\n", (long)n);
-#endif
-                if (n < 0) {
-                        return n;
-                }
-                if (n == 0) {
-                        break;
-                }
-
-#if LINUX_COMPAT_TRACE_VFS_IO
-                pr_info("[vfs] read_handle store_to_user n=%ld\n", (long)n);
-#endif
-                if (linux_mm_store_to_user(
-                            task->vs, user_buf + total, chunk, (size_t)n)
-                    != REND_SUCCESS) {
-#if LINUX_COMPAT_TRACE_VFS_IO
-                        pr_info("[vfs] read_handle store_to_user FAIL\n");
-#endif
-                        return -LINUX_EFAULT;
-                }
-
-                file->offset += (u64)n;
-                total += (u64)n;
-                remaining -= (u64)n;
-
-                if ((u64)n < chunk_len) {
-                        break;
-                }
-        }
-
-#if LINUX_COMPAT_TRACE_VFS_IO
-        pr_info("[vfs] read_handle done total=%llu\n",
-                (unsigned long long)total);
-#endif
-        return (i64)total;
-}
-
-i64 vfs_write_handle(pid_t pid, u32 handle, u64 user_buf, u64 count)
-{
-        Tcb_Base *task = vfs_task_for_pid(pid);
-        vfs_open_handle_t *file;
-        u8 *chunk;
-        u64 remaining = count;
-        u64 total = 0;
-        i64 n;
-
-        if (!task) {
-                return -LINUX_ESRCH;
-        }
-
-        file = vfs_handle_get(handle);
-        if (!file) {
-                return -LINUX_EBADF;
-        }
-
-        if (file->ino.is_dir) {
-                return -LINUX_EISDIR;
-        }
-
-        if ((file->open_flags & VFS_O_ACCMODE) == VFS_O_RDONLY) {
-                return -LINUX_EBADF;
-        }
-
-        if (file->open_flags & VFS_O_APPEND) {
-                file->offset = file->ino.size;
-        }
-
-        chunk = vfs_io_chunk_get();
-        if (!chunk) {
-                return -LINUX_ENOMEM;
-        }
-
-        while (remaining > 0) {
-                u64 chunk_len = remaining;
-
-                if (chunk_len > VFS_READ_CHUNK) {
-                        chunk_len = VFS_READ_CHUNK;
-                }
-
-                if (linux_mm_load_from_user(task->vs,
-                                            user_buf + total,
-                                            chunk,
-                                            (size_t)chunk_len)
-                    != REND_SUCCESS) {
-                        return total > 0 ? (i64)total : -LINUX_EFAULT;
-                }
-
-                n = vfs_root_write(&file->ino, file->offset, chunk, chunk_len);
-                if (n < 0) {
-                        return total > 0 ? (i64)total : n;
-                }
-                if (n == 0) {
-                        break;
-                }
-
-                file->offset += (u64)n;
-                total += (u64)n;
-                remaining -= (u64)n;
-
-                if ((u64)n < chunk_len) {
-                        break;
-                }
-        }
-
-        return (i64)total;
+        return (i64)handle | (ino->is_dir ? VFS_OPEN_RET_IS_DIR_BIT : 0);
 }
 
 i64 vfs_lseek_handle(u32 handle, i64 offset, i32 whence)
@@ -437,9 +161,8 @@ i64 vfs_lseek_handle(u32 handle, i64 offset, i32 whence)
 
 i64 vfs_fstat_handle(pid_t pid, u32 handle, u64 user_statbuf)
 {
-        Tcb_Base *task = vfs_task_for_pid(pid);
+        Tcb_Base *task = vfs_task_user_for_pid(pid);
         vfs_open_handle_t *file;
-        vfs_kstat_t st;
 
         if (!task) {
                 return -LINUX_ESRCH;
@@ -450,272 +173,5 @@ i64 vfs_fstat_handle(pid_t pid, u32 handle, u64 user_statbuf)
                 return -LINUX_EBADF;
         }
 
-        vfs_kstat_from_inode(&file->ino, &st);
-        return vfs_store_kstat(task, user_statbuf, &st);
-}
-
-i64 vfs_stat_path(pid_t pid, const char *path, u64 user_statbuf, i32 flags)
-{
-        Tcb_Base *task = vfs_task_for_pid(pid);
-        vfs_inode_t ino;
-        vfs_kstat_t st;
-        i64 ret;
-        bool follow_symlink = (flags & VFS_AT_SYMLINK_NOFOLLOW) == 0;
-
-        if (!task) {
-                return -LINUX_ESRCH;
-        }
-        if (!path) {
-                return -LINUX_EINVAL;
-        }
-
-        ret = vfs_lookup_follow(path, &ino, follow_symlink);
-        if (ret < 0) {
-                return ret;
-        }
-
-        vfs_kstat_from_inode(&ino, &st);
-        return vfs_store_kstat(task, user_statbuf, &st);
-}
-
-i64 vfs_readlink_path(pid_t pid, const char *path, u64 user_buf, u64 bufsiz)
-{
-        Tcb_Base *task = vfs_task_for_pid(pid);
-        vfs_inode_t ino;
-        vfs_mount_view_t mount_view;
-        char linkbuf[VFS_PATH_MAX];
-        i64 ret;
-        error_t e;
-
-        if (!task) {
-                return -LINUX_ESRCH;
-        }
-        if (!path || bufsiz == 0) {
-                return -LINUX_EINVAL;
-        }
-
-        ret = vfs_root_lookup(path, &ino);
-        if (ret < 0) {
-                return ret;
-        }
-        if (!ino.is_symlink) {
-                return -LINUX_EINVAL;
-        }
-
-        if (vfs_mount_view_for_path(path, &mount_view)) {
-                ret = vfs_backend_readlink(mount_view.backend_port,
-                                           path,
-                                           linkbuf,
-                                           sizeof(linkbuf));
-        } else if (ino.backend_port) {
-                ret = vfs_backend_readlink(
-                        ino.backend_port, path, linkbuf, sizeof(linkbuf));
-        } else if (vfs_inode_symlink_target(&ino, linkbuf, sizeof(linkbuf))) {
-                ret = (i64)strlen(linkbuf);
-        } else {
-                return -LINUX_EINVAL;
-        }
-
-        if (ret < 0) {
-                return ret;
-        }
-
-        {
-                u64 copy_len = (u64)ret;
-
-                if (copy_len >= bufsiz) {
-                        copy_len = bufsiz - 1;
-                }
-
-                e = linux_mm_store_to_user(
-                        task->vs, user_buf, linkbuf, (size_t)copy_len + 1);
-                if (e != REND_SUCCESS) {
-                        return -LINUX_EFAULT;
-                }
-        }
-
-        return ret;
-}
-
-i64 vfs_faccessat_path(pid_t pid, const char *path, u32 mode, u32 flags)
-{
-        vfs_inode_t ino;
-        i64 ret;
-        u32 check = 0;
-        bool follow_symlink = (flags & VFS_AT_SYMLINK_NOFOLLOW) == 0;
-
-        (void)pid;
-
-        if (!path) {
-                return -LINUX_EINVAL;
-        }
-
-        ret = vfs_lookup_follow(path, &ino, follow_symlink);
-        if (ret < 0) {
-                return ret;
-        }
-
-        if (mode == 0) {
-                return 0;
-        }
-
-        if (mode & 4u) {
-                check |= VFS_PERM_R;
-        }
-        if (mode & 2u) {
-                check |= VFS_PERM_W;
-        }
-        if (mode & 1u) {
-                check |= VFS_PERM_X;
-        }
-
-        return vfs_perm_check_mode_request(ino.mode, check);
-}
-
-i64 vfs_mkdir_path(const char *path, u32 mode)
-{
-        if (!path) {
-                return -LINUX_EINVAL;
-        }
-
-        return vfs_root_mkdir(path, mode);
-}
-
-i64 vfs_unlink_path(const char *path, i32 flags)
-{
-        if (!path) {
-                return -LINUX_EINVAL;
-        }
-
-        if (flags & 0x200) {
-                return -LINUX_ENOSYS;
-        }
-
-        return vfs_root_unlink(path);
-}
-
-i64 vfs_rename_path(const char *path, const char *newpath, i32 flags)
-{
-        (void)flags;
-
-        if (!path || !newpath) {
-                return -LINUX_EINVAL;
-        }
-
-        return vfs_root_rename(path, newpath);
-}
-
-i64 vfs_link_path(const char *path, const char *newpath, i32 flags)
-{
-        (void)flags;
-
-        if (!path || !newpath) {
-                return -LINUX_EINVAL;
-        }
-
-        return vfs_root_link(path, newpath);
-}
-
-i64 vfs_validate_dir(const char *path)
-{
-        vfs_inode_t ino;
-        i64 ret;
-
-        if (!path) {
-                return -LINUX_EINVAL;
-        }
-
-        ret = vfs_root_lookup(path, &ino);
-        if (ret < 0) {
-                return ret;
-        }
-        if (!ino.is_dir) {
-                return -LINUX_ENOTDIR;
-        }
-
-        return 0;
-}
-
-#define VFS_DIRENT64_HDR 19u
-
-static u16 vfs_dirent64_reclen(u64 name_len)
-{
-        u16 reclen = (u16)(VFS_DIRENT64_HDR + name_len + 1);
-
-        return (u16)((reclen + 7u) & ~7u);
-}
-
-i64 vfs_getdents64_handle(pid_t pid, u32 handle, u64 user_dirp, u64 count)
-{
-        Tcb_Base *task = vfs_task_for_pid(pid);
-        vfs_open_handle_t *file;
-        u8 chunk[512];
-        u64 written = 0;
-        u64 index;
-
-        if (!task) {
-                return -LINUX_ESRCH;
-        }
-        if (count == 0) {
-                return 0;
-        }
-
-        file = vfs_handle_get(handle);
-        if (!file) {
-                return -LINUX_EBADF;
-        }
-        if (!file->ino.is_dir) {
-                return -LINUX_ENOTDIR;
-        }
-
-        index = file->offset;
-
-        while (written < count) {
-                vfs_dirent_t ent;
-                u64 name_len;
-                u16 reclen;
-                u64 next_index;
-                i64 rd;
-                error_t e;
-
-                rd = vfs_root_readdir(file->ino.path, index, &ent);
-                if (rd < 0) {
-                        return rd;
-                }
-                if (rd > 0) {
-                        break;
-                }
-
-                name_len = strlen(ent.name);
-                reclen = vfs_dirent64_reclen(name_len);
-                if (written + reclen > count) {
-                        if (written == 0) {
-                                return -LINUX_EINVAL;
-                        }
-                        break;
-                }
-                if (reclen > sizeof(chunk)) {
-                        return -LINUX_EINVAL;
-                }
-
-                memset(chunk, 0, reclen);
-                memcpy(chunk, &ent.d_ino, sizeof(ent.d_ino));
-                next_index = index + 1;
-                memcpy(chunk + 8, &next_index, sizeof(next_index));
-                memcpy(chunk + 16, &reclen, sizeof(reclen));
-                chunk[18] = ent.d_type;
-                memcpy(chunk + VFS_DIRENT64_HDR, ent.name, name_len + 1);
-
-                e = linux_mm_store_to_user(
-                        task->vs, user_dirp + written, chunk, reclen);
-                if (e != REND_SUCCESS) {
-                        return written > 0 ? (i64)written : -LINUX_EFAULT;
-                }
-
-                written += reclen;
-                index = next_index;
-        }
-
-        file->offset = index;
-        return (i64)written;
+        return vfs_store_inode_stat(task, user_statbuf, &file->ino);
 }

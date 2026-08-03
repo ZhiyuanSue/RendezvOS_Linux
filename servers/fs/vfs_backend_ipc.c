@@ -4,6 +4,7 @@
 #include <common/string.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/fs/vfs_protocol.h>
+#include <linux_compat/initcall.h>
 #include <linux_compat/ipc/port_naming.h>
 #include <linux_compat/ipc/rpc.h>
 #include <modules/log/log.h>
@@ -92,6 +93,19 @@ static Message_Port_t *vfs_backend_ipc_thread_reply_port(void)
         tag[0] = 't';
         n = 1;
         n = vfs_be_append_u32(tag, sizeof(tag), n, tid);
+        if (n == 0)
+                return NULL;
+        return vfs_backend_ipc_cli_port(tag);
+}
+
+Message_Port_t *vfs_backend_ipc_job_reply_port(u32 job_seq)
+{
+        char tag[24];
+        size_t n = 0;
+
+        tag[0] = 'j';
+        n = 1;
+        n = vfs_be_append_u32(tag, sizeof(tag), n, job_seq);
         if (n == 0)
                 return NULL;
         return vfs_backend_ipc_cli_port(tag);
@@ -349,24 +363,120 @@ static u16 vfs_backend_ipc_opcode(vfs_backend_op_t op)
         }
 }
 
+/*
+ * One encode table for sync (job==NULL) and coop nested (job!=NULL).
+ * Sync returns RPC i64; coop returns error_t as i64 (SUCCESS / AGAIN / …).
+ */
+static i64 vfs_backend_ipc_issue(vfs_backend_req_t *req, Message_Port_t *reply,
+                                 ipc_rpc_coop_job_t *job)
+{
+        const char *port;
+        u16 opc;
+
+        if (!req || !reply || !req->port) {
+                return job ? (i64)-E_IN_PARAM : -LINUX_EINVAL;
+        }
+
+        port = req->port;
+        opc = vfs_backend_ipc_opcode(req->op);
+        if (opc == 0) {
+                return job ? (i64)-E_IN_PARAM : -LINUX_EINVAL;
+        }
+
+#define VFS_BE_ISSUE(fmt, ...)                                                 \
+        do {                                                                   \
+                if (job) {                                                     \
+                        return (i64)ipc_rpc_coop_nested_call(                  \
+                                job,                                           \
+                                port,                                          \
+                                reply,                                         \
+                                opc,                                           \
+                                fmt,                                           \
+                                IPC_RPC_RESP_OPCODE_DEFAULT,                   \
+                                IPC_RPC_RESP_FMT_DEFAULT,                      \
+                                __VA_ARGS__);                                  \
+                }                                                              \
+                return ipc_rpc_call_named_uninterruptible(                     \
+                        port, reply, opc, fmt, __VA_ARGS__);                   \
+        } while (0)
+
+        switch (req->op) {
+        case VFS_BACKEND_OP_LOOKUP:
+                VFS_BE_ISSUE("sp", req->path, req->ino_out);
+        case VFS_BACKEND_OP_READ:
+                VFS_BE_ISSUE("pqqp",
+                             req->ino,
+                             req->offset,
+                             req->len,
+                             req->buf);
+        case VFS_BACKEND_OP_WRITE:
+                VFS_BE_ISSUE("pqqp",
+                             req->ino,
+                             req->offset,
+                             req->len,
+                             req->wbuf);
+        case VFS_BACKEND_OP_TRUNCATE:
+                VFS_BE_ISSUE("pq", req->ino, req->size_arg);
+        case VFS_BACKEND_OP_FLUSH:
+                VFS_BE_ISSUE("p", req->ino);
+        case VFS_BACKEND_OP_READDIR:
+                VFS_BE_ISSUE("sqp",
+                             req->path,
+                             req->dir_index,
+                             req->dirent_out);
+        case VFS_BACKEND_OP_READLINK:
+                VFS_BE_ISSUE("spq",
+                             req->path,
+                             req->readlink_buf,
+                             req->readlink_cap);
+        case VFS_BACKEND_OP_MKDIR:
+        case VFS_BACKEND_OP_CREATE:
+                VFS_BE_ISSUE("su", req->path, (u64)req->mode_arg);
+        case VFS_BACKEND_OP_UNLINK:
+                VFS_BE_ISSUE("s", req->path);
+        case VFS_BACKEND_OP_RENAME:
+        case VFS_BACKEND_OP_LINK:
+                VFS_BE_ISSUE("ss", req->path, req->path2);
+        default:
+                return job ? (i64)-E_IN_PARAM : -LINUX_EINVAL;
+        }
+#undef VFS_BE_ISSUE
+}
+
+error_t vfs_backend_ipc_coop_nested(ipc_rpc_coop_job_t *job,
+                                    vfs_backend_req_t *req)
+{
+        Message_Port_t *reply;
+        error_t e;
+        static u32 vfs_coop_nested_seq;
+
+        if (!job || !req || !req->port) {
+                return -E_IN_PARAM;
+        }
+
+        reply = vfs_backend_ipc_job_reply_port(++vfs_coop_nested_seq);
+        if (!reply) {
+                return -E_REND_NO_MEM;
+        }
+
+        e = (error_t)vfs_backend_ipc_issue(req, reply, job);
+        /*
+         * nested_call takes its own hold via ref_get when it parks the port
+         * on the job; drop our lookup/create hold either way.
+         */
+        ref_put(&reply->refcount, free_message_port_ref);
+        return e;
+}
+
 i64 vfs_backend_ipc_call(vfs_backend_req_t *req)
 {
         Message_Port_t *reply;
-        const char *port;
-        u16 opc;
         i64 ret;
 
         if (!req) {
                 return -LINUX_EINVAL;
         }
-
-        port = req->port;
-        if (!port) {
-                return -LINUX_EINVAL;
-        }
-
-        opc = vfs_backend_ipc_opcode(req->op);
-        if (opc == 0) {
+        if (!req->port) {
                 return -LINUX_EINVAL;
         }
 
@@ -380,89 +490,134 @@ i64 vfs_backend_ipc_call(vfs_backend_req_t *req)
                 return -LINUX_ENOMEM;
         }
 
-        /*
-         * Nested VFS→backend: uninterruptible so a signal cannot abort mid-I/O
-         * and wedge the single listen thread relative to the backend.
-         */
-        switch (req->op) {
-        case VFS_BACKEND_OP_LOOKUP:
-                ret = ipc_rpc_call_named_uninterruptible(
-                        port, reply, opc, "sp", req->path, req->ino_out);
-                break;
-        case VFS_BACKEND_OP_READ:
-                ret = ipc_rpc_call_named_uninterruptible(port,
-                                                         reply,
-                                                         opc,
-                                                         "pqqp",
-                                                         req->ino,
-                                                         req->offset,
-                                                         req->len,
-                                                         req->buf);
-                break;
-        case VFS_BACKEND_OP_WRITE:
-                ret = ipc_rpc_call_named_uninterruptible(port,
-                                                         reply,
-                                                         opc,
-                                                         "pqqp",
-                                                         req->ino,
-                                                         req->offset,
-                                                         req->len,
-                                                         req->wbuf);
-                break;
-        case VFS_BACKEND_OP_TRUNCATE:
-                ret = ipc_rpc_call_named_uninterruptible(
-                        port, reply, opc, "pq", req->ino, req->size_arg);
-                break;
-        case VFS_BACKEND_OP_FLUSH:
-                ret = ipc_rpc_call_named_uninterruptible(
-                        port, reply, opc, "p", req->ino);
-                break;
-        case VFS_BACKEND_OP_READDIR:
-                ret = ipc_rpc_call_named_uninterruptible(port,
-                                                         reply,
-                                                         opc,
-                                                         "sqp",
-                                                         req->path,
-                                                         req->dir_index,
-                                                         req->dirent_out);
-                break;
-        case VFS_BACKEND_OP_READLINK:
-                ret = ipc_rpc_call_named_uninterruptible(port,
-                                                         reply,
-                                                         opc,
-                                                         "spq",
-                                                         req->path,
-                                                         req->readlink_buf,
-                                                         req->readlink_cap);
-                break;
-        case VFS_BACKEND_OP_MKDIR:
-                ret = ipc_rpc_call_named_uninterruptible(
-                        port, reply, opc, "su", req->path, (u64)req->mode_arg);
-                break;
-        case VFS_BACKEND_OP_CREATE:
-                ret = ipc_rpc_call_named_uninterruptible(
-                        port, reply, opc, "su", req->path, (u64)req->mode_arg);
-                break;
-        case VFS_BACKEND_OP_UNLINK:
-                ret = ipc_rpc_call_named_uninterruptible(
-                        port, reply, opc, "s", req->path);
-                break;
-        case VFS_BACKEND_OP_RENAME:
-                ret = ipc_rpc_call_named_uninterruptible(
-                        port, reply, opc, "ss", req->path, req->path2);
-                break;
-        case VFS_BACKEND_OP_LINK:
-                ret = ipc_rpc_call_named_uninterruptible(
-                        port, reply, opc, "ss", req->path, req->path2);
-                break;
-        default:
-                ret = -LINUX_EINVAL;
-                break;
-        }
-
+        /* Blocking nested (exec / sync path ops). Listen uses coop_nested. */
+        ret = vfs_backend_ipc_issue(req, reply, NULL);
         req->result = ret;
         ref_put(&reply->refcount, free_message_port_ref);
         return ret;
+}
+
+static ipc_rpc_coop_disp_t vfs_backend_ipc_coop_adapt(ipc_rpc_coop_job_t *job,
+                                                      u16 opcode,
+                                                      const kmsg_t *km,
+                                                      i64 *result_out)
+{
+        vfs_backend_service_fn service;
+        char *rp = NULL;
+        i64 result;
+
+        if (!job || !job->q || !result_out || !km) {
+                return IPC_RPC_COOP_HANDLED;
+        }
+
+        service = (vfs_backend_service_fn)job->q->resume_ctx;
+        if (!service) {
+                *result_out = -LINUX_EIO;
+                return IPC_RPC_COOP_HANDLED;
+        }
+
+        /*
+         * Leaf backends: decode+service inline, then blocking rendezvous
+         * reply. Nested VFS (NESTED_RECV) only ipc_try_recv_msg — it never
+         * enqueues a RECV waiter — so NEED_REPLY+try_send livelocks against
+         * that path (boot: exec /init after backends went coop). Leaf
+         * threads have no concurrent nested work; blocking send_msg is fine
+         * and parks a SEND waiter for the nested try_recv to match.
+         */
+        result = vfs_backend_ipc_rpc_handler(opcode, km, &rp, service);
+        *result_out = result;
+        ipc_rpc_reply(km,
+                      job->reply_port,
+                      km->hdr.module,
+                      IPC_RPC_RESP_OPCODE_DEFAULT,
+                      IPC_RPC_RESP_FMT_DEFAULT,
+                      result);
+        return IPC_RPC_COOP_REPLIED;
+}
+
+void vfs_backend_ipc_coop_server_loop(const char *listen_port_name,
+                                      u16 service_id,
+                                      ipc_rpc_coop_queue_t *q,
+                                      vfs_backend_service_fn service)
+{
+        if (!listen_port_name || !q || !service) {
+                return;
+        }
+
+        if (!q->inited) {
+                ipc_rpc_coop_queue_init(q);
+        }
+        /* Store service in resume_ctx (no nested resume for leaves). */
+        ipc_rpc_coop_queue_set_resume(q, NULL, (void *)service);
+
+        ipc_rpc_coop_server_loop(listen_port_name,
+                                 service_id,
+                                 IPC_RPC_RESP_OPCODE_DEFAULT,
+                                 IPC_RPC_RESP_FMT_DEFAULT,
+                                 vfs_backend_ipc_coop_adapt,
+                                 q,
+                                 NULL,
+                                 NULL);
+}
+
+i64 vfs_backend_ipc_leaf_run(const char *port_name, const char *fstype,
+                             u32 caps, u32 reg_flags, u16 service_id,
+                             ipc_rpc_coop_queue_t *q,
+                             vfs_backend_service_fn service)
+{
+        i64 reg_ret;
+
+        if (!port_name || !q || !service) {
+                return -LINUX_EINVAL;
+        }
+
+        reg_ret = vfs_backend_ipc_register(port_name, fstype, caps, reg_flags);
+        if (reg_ret < 0) {
+                return reg_ret;
+        }
+        if (reg_flags) {
+                vfs_backend_mark_online(reg_flags);
+        }
+        vfs_backend_ipc_coop_server_loop(port_name, service_id, q, service);
+        return 0;
+}
+
+error_t vfs_backend_ipc_leaf_spawn(const char *port_name,
+                                   const char *thread_name,
+                                   const char *log_tag, u16 *service_id_out,
+                                   Thread_Base **thread_out,
+                                   void (*thread_entry)(void),
+                                   bool *once_done)
+{
+        error_t err;
+
+        if (!port_name || !thread_name || !log_tag || !service_id_out
+            || !thread_out || !thread_entry || !once_done) {
+                return -E_IN_PARAM;
+        }
+        if (!linux_init_vfs_service_once(once_done)) {
+                return REND_SUCCESS;
+        }
+
+        err = vfs_backend_ipc_server_spawn(port_name,
+                                           thread_name,
+                                           service_id_out,
+                                           thread_out,
+                                           thread_entry);
+        if (err != REND_SUCCESS) {
+                pr_error("[VFS/%s] server spawn failed: %d on CPU %llu\n",
+                         log_tag,
+                         (int)err,
+                         (u64)percpu(cpu_number));
+                return err;
+        }
+
+        pr_info("[VFS/%s] backend thread on CPU %llu port '%s'\n",
+                log_tag,
+                (u64)percpu(cpu_number),
+                port_name);
+        linux_init_vfs_service_mark_done(once_done);
+        return REND_SUCCESS;
 }
 
 i64 vfs_backend_ipc_register(const char *port_name, const char *fstype,

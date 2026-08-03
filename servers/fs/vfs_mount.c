@@ -120,7 +120,9 @@ bool vfs_mount_view_for_path(const char *path, vfs_mount_view_t *out)
         return true;
 }
 
-i64 vfs_mount_register(const char *target, const char *fstype, u64 flags)
+i64 vfs_mount_register_prepare(const char *target, const char *fstype,
+                               u64 flags, const char **port_out,
+                               char *norm_out, u64 norm_cap, bool *need_mkdir)
 {
         u32 i;
         u32 n;
@@ -130,9 +132,13 @@ i64 vfs_mount_register(const char *target, const char *fstype, u64 flags)
         vfs_mount_rec_t *slot;
         error_t err;
 
-        if (!target || !fstype) {
+        if (!target || !fstype || !port_out || !norm_out || norm_cap == 0
+            || !need_mkdir) {
                 return -LINUX_EINVAL;
         }
+
+        *port_out = NULL;
+        *need_mkdir = false;
 
         backend_port = vfs_backend_port_for_fstype(fstype);
         if (!backend_port) {
@@ -143,6 +149,11 @@ i64 vfs_mount_register(const char *target, const char *fstype, u64 flags)
         if (!vfs_path_is_root(norm) && norm[0] == '\0') {
                 return -LINUX_EINVAL;
         }
+        if (strlen(norm) + 1 > norm_cap) {
+                return -LINUX_ENAMETOOLONG;
+        }
+        strncpy(norm_out, norm, norm_cap - 1);
+        norm_out[norm_cap - 1] = '\0';
 
         n = vfs_slice_table_count(&vfs_mount_tab);
         for (i = 0; i < n; i++) {
@@ -185,10 +196,10 @@ i64 vfs_mount_register(const char *target, const char *fstype, u64 flags)
 
         if (strcmp_s(fstype, VFS_BACKEND_FSTYPE_RAMFS, VFS_BACKEND_FSTYPE_MAX)
             == 0) {
-                (void)vfs_backend_mkdir(backend_port, norm, 0755u | 0040000u);
+                *port_out = backend_port;
+                *need_mkdir = true;
         }
-        (void)vfs_namespace_set_mount_cover(norm, true);
-        return 0;
+        return 1;
 }
 
 i64 vfs_mount_unregister(const char *target, u64 flags)

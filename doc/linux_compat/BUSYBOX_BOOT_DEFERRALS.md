@@ -1,49 +1,61 @@
 # Busybox 启动 — 临时妥协与待修项
 
-> **Status**: busybox Path B + `run_all` 功能对齐（更新 2026-08-02）  
-> **目标**: `/init`→busybox；用户态 `run_all.sh`；回收 Path B/incbin 妥协  
-> **演进叙事（从前到后）**: [`BOOT_PATH_EVOLUTION.md`](BOOT_PATH_EVOLUTION.md)  
-> **相关**: [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) · [`VFS_DYNAMIC_STORAGE.md`](VFS_DYNAMIC_STORAGE.md) · [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md) · [`USER_TESTS.md`](USER_TESTS.md) · [`SYSCALLS.md`](SYSCALLS.md) · [`protocols/IPC_RPC_FRAMEWORK.md`](protocols/IPC_RPC_FRAMEWORK.md)
+> **Status**: busybox `/init` + 用户态 `run_all` 已通（更新 **2026-08-03**）  
+> **目标**: 回收 Path B / stub / 同步 VFS 等 demo 妥协，逼近真 initramfs  
+> **演进叙事**: [`BOOT_PATH_EVOLUTION.md`](BOOT_PATH_EVOLUTION.md)  
+> **相关**: [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) · [`VFS_DYNAMIC_STORAGE.md`](VFS_DYNAMIC_STORAGE.md) · [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md) · [`USER_TESTS.md`](USER_TESTS.md) · [`SYSCALLS.md`](SYSCALLS.md) · [`protocols/IPC_RPC_FRAMEWORK.md`](protocols/IPC_RPC_FRAMEWORK.md) · [`doc/ai/DECISIONS.md`](../ai/DECISIONS.md)
 
-本文记录 **为尽快跑通 busybox demo 而做的妥协**。每一项都应在 demo 稳定后回收或正规化。
+本文记录 **为尽快跑通 busybox demo 而做的妥协**。每一项都应在稳定后回收或正规化。  
+下文长节多为演进叙事；**以本节「剩余开放项」为准**，勿被旧「待做」段落误导。
 
 ---
 
-## 剩余开放项一览（2026-08-02）
+## 剩余开放项一览（2026-08-03）
 
-| 优先级 | 项 | 现状 | 应改为 / 备注 |
-|--------|-----|------|----------------|
-| **P0** | boot argv | ✅ 默认 `sh /tests/run_all.sh`（`linux_boot`） | **内核 cmdline** 覆盖 |
-| **P0** | `/init` | ✅ symlink → `bin/busybox` | — |
-| **P0** | 测例编排 | ✅ pack 生成 `run_all.sh`（显式 `run_one`） | — |
-| **P0** | **IPC reply 会合楔死** | ✅ 子项 2–4 | — |
-| **P0** | VFS client RPC | ✅ uninterruptible + ops gate | — |
-| **P0** | clone/fork `#PF` @ `0x57f485` | ✅ x86 `run_all` **52/52**（2026-08-02 log） | 与迁 busybox 前全绿对齐 |
-| **P0** | PID1 启动 | ✅ 空 task + `linux_exec_replace_image("/init")`（与 sys_execve 同栈/auxv） | 落入用户仍 Path B drop |
-| **P1** | VFS listen → coop | 框架 ✅ `ipc_rpc_coop_*`；server 仍 `ipc_rpc_server_loop` | 迁 listen（本轮暂缓） |
-| **P1** | 用户 pathname 读 | ✅ 按页 chunk 至 NUL（`linux_mm_load_cstring_from_user`） | — |
-| **P1** | auxv 长尾 | ✅ `AT_HWCAP` / `AT_EXECFN`；`AT_RANDOM` 用 `common/rand.h` | 硬件熵仍可选 |
-| **P1** | syscall stub 深度 | CONSOLE_IN=`POLLHUP`；无真 UART RX | 按需加深 |
-| **P1** | aarch64 多核体感慢 | SMP=1 很快；idle×QEMU | 日常 `SMP=1`；core idle WFI 另案 |
-| **P2** | busybox applet | ✅ 默认 `BUSYBOX_FULL=1`（`--list` 全 symlink；`tc` 仍因 UAPI 关） | `busybox_full:false` 可缩 |
-| **P3** | `_num_app` / link_app | ✅ 已删除 | — |
-| **P3** | 内核 `tests/` / `test_*` | ✅ → `init/linux_boot.c` + `boot_wait.h` | — |
-| **P3** | `/dev/*` | 未做 | 真 initramfs 形态 |
-| — | **VFS 定长 BSS / 栈炸弹** | — | ✅ |
-| — | **x86-64 red zone** | — | ✅ |
+### 已收（不再当开放项）
 
-**建议下一步**
+| 项 | 落点 |
+|----|------|
+| `/init` → `bin/busybox` symlink | rootfs pack |
+| 默认 boot：`sh /tests/run_all.sh` | `linux_boot.c`（尚无 cmdline 覆盖） |
+| pack 生成 `run_all.sh`（显式 `run_one`，禁 ash `while read`） | `pack_user_rootfs.py` |
+| PID1：空 task + `linux_exec_replace_image("/init")` | 与 `sys_execve` 同栈/auxv 路径 |
+| IPC reply 会合楔死（ops gate / uninterruptible / 不弃 recv） | core + `IPC_RPC_FRAMEWORK` |
+| clone/fork `#PF` @ `0x57f485` | x86 `run_all` 曾 **52/52** |
+| pathname 按页 chunk 至 NUL | `linux_mm_load_cstring_from_user` |
+| auxv：`AT_HWCAP` / `AT_EXECFN` / 伪随机 `AT_RANDOM` | 硬件熵仍可选（见下） |
+| VFS 定长 BSS / 栈炸弹；link_app / `_num_app`；内核 `tests/` 编排器 | 已删或迁 `linux_boot` |
+| **VFS listen coop**：全部 listen opcode（含 READLINK/MOUNT/UMOUNT/close/lseek/fstat）；leaf **`IPC_RPC_COOP_REPLIED`** | `vfs_coop*.c` · DECISIONS 2026-08-02/03 |
 
-1. ✅ PID1：`linux_exec_replace_image`（与 sys_execve 合并）；删 Path B bootstrap  
-2. **cmdline → argv**（需 core 读 bootargs）  
-3. **VFS** → `ipc_rpc_coop_server_loop`（暂缓）
+### 仍开放
+
+| 优先级 | 项 | 现状 | 应改为 |
+|--------|-----|------|--------|
+| **P0** | **cmdline → boot argv** | argv 硬编码在 `linux_boot` | 读内核/QEMU bootargs 覆盖（**可能需 core**） |
+| **P0** | **Path B / 进用户协议收口** | PID1 已走 replace_image；loader 侧仍可能有 fake return + append.init / `PT_NOTE` 分流痕迹 | 统一「execve 级」进用户；去掉二次 bootstrap 特例 |
+| **P1** | **CONSOLE / 交互** | 无真 UART RX；CONSOLE_IN=`POLLHUP`，`read(0)`→EOF | `/dev/console` + 真 RX；交互 ash |
+| **P1** | **auxv / getrandom 熵** | 伪随机够跑 glibc/busybox | 硬件或更好熵源（可选） |
+| **P1** | **aarch64 SMP 体感慢** | `SMP=1` 快；多核 idle×QEMU | 日常 `SMP=1`；core idle/WFI 另案 |
+| **P2** | **busybox 构建妥协** | `CONFIG_STATIC=y`；`CONFIG_TC=n`（无 CBQ UAPI）；默认 `BUSYBOX_FULL=1` | 动态链接 / 真 UAPI 后再开 `tc`；`busybox_full:false` 可缩包 |
+| **P3** | **`/dev/*`** | 未做 | `/dev/null`、`/dev/console` 等 |
+| **P3** | **shebang** | 靠显式 `busybox sh script` | execve 解 `#!`（可选） |
+| **P3** | **头文件分层** | server / compat / 公共协议混用 | 整理时再拆（非功能阻塞） |
+| **扩展** | readdir O(n²)、tombstone、ramfs/pcache **256KiB** 上限 | 不挡 `run_all` | 见 `VFS_DYNAMIC_STORAGE.md` |
+| **演进** | nested RPC **thread 直发** | 现 reply-port + try_recv / leaf 阻塞 reply | 控制面拿 `Thread_Base*` 后 `ipc_system_deliver_to`（`lockfree-ipc` §8.3）；**非**当前必修 |
+
+**建议下一步（按序）**
+
+1. **cmdline → argv**（有 core 依赖先提方案再动）  
+2. **Path B / 进用户收口**（正规化 loader，去掉 demo 特例）  
+3. **`/dev/console` + RX**（要交互 shell 时再做）
 
 ---
 
 ## P0 — IPC request–reply 偶发卡死（busybox `run_all`，2026-08-01）
 
 > 与 Path B 共存的 **协议/生命周期缺口**；调度器空转是表象。权威协议：[`protocols/IPC_RPC_FRAMEWORK.md`](protocols/IPC_RPC_FRAMEWORK.md) §6–§8。  
-> **推进方式**：下面子项 **一个一个** 对齐再改，不打包一次改完。
+> **推进方式**：下面子项 **一个一个** 对齐再改，不打包一次改完。  
+> **状态（2026-08-03）**：子项 1–5 ✅；另见 leaf `IPC_RPC_COOP_REPLIED`（nested try_recv 对端必须阻塞 send）。
 
 ### 现象（已用三件套确认）
 
@@ -152,14 +164,16 @@ QEMU 默认 **`MEM_SIZE=512M`**（仅 `run` 的 `-m`，**不必**为改内存而
 
 ---
 
-## P0 — Path B 栈与首次进用户（已打通，**仍属妥协**）
+## P0 — Path B 栈与首次进用户（PID1 ✅；**loader 痕迹仍属妥协**）
+
+> **2026-08-03**：PID1 已 `linux_exec_replace_image("/init")`（与 sys_execve 同路径）。下文「Path B / append.init / PT_NOTE」仍描述 **loader 侧残留**，见文首开放项。
 
 ### 1. Demo 仍走 `gen_task_from_elf`，非 execve
 
 | 项 | 现状 | 应改为 |
 |----|------|--------|
-| 测例 spawn | `gen_task_from_elf` → `run_elf_program` | demo 走 **`execve` 路径** 或统一 spawn API |
-| 用户栈 | core fake return + compat **二次 bootstrap** | **execve 级**完整栈（或 core 统一 `run_elf_program` 协议） |
+| 测例 spawn | 用户态经 `/init`→`run_all`→exec；内核侧偶发仍 `gen_task_from_elf` | 统一 **execve 级** API |
+| 用户栈 | core fake return + compat **二次 bootstrap** 痕迹可能仍在 | **execve 级**完整栈（或 core 统一 `run_elf_program` 协议） |
 
 内置 musl 测例 ELF 自带简单 `_start`；**static glibc busybox** 需要标准 Linux 栈 + auxv。
 
@@ -299,7 +313,7 @@ QEMU 默认 **`MEM_SIZE=512M`**（仅 `run` 的 `-m`，**不必**为改内存而
 | `CONFIG_TC=n` | Linux 6.8+ 无 CBQ UAPI |
 | `CONFIG_STATIC=y` | static glibc busybox |
 | `BUSYBOX_AUTO_FETCH=1` | 自动拉 busybox 1.36.1 |
-| 默认 `BUSYBOX_FULL=0` | 仅 demo applet 子集 |
+| 默认 `BUSYBOX_FULL=1` | `--list` 全 symlink；`user.json` `busybox_full:false` 可缩回 demo 子集 |
 
 **文件**: `script/rootfs/build_busybox.sh`
 
@@ -329,94 +343,39 @@ QEMU 默认 **`MEM_SIZE=512M`**（仅 `run` 的 `-m`，**不必**为改内存而
 
 ## P3 — 白话：`run_all.sh` 迁移是什么？
 
-**现状（harness）**：内核 C 代码 `user_test_runner.c` 自己：
+> **2026-08-03**：阶段 A（内核只起一次 `/init`→`sh /tests/run_all.sh`，pack 生成显式 `run_one`）**已完成**。下文保留「为何迁 / 曾为何不能立刻删 harness」叙事。
 
-1. 读 `/tests/manifest`  
-2. **for** 每一行路径 → `gen_task_from_elf` 起一个进程 → 等它退出  
-3. 最后再单独起一次 busybox demo  
+**曾用 harness**：内核 C 自己读 manifest、`gen_task_from_elf` 循环。
 
-这是「内核当测试编排器」，不是真 initramfs 用法。
+**现用**：内核只 `exec` 一次 busybox；脚本编排测例（更接近 Linux initramfs）。
 
-**目标（`run_all.sh`）**：内核只负责启动 **一次** busybox shell，例如：
-
-```text
-busybox sh /tests/run_all.sh
-```
-
-脚本里再 `while read` manifest、逐个 exec 测例。编排从 **C 循环** 挪到 **用户态 shell**，更接近 Linux：init → shell → 跑测试。
-
-| | 内核 harness（现在） | `run_all.sh`（目标） |
+| | 内核 harness（旧） | `run_all.sh`（现） |
 |--|---------------------|----------------------|
-| 谁读 manifest | 内核 `vfs_kern_read_file_slice` | shell `read` / 重定向 |
-| 谁起测例 | 内核 `gen_task_from_elf` | shell `exec` / 直接跑路径 |
-| 等结束 | `test_cookie` + clean_server | shell `wait` / 顺序执行 |
-| busybox demo | 另一次内核 spawn + 注入 argv | 脚本里写 `ls /bin` |
+| 谁读清单 / 起测例 | 内核 | pack 展开的 shell + 用户态 exec |
+| 等结束 | `test_cookie` | shell 顺序 / wait |
+| busybox demo | 另一次内核 spawn | 已并入 `/init` 路径 |
 
-**为何还没迁**：shell 链式 `execve`、读脚本、fork/wait 组合尚未当成「唯一编排路径」验证；且 demo 仍依赖 Path B。阶段划分见下节。  
-**本次未实现 `run_all.sh`**——只整理 argv 注入；迁移是后续大项。
+**仍属妥协**：进用户 Path B 痕迹；无 cmdline；无 shebang（显式 `sh script`）。
 
 ---
 
-## P3 — 测例编排：迁到 busybox 脚本（待做）
+## P3 — 测例编排：迁到 busybox 脚本（阶段 A ✅）
 
-> **方向**：用 **`busybox sh /tests/run_all.sh`** 替代 C 里写死的 manifest 循环。
+> **方向**：用 **`busybox sh /tests/run_all.sh`** 替代 C 里写死的 manifest 循环 — **已落地**（pack 显式 `run_one`，非 `while read`）。
 
-### 为何可以迁
+### 分阶段（更新）
 
-| 保留 | 替换 |
-|------|------|
-| `make user` → `rootfs/tests/*` + `manifest` | 不再在 `user_test_runner.c` 里 `for` 每个路径 |
-| `pack_user_rootfs.py` / `manifest.order` | 额外生成 **`/tests/run_all.sh`** 打进 cpio |
-| cpio / VFS 布局 | 内核 bootstrap **只启动一次** shell 脚本 |
-
-### 为何不能立刻删掉 `user_test_runner.c`
-
-当前 busybox 成功路径 ≠ shell 跑脚本：
-
-| 能力 | 脚本是否需要 | 现状 |
-|------|-------------|------|
-| 启动 busybox | 必须 | 仍 **`gen_task_from_elf`** + Path B 栈，非用户态 `execve` |
-| `fork` + `wait4` | shell 子进程 | Phase 1 已有 |
-| `execve` 各测例 ELF | 必须 | FS execve 有；**经 shell 链式 exec 未验证** |
-| `open/read` 脚本与 manifest | 必须 | 依赖文件 syscall 成熟度 |
-| shebang `#!/bin/sh` | 可选 | execve **未做** shebang（可显式 `busybox sh script`） |
-| glibc auxv / 栈 | busybox + 部分测例 | Path B 仅在 kernel spawn hook |
-
-### 目标脚本形态（示例）
-
-```sh
-#!/bin/busybox sh
-set -e
-while read -r t; do
-  case "$t" in ''|\#*) continue ;; esac
-  echo "=== $t ==="
-  "$t" || exit 1
-done < /tests/manifest
-```
-
-成败以 **进程 exit code**（及 stdout 文案）为准；不再需要 `test_cookie` / `linux_user_test_notify_exit` 做 harness 同步。
-
-### 分阶段迁移
-
-| 阶段 | 内容 | 涉及 |
+| 阶段 | 内容 | 状态 |
 |------|------|------|
-| **A** | 保留 manifest 构建；runner **只启动一次** `busybox sh /tests/run_all.sh`（`gen_task_from_elf` 或 `execve`）；脚本内顺序跑 manifest | `rootfs/tests/run_all.sh`、`pack_user_rootfs.py`、`user_test_runner.c` |
-| **B** | 内核仅做 VFS/early init，然后 **`execve("/bin/busybox", ["sh", "/tests/run_all.sh"], …)`** 或 `/init`；缩掉 `linux_user_test_thread` 大循环 | `sys_execve.c`、`linux_exec_stack.c` |
-| **C** | 去掉 harness 专用 `test_cookie` / notify_exit；SMP 压测若仍需 per-CPU case，另保留内核 smp 模式或脚本并行策略 | `append_hooks`、`clean_server` |
+| **A** | 内核只启 `/init`→`sh /tests/run_all.sh`；pack 生成脚本 | ✅ |
+| **B** | 去掉 Path B 特例；cmdline 覆盖 argv；缩 loader 特例 | 开放（见文首） |
+| **C** | `/dev`、交互 console、可选 shebang；harness 残留全清 | 开放 |
 
-### 迁移前需验证
+### 迁移前曾需验证（多数已过）
 
-1. **musl 测例**经 **用户态 `execve`**（非 `gen_task_from_elf`）栈/auxv 是否正常（`PT_NOTE`=1 路径）。
-2. **busybox ash** 读脚本、`fork`、`wait`、对 manifest 每项 `exec` 测例 ELF。
-3. **`elf_read_test`**：保留为内核自检，或改为脚本内用户态读文件。
-4. **SMP 语义**：[`USER_TESTS.md`](USER_TESTS.md) 的 per-CPU barrier 与纯 shell 单进程顺序默认不一致，需单独决策。
-
-### 建议落地顺序（相对 P0 execve）
-
-1. 在 `rootfs/tests/` 增加 `run_all.sh`；构建时由 `pack_user_rootfs.py` 生成或拷贝模板。  
-2. runner 末尾（或替换 manifest 循环）改为 spawn/exec **`/bin/busybox` + `sh` + `/tests/run_all.sh`**。  
-3. demo 与测例编排统一为 execve / 脚本路径后，busybox demo 改由脚本调用 `ls`（不再单独内核 spawn）。  
-4. 阶段 B：eval 是否以 `/init` 替代 `linux_user_test_init`。
+1. musl 测例经用户态 `execve`（非纯 `gen_task_from_elf`）— 随 `run_all` 路径验证  
+2. ash 跑脚本 / fork / wait — ✅（编排用显式 `run_one`）  
+3. SMP 与纯 shell 单进程顺序 — 仍按 [`USER_TESTS.md`](USER_TESTS.md) 单独决策  
 
 ---
 
@@ -425,9 +384,10 @@ done < /tests/manifest
 | 项 | 状态 |
 |----|------|
 | `/dev/null`、`/dev/console` | 未做 |
-| PID 1 + `/init` | 未做 |
-| `read(0)` UART RX | EOF stub |
-| 完整 `mount` / umount | 部分 |
+| 内核 cmdline → argv | 未做（见文首 P0） |
+| `read(0)` UART RX | EOF / POLLHUP stub |
+| 完整 `mount` / umount | 部分；listen 上仍多为同步路径 |
+| shebang `#!` | 未做 |
 
 ---
 
@@ -478,6 +438,8 @@ done < /tests/manifest
 
 | 日期 | 变更 |
 |------|------|
+| 2026-08-03 | **VFS rename/link/getdents → coop** nested park；开放项去掉这三项 |
+| 2026-08-03 | **开放项刷新**：文首改为「已收 / 仍开放」；VFS path coop + leaf REPLIED 记入已收；`run_all` 阶段 A ✅；修正 `BUSYBOX_FULL` 默认；建议下一步重排 |
 | 2026-08-02 | **aarch64 MIDR undef**：`AT_HWCAP` 勿设 `HWCAP_CPUID`（无 EL0 MRS 模拟时 glibc `mrs midr_el1` → unknown trap） |
 | 2026-08-02 | **PID1 exec 合并**：`linux_exec_replace_image` 供 sys_execve + boot；空 task 起 `/init`；删除 bootstrap 栈特例 |
 | 2026-08-02 | **boot 命名重构**：删 `linux_layer/tests/*` 与 `test_*.h`；`linux_boot.c` + `boot_wait_cookie`；默认 `BUSYBOX_FULL=1` |

@@ -1,6 +1,11 @@
 #include "vfs_rpc.h"
 
 #include <common/string.h>
+#include <linux_compat/ipc/port_naming.h>
+#include <linux_compat/linux_mm_radix.h>
+#include <linux_compat/proc_registry.h>
+#include <rendezvos/mm/vmm.h>
+#include <rendezvos/task/tcb.h>
 
 bool vfs_rpc_client_pid(const char *reply_port_name, pid_t *pid_out)
 {
@@ -35,4 +40,14 @@ bool vfs_rpc_client_pid(const char *reply_port_name, pid_t *pid_out)
 
         *pid_out = pid;
         return true;
+}
+
+Tcb_Base *vfs_task_user_for_pid(pid_t pid)
+{
+        Tcb_Base *task = find_task_by_pid(pid);
+
+        if (!task || !task->vs || !linux_vspace_is_user_table(task->vs)) {
+                return NULL;
+        }
+        return task;
 }

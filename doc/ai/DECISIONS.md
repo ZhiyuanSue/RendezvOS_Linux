@@ -72,9 +72,46 @@ Format: Context / Decision / Consequences.
 
 ## 2026-08-02 | VFS coop is the direction; reply-aware framework landed
 
-- Context: clean_server proves one-way coop. VFS still blocks listen on nested backend RPC and client reply. Busybox x86 `run_all` is 52/52 on transitional `ipc_rpc_server_loop`.
-- Decision: Land **`ipc_rpc_coop_*`** in `rpc.c`/`rpc.h` (queue, job, nested try_send/try_recv, coop_server_loop). Listen send queue is a single FIFO — **serialize with `send_owner`**. VFS/backends **keep** `ipc_rpc_server_loop` until server-side state (`vfs_req_cred`, `vfs_io_chunk`, …) is scoped; then switch listen to `ipc_rpc_coop_server_loop`. No per-msg worker pools. EXIT_NOTIFY may later use try_send+park; THREAD_REAP stays inline.
-- Consequences: Framework gate cleared; next work is VFS migration + Path B cmdline cleanup. aarch64 SMP wall-clock still dominated by core idle busy-`schedule` under QEMU.
+- Context: clean_server proves one-way coop. VFS still blocks listen on nested backend RPC and client reply.
+- Decision: Land **`ipc_rpc_coop_*`**. Listen send queue serializes with **`send_owner`**. No per-msg worker pools.
+- Consequences: Framework ready for VFS/backends.
+
+---
+
+## 2026-08-02 | VFS + backends on `ipc_rpc_coop_server_loop` (phase 1)
+
+- Context: All four FS IPC servers used blocking `ipc_rpc_server_loop`.
+- Decision: backends → leaf coop; vfs_listen → `ipc_rpc_coop_server_loop`.
+- Consequences: Client reply parks on all four.
+
+---
+
+## 2026-08-02 | VFS READ/WRITE nested coop park (phase 2)
+
+- Context: Phase 1 still blocked vfs_listen for the whole backend RTT on every I/O.
+- Decision: **`vfs_coop.c` / `vfs_coop_path.c`** — listen is fully coop: nested park for
+  READ/WRITE and path ops (incl. READLINK/MOUNT/GETDENTS); local one-shots
+  (close/lseek/fstat/umount/backend_register) finish inline. Leaf backends use
+  `IPC_RPC_COOP_REPLIED` + blocking reply. Nested reply ports `vfs_cli_k_j<seq>`.
+  Kern `vfs_lookup_path` / `vfs_backend_{lookup,mkdir,unlink}` remain sync for
+  exec/load and namespace rollback only.
+- Consequences: Concurrent client replies / other listens can progress while a READ/WRITE waits on backend; OPEN/namespace still sync-nested.
+
+---
+
+## 2026-08-02 | Leaf backend reply = blocking (`IPC_RPC_COOP_REPLIED`)
+
+- Context: After backends moved to coop `NEED_REPLY`+`try_send`, boot hung at `exec /init`. Nested VFS uses `try_recv` only (no RECV waiter on the nested reply port); leaf `try_send` never enqueues a SEND waiter either → poll livelock.
+- Decision: Leaf backends complete with **blocking `ipc_rpc_reply`** and return **`IPC_RPC_COOP_REPLIED`** (framework releases job; no second try_send). Keep `NEED_REPLY`+`try_send` only when the peer **blocking-`recv_msg`** (user/kern RPC clients).
+- Consequences: Nested READ/WRITE and blocking `vfs_backend_ipc_call` (kern load / sync OPEN) rendezvous again; leaf may block in reply (acceptable — no nested work on that thread).
+
+---
+
+## 2026-08-03 | VFS path ops nested FSM (phase 3); coop is the direction
+
+- Context: Tests passed after leaf blocking reply. Question: is coop appropriate? OPEN/MKDIR/LOOKUP still sync-nested and can wedge listen for a backend RTT.
+- Decision: **Keep coop.** Single listen must park nested work (`try_send`/`try_recv` + schedule) so other clients progress. Split namespace into **prepare (local) / nested RPC / commit**; `vfs_coop_path.c` FSM for OPEN, STAT/CHDIR/FACCESSAT, MKDIR, UNLINK, then **RENAME/LINK/GETDENTS**. Kern `vfs_lookup_path` may still block. Leaf backends stay `IPC_RPC_COOP_REPLIED`.
+- Consequences: Listen no longer blocks on common path-op / dirent backend RTT; **readlink / mount / umount** remain follow-ups (or accept rare sync).
 
 ---
 

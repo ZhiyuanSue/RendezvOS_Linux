@@ -2,7 +2,7 @@
 
 实现文件：
 
-- `servers/fs/vfs_server.c` — handler + `ipc_rpc_server_loop`
+- `servers/fs/vfs_server.c` — handler + `ipc_rpc_coop_server_loop`（嵌套 backend 仍同步过渡）
 - `linux_layer/fs/fs_ipc.c` — `vfs_ipc_request_response`
 - `include/linux_compat/fs/vfs_protocol.h` — opcode / TLV
 - **fd 模型**: [`FD_TABLE.md`](FD_TABLE.md)
