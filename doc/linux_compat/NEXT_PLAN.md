@@ -77,21 +77,19 @@
 
 ---
 
-## 4. Core backlog 索引（提案用，非本分支必做）
+## 4. Core 待办（提案用，非本分支必做）
 
-权威列表：[`core/docs/TODO.md`](../../core/docs/TODO.md)。与上层交叉较多的条目：
+权威列表（中文条列）：[`core/docs/TODO.md`](../../core/docs/TODO.md)。
 
-| # / 主题 | 与上层关系 |
-|----------|------------|
-| **#46** Log / IPC server | UART server / 日志 sink 权衡 |
-| **#42** User stack argc/argv | 已部分由 cmdline + `linux_boot` / loader 覆盖；核对标准 loader 路径 |
-| **#37–38** Log buffer / early VGA vs log | handoff 与 emergency print |
-| **#52** Port mgmt / call→IPC wrappers | servers 增多时 |
-| Trap/IRQ、APIC/IOAPIC、idle/WFI | aarch64 SMP 体感、UART RX |
-| MM：map attr、TLB/PCID、allocator | fork/COW / mmap 后续 |
-| ACPI / DTB / Multiboot2 | 多平台设备统一 |
+和上层交叉多的几条：
 
-**规则**：compat 需要 core 缺口时，记方案 → 用户确认 → 再改；勿在 Makefile/configure 里塞上层策略默认值。
+- 平台：IOAPIC、UART getc、TLB IPI——交互 console / 外设中断前提  
+- 37、38、46：日志前后端与 IPC 输出；交接说明见 `core/docs/log.md`  
+- 42：Linux argv 归兼容层，别塞回 core  
+- 52：系统化 call→IPC wrapper 偏上层；core 留 port 原语  
+- 内存：改页属性、多 zone、boot 栈——fork/COW / mmap 后续  
+
+规则：compat 需要动 core 时先提案再改；别把上层 cmdline 策略写进 core Makefile。
 
 ---
 
