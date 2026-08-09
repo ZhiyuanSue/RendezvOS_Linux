@@ -20,8 +20,30 @@ SMP ?= 4
 MEM_SIZE ?= 256M
 DUMP ?= false
 DBG ?= false
+CMDLINE ?=
 # User payload: set to 1 to skip git pull/fetch repair (offline).
 USER_SKIP_GIT ?=
+
+# Compat boot argv for /init. Core only accepts CMDLINE= from the caller
+# (empty if omitted); this tree injects the busybox default at config time.
+LINUX_BOOT_CMDLINE_DEFAULT := sh /tests/run_all.sh
+
+# New `make config`: command-line CMDLINE=... wins; otherwise inject default.
+# Do not reuse a stale CMDLINE from included core/Makefile.env as the policy.
+ifeq ($(origin CMDLINE),command line)
+CONFIG_CMDLINE := $(CMDLINE)
+else
+CONFIG_CMDLINE := $(LINUX_BOOT_CMDLINE_DEFAULT)
+endif
+
+# QEMU -append / rebuild: command-line, else value from core/Makefile.env, else default.
+ifeq ($(origin CMDLINE),command line)
+RUN_CMDLINE := $(CMDLINE)
+else ifneq ($(strip $(CMDLINE)),)
+RUN_CMDLINE := $(CMDLINE)
+else
+RUN_CMDLINE := $(LINUX_BOOT_CMDLINE_DEFAULT)
+endif
 
 ROOT_COMPAT_ARCHS := x86_64 aarch64
 ifneq ($(filter $(ARCH),$(ROOT_COMPAT_ARCHS)),)
@@ -41,7 +63,7 @@ ROOT_EXTRA_OBJECTS := $(abspath $(ROOT_OBJECTS)) $(abspath $(ROOT_ROOTFS_CPIO_O)
 ROOT_COMMON_CFLAGS := -Werror -Wall -Wextra -Werror=return-type -Werror=format -Wmissing-field-initializers -Wunused-result -Os -nostdlib -nostdinc -fno-builtin -fno-stack-protector -std=c11 -DNR_CPUS=$(SMP)
 ROOT_COMMON_CFLAGS += -I $(ROOT_DIR)/include -I $(CORE_DIR)/include
 
-CORE_BUILD_ARGS := ARCH=$(ARCH) SMP=$(SMP) MEM_SIZE=$(MEM_SIZE) DBG=$(DBG) DUMP=$(DUMP)
+CORE_BUILD_ARGS := ARCH=$(ARCH) SMP=$(SMP) MEM_SIZE=$(MEM_SIZE) DBG=$(DBG) DUMP=$(DUMP) CMDLINE="$(RUN_CMDLINE)"
 CORE_BUILD_ARGS += EXTRA_OBJECTS="$(ROOT_EXTRA_OBJECTS)"
 CORE_BUILD_ARGS += OVERRIDE_CFLAGS="$(CORE_OVERRIDE_CFLAGS)"
 CORE_BUILD_ARGS += QEMU_LOG="$(ROOT_QEMU_LOG)"
@@ -64,7 +86,7 @@ root_dirs:
 
 config: clean root_dirs
 	@if [ -z "$(ARCH)" ]; then echo "ARCH is required, for example: make ARCH=x86_64 config"; exit 1; fi
-	@$(MAKE) -C $(CORE_DIR) config ARCH=$(ARCH) SMP=$(SMP) MEM_SIZE=$(MEM_SIZE) DBG=$(DBG)
+	@$(MAKE) -C $(CORE_DIR) config ARCH=$(ARCH) SMP=$(SMP) MEM_SIZE=$(MEM_SIZE) DBG=$(DBG) CMDLINE="$(CONFIG_CMDLINE)"
 	@python3 $(SCRIPT_CONFIG_DIR)/configure_root.py $(ROOT_DIR) $(ARCH)
 	@python3 $(CORE_DIR)/script/config/config_summary.py $(CORE_DIR) $(ROOT_BUILD_DIR) $(ROOT_DIR)/Makefile.root.env >/dev/null
 
@@ -117,8 +139,8 @@ have_user_payload:
 build: root_dirs
 	@if [ -z "$(CORE_CONFIG_ARCH)" ] || [ "$(CORE_CONFIG_ARCH)" != "$(ARCH)" ] || [ -z "$(CORE_CONFIG_SMP)" ] || [ "$(CORE_CONFIG_SMP)" != "$(SMP)" ]; then \
 		$(MAKE) -C $(CORE_DIR) mrproper; \
-		$(MAKE) config ARCH=$(ARCH) SMP=$(SMP) MEM_SIZE=$(MEM_SIZE) DBG=$(DBG) && \
-		$(MAKE) build ARCH=$(ARCH) SMP=$(SMP) MEM_SIZE=$(MEM_SIZE) DBG=$(DBG); \
+		$(MAKE) config ARCH=$(ARCH) SMP=$(SMP) MEM_SIZE=$(MEM_SIZE) DBG=$(DBG) CMDLINE="$(CONFIG_CMDLINE)" && \
+		$(MAKE) build ARCH=$(ARCH) SMP=$(SMP) MEM_SIZE=$(MEM_SIZE) DBG=$(DBG) CMDLINE="$(CONFIG_CMDLINE)"; \
 	else \
 		$(MAKE) build_lib $(CORE_BUILD_ARGS); \
 	fi

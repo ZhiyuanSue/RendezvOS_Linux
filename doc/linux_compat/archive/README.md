@@ -6,6 +6,7 @@ Do not use these for new implementation; they are kept for context only.
 
 | File | Superseded by |
 |------|----------------|
+| `BUSYBOX_BOOT_DEFERRALS.md` | **Archived 2026-08-09** — busybox bring-up 妥协账关闭；下一步 [`../NEXT_PLAN.md`](../NEXT_PLAN.md)、叙事 [`../BOOT_PATH_EVOLUTION.md`](../BOOT_PATH_EVOLUTION.md) |
 | `PHASE1_SUMMARY.md` | `SYSCALLS.md`, `ARCHITECTURE.md` |
 | `PHASE2_SUMMARY.md` | `SYSCALLS.md`, `SIGNAL_IMPLEMENTATION_STATUS.md` |
 | `PHASE2A_COMPLETION_REPORT.md` | `SYSCALLS.md` |

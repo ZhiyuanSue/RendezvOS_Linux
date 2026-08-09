@@ -35,12 +35,10 @@
 
 i64 vfs_backend_ipc_call(vfs_backend_req_t *req);
 
-/* Unique vfs_cli_k_j<seq> for coop nested VFS→backend (per parked job). */
-Message_Port_t *vfs_backend_ipc_job_reply_port(u32 job_seq);
-
 /*
- * Start nested backend RPC from a coop job (try_send path).
- * SUCCESS → NESTED_RECV; -E_REND_AGAIN → NESTED_SEND / slot busy.
+ * Start nested backend RPC from a coop job (port try_send request; nest-token
+ * reply via transfer to vfs listen). SUCCESS → NESTED_RECV; -E_REND_AGAIN →
+ * NESTED_SEND / slot busy.
  */
 error_t vfs_backend_ipc_coop_nested(ipc_rpc_coop_job_t *job,
                                     vfs_backend_req_t *req);
@@ -60,8 +58,9 @@ i64 vfs_backend_ipc_register(const char *port_name, const char *fstype,
 
 /*
  * Leaf request–reply coop loop: decode via vfs_backend_ipc_rpc_handler then
- * blocking ipc_rpc_reply (IPC_RPC_COOP_REPLIED). Do not use NEED_REPLY/try_send
- * here: nested VFS callers only try_recv and never wait on the reply port.
+ * reply. Nested callers (TLV 't' = @n<cookie>) get
+ * ipc_rpc_nest_reply_transfer → vfs listen; sync callers get blocking
+ * ipc_rpc_reply. Both return IPC_RPC_COOP_REPLIED.
  * @q must be unique per server thread.
  */
 void vfs_backend_ipc_coop_server_loop(const char *listen_port_name,

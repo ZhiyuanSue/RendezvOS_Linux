@@ -4,7 +4,7 @@
 > **Last updated**: 2026-07-27  
 > **Design**: [`SYSCALL_USER_RETURN_AND_EXECVE.md`](SYSCALL_USER_RETURN_AND_EXECVE.md)  
 > **Roadmap**: [`SYSCALLS.md`](SYSCALLS.md) · **Index**: [`PROGRESS.md`](PROGRESS.md)  
-> **Busybox Path B 妥协**: [`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md) §P0
+> **Busybox bring-up（已归档）**: [`archive/BUSYBOX_BOOT_DEFERRALS.md`](archive/BUSYBOX_BOOT_DEFERRALS.md)；下一步 [`NEXT_PLAN.md`](NEXT_PLAN.md)
 
 ---
 

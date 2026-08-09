@@ -1,23 +1,23 @@
-# Busybox 启动 — 临时妥协与待修项
+# Busybox 启动 — 临时妥协与待修项（已归档）
 
-> **Status**: busybox `/init` + 用户态 `run_all` 已通（更新 **2026-08-03**）  
-> **目标**: 回收 Path B / stub / 同步 VFS 等 demo 妥协，逼近真 initramfs  
-> **演进叙事**: [`BOOT_PATH_EVOLUTION.md`](BOOT_PATH_EVOLUTION.md)  
-> **相关**: [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) · [`VFS_DYNAMIC_STORAGE.md`](VFS_DYNAMIC_STORAGE.md) · [`EXECVE_IMPLEMENTATION_STATUS.md`](EXECVE_IMPLEMENTATION_STATUS.md) · [`USER_TESTS.md`](USER_TESTS.md) · [`SYSCALLS.md`](SYSCALLS.md) · [`protocols/IPC_RPC_FRAMEWORK.md`](protocols/IPC_RPC_FRAMEWORK.md) · [`doc/ai/DECISIONS.md`](../ai/DECISIONS.md)
+> **Status**: **ARCHIVED**（2026-08-09）— busybox bring-up 妥协账关闭  
+> **结论**: 初步启动 busybox 改造视为完成；后续见 [`../NEXT_PLAN.md`](../NEXT_PLAN.md)  
+> **演进叙事**: [`../BOOT_PATH_EVOLUTION.md`](../BOOT_PATH_EVOLUTION.md)  
+> **相关（历史）**: [`../INITRAMFS_PLAN.md`](../INITRAMFS_PLAN.md) · [`../VFS_DYNAMIC_STORAGE.md`](../VFS_DYNAMIC_STORAGE.md) · [`../EXECVE_IMPLEMENTATION_STATUS.md`](../EXECVE_IMPLEMENTATION_STATUS.md) · [`../USER_TESTS.md`](../USER_TESTS.md) · [`../SYSCALLS.md`](../SYSCALLS.md) · [`../protocols/IPC_RPC_FRAMEWORK.md`](../protocols/IPC_RPC_FRAMEWORK.md) · [`../../ai/DECISIONS.md`](../../ai/DECISIONS.md)
 
-本文记录 **为尽快跑通 busybox demo 而做的妥协**。每一项都应在稳定后回收或正规化。  
-下文长节多为演进叙事；**以本节「剩余开放项」为准**，勿被旧「待做」段落误导。
+本文是 **为尽快跑通 busybox demo 而做的妥协** 的历史账本，**不再作 live 真源**。  
+文中「仍开放」在归档时重分类：交互 UART / `/dev` 等 → [`../NEXT_PLAN.md`](../NEXT_PLAN.md)（额外或主线可选）；勿再当作 busybox P0 阻塞项。
 
 ---
 
-## 剩余开放项一览（2026-08-03）
+## 归档时状态一览（2026-08-09）
 
-### 已收（不再当开放项）
+### 已收（busybox gate 相关）
 
 | 项 | 落点 |
 |----|------|
 | `/init` → `bin/busybox` symlink | rootfs pack |
-| 默认 boot：`sh /tests/run_all.sh` | `linux_boot.c`（尚无 cmdline 覆盖） |
+| 默认 boot：`sh /tests/run_all.sh`；可用 core `cmdline_ptr`（QEMU `CMDLINE`）覆盖 | `linux_boot.c` |
 | pack 生成 `run_all.sh`（显式 `run_one`，禁 ash `while read`） | `pack_user_rootfs.py` |
 | PID1：空 task + `linux_exec_replace_image("/init")` | 与 `sys_execve` 同栈/auxv 路径 |
 | IPC reply 会合楔死（ops gate / uninterruptible / 不弃 recv） | core + `IPC_RPC_FRAMEWORK` |
@@ -25,37 +25,41 @@
 | pathname 按页 chunk 至 NUL | `linux_mm_load_cstring_from_user` |
 | auxv：`AT_HWCAP` / `AT_EXECFN` / 伪随机 `AT_RANDOM` | 硬件熵仍可选（见下） |
 | VFS 定长 BSS / 栈炸弹；link_app / `_num_app`；内核 `tests/` 编排器 | 已删或迁 `linux_boot` |
-| **VFS listen coop**：全部 listen opcode（含 READLINK/MOUNT/UMOUNT/close/lseek/fstat）；leaf **`IPC_RPC_COOP_REPLIED`** | `vfs_coop*.c` · DECISIONS 2026-08-02/03 |
+| **VFS listen coop**：全部 listen opcode；leaf nest reply = **transfer**；sync = blocking `ipc_rpc_reply` | `vfs_coop*.c` · DECISIONS 2026-08-02/03/06 |
 
-### 仍开放
+### 归档时迁出（不再算 busybox 妥协开放项）
 
-| 优先级 | 项 | 现状 | 应改为 |
-|--------|-----|------|--------|
-| **P0** | **cmdline → boot argv** | argv 硬编码在 `linux_boot` | 读内核/QEMU bootargs 覆盖（**可能需 core**） |
-| **P0** | **Path B / 进用户协议收口** | PID1 已走 replace_image；loader 侧仍可能有 fake return + append.init / `PT_NOTE` 分流痕迹 | 统一「execve 级」进用户；去掉二次 bootstrap 特例 |
-| **P1** | **CONSOLE / 交互** | 无真 UART RX；CONSOLE_IN=`POLLHUP`，`read(0)`→EOF | `/dev/console` + 真 RX；交互 ash |
-| **P1** | **auxv / getrandom 熵** | 伪随机够跑 glibc/busybox | 硬件或更好熵源（可选） |
-| **P1** | **aarch64 SMP 体感慢** | `SMP=1` 快；多核 idle×QEMU | 日常 `SMP=1`；core idle/WFI 另案 |
-| **P2** | **busybox 构建妥协** | `CONFIG_STATIC=y`；`CONFIG_TC=n`（无 CBQ UAPI）；默认 `BUSYBOX_FULL=1` | 动态链接 / 真 UAPI 后再开 `tc`；`busybox_full:false` 可缩包 |
-| **P3** | **`/dev/*`** | 未做 | `/dev/null`、`/dev/console` 等 |
-| **P3** | **shebang** | 靠显式 `busybox sh script` | execve 解 `#!`（可选） |
-| **P3** | **头文件分层** | server / compat / 公共协议混用 | 整理时再拆（非功能阻塞） |
-| **扩展** | readdir O(n²)、tombstone、ramfs/pcache **256KiB** 上限 | 不挡 `run_all` | 见 `VFS_DYNAMIC_STORAGE.md` |
-| **演进** | nested RPC **thread 直发** | 现 reply-port + try_recv / leaf 阻塞 reply | 控制面拿 `Thread_Base*` 后 `ipc_system_deliver_to`（`lockfree-ipc` §8.3）；**非**当前必修 |
+| 原优先级 | 项 | 迁往 |
+|----------|-----|------|
+| P1 | CONSOLE / UART RX / 交互 ash | [`../NEXT_PLAN.md`](../NEXT_PLAN.md) §3（额外：uart_server） |
+| P1 | auxv / getrandom 熵 | 可选 polish；不挡 gate |
+| P1 | aarch64 SMP 体感慢 | [`../NEXT_PLAN.md`](../NEXT_PLAN.md) §2 D |
+| P2 | busybox 构建（static / 关 tc） | [`../NEXT_PLAN.md`](../NEXT_PLAN.md) §2 E |
+| P3 | `/dev/*`、shebang、头文件分层 | VFS / exec 主线可选 |
+| 扩展 | readdir / tombstone / 256KiB | [`../VFS_DYNAMIC_STORAGE.md`](../VFS_DYNAMIC_STORAGE.md) |
+| 演进 | nested request 直发 | 刻意不做，见 NEXT_PLAN §5 |
 
-**建议下一步（按序）**
+**归档后下一步** → [`../NEXT_PLAN.md`](../NEXT_PLAN.md)（含 core TODO 索引 + UART server）。
 
-1. **cmdline → argv**（有 core 依赖先提方案再动）  
-2. **Path B / 进用户收口**（正规化 loader，去掉 demo 特例）  
-3. **`/dev/console` + RX**（要交互 shell 时再做）
+### Exec / 进用户：已收 vs 仍算「特例」的
+
+| 项 | 状态 |
+|----|------|
+| 内核 `gen_task_from_elf` 起测例 / busybox demo | ✅ 已删；测例经 `/init`→`run_all`→**用户态 `execve`** |
+| append.init 二次 bootstrap / PT_NOTE 分流搭栈 | ✅ 已删；栈只由 `linux_exec_replace_image` 建 |
+| PID1 镜像+argv/auxv | ✅ `linux_exec_replace_image("/init")`（与 `sys_execve` 同路） |
+| boot argv | ✅ make 默认注入 `CMDLINE=sh /tests/run_all.sh`；`cmdline_ptr` 覆盖 |
+| PID1 **首次落入用户** | 仍用 Path B：`arch_return_to_user`（无 syscall 帧，与 fork 子线程首次进用户同类；**不是**再走一套 loader） |
+
+**不是**「再搞一套内核 spawn ELF」；用户态内容已经统一。剩下的 Path B drop 是「内核线程第一次进 EL0」的出口，不是旧 demo 特例。
 
 ---
 
 ## P0 — IPC request–reply 偶发卡死（busybox `run_all`，2026-08-01）
 
-> 与 Path B 共存的 **协议/生命周期缺口**；调度器空转是表象。权威协议：[`protocols/IPC_RPC_FRAMEWORK.md`](protocols/IPC_RPC_FRAMEWORK.md) §6–§8。  
+> 与 Path B 共存的 **协议/生命周期缺口**；调度器空转是表象。权威协议：[`protocols/IPC_RPC_FRAMEWORK.md`](../protocols/IPC_RPC_FRAMEWORK.md) §6–§8。  
 > **推进方式**：下面子项 **一个一个** 对齐再改，不打包一次改完。  
-> **状态（2026-08-03）**：子项 1–5 ✅；另见 leaf `IPC_RPC_COOP_REPLIED`（nested try_recv 对端必须阻塞 send）。
+> **状态（2026-08-06）**：子项 1–5 ✅；nested reply 已改为 `ipc_transfer_message`（`@n` token）；request 仍走 backend listen port。
 
 ### 现象（已用三件套确认）
 
@@ -205,7 +209,7 @@ QEMU 默认 **`MEM_SIZE=512M`**（仅 `run` 的 `-m`，**不必**为改内存而
 **仍缺 / 待正规化**:
 
 - demo argv 仍硬编码在 bootstrap（跨 `gen_task_from_elf` 传 pending **不可行**，除非挂在 thread/task 上）
-- 真随机熵源（`getrandom` / 硬件）；cmdline 覆盖 Path B argv
+- 真随机熵源（`getrandom` / 硬件）
 - 去掉 fake return + 二次 bootstrap，改 execve 或 core 统一协议
 
 ### 3. 「spawn」应是什么？（说明）
@@ -278,7 +282,7 @@ QEMU 默认 **`MEM_SIZE=512M`**（仅 `run` 的 `-m`，**不必**为改内存而
 
 ## P1 — initramfs / VFS 容量妥协（✅ 已回收 → 动态表）
 
-> **2026-07-27 回收完成**：`vfs_slice_table`（page_slice 可增长）覆盖 S0–S3。权威说明见 [`VFS_DYNAMIC_STORAGE.md`](VFS_DYNAMIC_STORAGE.md)。下列为历史记录。
+> **2026-07-27 回收完成**：`vfs_slice_table`（page_slice 可增长）覆盖 S0–S3。权威说明见 [`VFS_DYNAMIC_STORAGE.md`](../VFS_DYNAMIC_STORAGE.md)。下列为历史记录。
 
 ### cpio / namespace 上限（历史）
 
@@ -302,7 +306,7 @@ QEMU 默认 **`MEM_SIZE=512M`**（仅 `run` 的 `-m`，**不必**为改内存而
 | ramfs / pcache 256KiB 文件上限 | 策略上限 |
 | cpio/ramfs 扁平 `path[]` | 主键，有意保留 |
 
-详见 [`VFS_DYNAMIC_STORAGE.md`](VFS_DYNAMIC_STORAGE.md)「建议后续」。
+详见 [`VFS_DYNAMIC_STORAGE.md`](../VFS_DYNAMIC_STORAGE.md)「建议后续」。
 
 ---
 
@@ -337,7 +341,7 @@ QEMU 默认 **`MEM_SIZE=512M`**（仅 `run` 的 `-m`，**不必**为改内存而
 - 打印 **`exit_code`**；`RENDEZVOS_ROOT_AUTO_POWEROFF` 后 shutdown  
 - **待修**：独立 demo / `execve`；busybox 失败时不 auto poweroff（可配置）
 
-**相关**：[`USER_TESTS.md`](USER_TESTS.md) · `script/config/pack_user_rootfs.py`（生成 `rootfs/tests/manifest`）
+**相关**：[`USER_TESTS.md`](../USER_TESTS.md) · `script/config/pack_user_rootfs.py`（生成 `rootfs/tests/manifest`）
 
 ---
 
@@ -355,7 +359,7 @@ QEMU 默认 **`MEM_SIZE=512M`**（仅 `run` 的 `-m`，**不必**为改内存而
 | 等结束 | `test_cookie` | shell 顺序 / wait |
 | busybox demo | 另一次内核 spawn | 已并入 `/init` 路径 |
 
-**仍属妥协**：进用户 Path B 痕迹；无 cmdline；无 shebang（显式 `sh script`）。
+**仍属妥协**：进用户 Path B 痕迹；无 shebang（显式 `sh script`）。
 
 ---
 
@@ -368,14 +372,14 @@ QEMU 默认 **`MEM_SIZE=512M`**（仅 `run` 的 `-m`，**不必**为改内存而
 | 阶段 | 内容 | 状态 |
 |------|------|------|
 | **A** | 内核只启 `/init`→`sh /tests/run_all.sh`；pack 生成脚本 | ✅ |
-| **B** | 去掉 Path B 特例；cmdline 覆盖 argv；缩 loader 特例 | 开放（见文首） |
+| **B** | 去掉 Path B 特例；缩 loader 特例 | 开放（见文首） |
 | **C** | `/dev`、交互 console、可选 shebang；harness 残留全清 | 开放 |
 
 ### 迁移前曾需验证（多数已过）
 
 1. musl 测例经用户态 `execve`（非纯 `gen_task_from_elf`）— 随 `run_all` 路径验证  
 2. ash 跑脚本 / fork / wait — ✅（编排用显式 `run_one`）  
-3. SMP 与纯 shell 单进程顺序 — 仍按 [`USER_TESTS.md`](USER_TESTS.md) 单独决策  
+3. SMP 与纯 shell 单进程顺序 — 仍按 [`USER_TESTS.md`](../USER_TESTS.md) 单独决策  
 
 ---
 
@@ -384,7 +388,7 @@ QEMU 默认 **`MEM_SIZE=512M`**（仅 `run` 的 `-m`，**不必**为改内存而
 | 项 | 状态 |
 |----|------|
 | `/dev/null`、`/dev/console` | 未做 |
-| 内核 cmdline → argv | 未做（见文首 P0） |
+| 内核 cmdline → argv | ✅ `cmdline_ptr` 空白分词覆盖 `/init` argv；空则默认 `sh /tests/run_all.sh` |
 | `read(0)` UART RX | EOF / POLLHUP stub |
 | 完整 `mount` / umount | 部分；listen 上仍多为同步路径 |
 | shebang `#!` | 未做 |
@@ -401,7 +405,7 @@ QEMU 默认 **`MEM_SIZE=512M`**（仅 `run` 的 `-m`，**不必**为改内存而
 
 **仍保留（不同机制）**：`build/rootfs.cpio` 经 Makefile 生成的 `rootfs_cpio.S` **`.incbin` 进内核**——这是 initramfs 镜像嵌入，不是测例 `link_app`。
 
-详见 [`FILE_LOADING.md`](FILE_LOADING.md)、[`BOOT_PATH_EVOLUTION.md`](BOOT_PATH_EVOLUTION.md)。
+详见 [`FILE_LOADING.md`](../FILE_LOADING.md)、[`BOOT_PATH_EVOLUTION.md`](../BOOT_PATH_EVOLUTION.md)。
 
 ---
 
@@ -445,7 +449,7 @@ QEMU 默认 **`MEM_SIZE=512M`**（仅 `run` 的 `-m`，**不必**为改内存而
 | 2026-08-02 | **boot 命名重构**：删 `linux_layer/tests/*` 与 `test_*.h`；`linux_boot.c` + `boot_wait_cookie`；默认 `BUSYBOX_FULL=1` |
 | 2026-08-02 | **清除 link_app 整套**：删脚本/`task_test`/`_num_app`；`user.py` 仅 cpio/busybox；保留 rootfs.cpio `.incbin` |
 | 2026-08-02 | **不动 core / 不迁 VFS coop**：pathname 按页 chunk；auxv `AT_HWCAP`/`AT_EXECFN`+加强 `AT_RANDOM`；`init_thread`→`boot_thread` |
-| 2026-08-01 | **工作区盘点**：[`PROGRESS.md`](PROGRESS.md) §8（core ops gate / compat IPC / boot·FS stub 切分）；aarch64 相对 incbin 体感变慢记入开放项 |
+| 2026-08-01 | **工作区盘点**：[`PROGRESS.md`](../PROGRESS.md) §8（core ops gate / compat IPC / boot·FS stub 切分）；aarch64 相对 incbin 体感变慢记入开放项 |
 | 2026-08-01 | **验证**：busybox `run_all` 跑完 `pass=41 fail=11`，IPC 楔死不再出现；失败簇为 `#PF 0x57f485` + mount -19 + ch2b_exit 255 |
 | 2026-08-01 | **子项 3–4 + EXIT_NOTIFY**：RPC post-send 不弃 recv；reply/EXIT_NOTIFY 分配重试；notify 失败 fallback pending+poke；`PORT_CLOSED` 不当事故丢消息 |
 | 2026-08-01 | **子项 2 审阅对齐**：life 仅 REGISTERED 可 begin；`ops_count` 命名；doc 去掉「今天不 clean」过时叙述；手写并发注释不动 |

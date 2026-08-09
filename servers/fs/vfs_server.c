@@ -32,6 +32,11 @@ extern struct Port_Table *global_port_table;
 
 static ipc_rpc_coop_queue_t vfs_server_coop_q;
 
+Thread_Base *vfs_server_thread_get(void)
+{
+        return vfs_server_thread_ptr;
+}
+
 static void vfs_server_thread_entry(void)
 {
         vfs_coop_queue_prepare(&vfs_server_coop_q);

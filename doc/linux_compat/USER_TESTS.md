@@ -3,7 +3,7 @@
 本文件描述 **initramfs 里的用户态 ELF 测例**（`rootfs/tests/`）如何被编排与验证。  
 **内核侧不再有 test harness**：PID1 启动在 `linux_layer/init/linux_boot.c`。
 
-**相关**: [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) · [`ROOTFS.md`](ROOTFS.md) · [`FILE_LOADING.md`](FILE_LOADING.md) · [`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md)
+**相关**: [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) · [`ROOTFS.md`](ROOTFS.md) · [`FILE_LOADING.md`](FILE_LOADING.md) · [`NEXT_PLAN.md`](NEXT_PLAN.md) · [`archive/BUSYBOX_BOOT_DEFERRALS.md`](archive/BUSYBOX_BOOT_DEFERRALS.md)
 
 ## Boot 与套件
 

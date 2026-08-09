@@ -18,8 +18,9 @@
  * Listen models (no per-message OS worker pool — do not reintroduce):
  *   ipc_server_coop_loop       — one-way: try_recv + poll parked work
  *   ipc_rpc_coop_server_loop   — request–reply coop (park reply / nested)
- *   ipc_rpc_server_loop        — transitional blocking recv→handler→reply
- *                                (VFS/backends until they migrate)
+ *
+ * Nested reply uses enqueue + ipc_transfer_message to the nest caller
+ * (see nest token @n*); nested request still uses listen-port try_send.
  */
 
 #define IPC_RPC_RESP_OPCODE_DEFAULT 0u
@@ -97,13 +98,6 @@ bool ipc_rpc_send_reply(u16 module, u16 resp_opcode, const char* resp_fmt,
 void ipc_rpc_reply(const kmsg_t* km, const char* reply_port_name, u16 module,
                    u16 resp_opcode, const char* resp_fmt, i64 result);
 
-/*
- * Handler for request–reply servers. Decode request, set *reply_port_out from
- * TLV 't', return i64 result for response (may be negative LINUX errno).
- */
-typedef i64 (*ipc_rpc_server_handler_t)(u16 opcode, const kmsg_t* req,
-                                        char** reply_port_out);
-
 typedef void (*ipc_server_message_fn_t)(Message_t* msg, u16 service_id);
 
 /*
@@ -121,15 +115,6 @@ void ipc_server_coop_loop(const char* listen_port_name,
                           ipc_server_message_fn_t on_message,
                           ipc_server_poll_fn_t poll_pending, void* poll_ctx);
 
-/*
- * Transitional request–reply listen: blocking recv → handler → blocking
- * reply on the same thread. Does not spawn workers. Used by VFS/backends
- * until they migrate to ipc_rpc_coop_server_loop.
- */
-void ipc_rpc_server_loop(const char* listen_port_name, u16 service_id,
-                         u16 resp_opcode, const char* resp_fmt,
-                         ipc_rpc_server_handler_t handler);
-
 /* ========================================================================
  * Request–reply cooperative server (park reply / nested RPC)
  *
@@ -138,15 +123,25 @@ void ipc_rpc_server_loop(const char* listen_port_name, u16 service_id,
  * queue serializes that slot (send_owner). Jobs waiting for reply keep only
  * (reply_port, result) until they own the slot.
  *
- * Nested: try_send to backend then try_recv on a dedicated reply port; while
- * in NESTED_RECV the send slot is free for client replies.
+ * Nested request: still port try_send to the backend listen port (leaf may
+ * be blocked in recv_msg — pure transfer would not wake it).
+ *
+ * Nested reply: leaf enqueue + ipc_transfer_message to the nest caller
+ * thread (VFS listen). Caller is in NESTED_RECV with parked coop poll, so
+ * it drains recv_msg_queue — no reply port / try_recv rendezvous.
+ * TLV 't' carries a nest token (@n<cookie>), not a registered port name.
  * ======================================================================== */
+
+/* Nest-reply kmsg (leaf → nest caller). Demux by cookie among NESTED_RECV jobs. */
+#define IPC_RPC_NEST_RESP_OPCODE 0xFFFDu
+#define IPC_RPC_NEST_RESP_FMT    "qq" /* cookie, result */
+#define IPC_RPC_NEST_TOKEN_PFX   "@n"
 
 typedef enum {
         IPC_RPC_COOP_ST_NONE = 0,
         IPC_RPC_COOP_ST_NEED_REPLY, /* result ready; need try_send to client */
         IPC_RPC_COOP_ST_NESTED_SEND, /* nested req on send queue; try_send */
-        IPC_RPC_COOP_ST_NESTED_RECV, /* waiting try_recv on nested reply */
+        IPC_RPC_COOP_ST_NESTED_RECV, /* waiting nest reply on recv queue */
 } ipc_rpc_coop_job_state_t;
 
 typedef enum {
@@ -154,11 +149,12 @@ typedef enum {
         IPC_RPC_COOP_HANDLED = 0,
         /* Job stays parked (nested in flight / cookie work); no auto-reply. */
         IPC_RPC_COOP_PARKED = 1,
-        /*
-         * Handler already sent the client reply (typically blocking
-         * ipc_rpc_reply). Framework only releases the job — do not
-         * set_result / try_send again.
-         */
+/*
+ * Handler already completed the reply:
+ *   - nest: ipc_rpc_nest_reply_transfer
+ *   - sync client: blocking ipc_rpc_reply
+ * Framework only releases the job — do not set_result / try_send again.
+ */
         IPC_RPC_COOP_REPLIED = 2,
 } ipc_rpc_coop_disp_t;
 
@@ -172,11 +168,10 @@ typedef struct ipc_rpc_coop_job {
         char reply_port[PORT_NAME_LEN_MAX];
         i64 result;
         void* cookie; /* server-private */
-        /* Nested RPC */
+        /* Nested RPC (request via backend listen port; reply via transfer) */
         char nested_server[PORT_NAME_LEN_MAX];
-        Message_Port_t* nested_reply; /* held while nested active */
-        u16 nested_resp_opcode;
-        char nested_resp_fmt[8];
+        u64 nest_cookie;
+        char nest_token[PORT_NAME_LEN_MAX]; /* TLV 't' = @n<cookie> */
         i64 nested_result;
         bool reply_payload_queued; /* listen send queue holds our msg */
 } ipc_rpc_coop_job_t;
@@ -216,11 +211,23 @@ ipc_rpc_coop_job_t* ipc_rpc_coop_job_create(ipc_rpc_coop_queue_t* q,
 /* Mark NEED_REPLY (clears nested state except held ports released). */
 void ipc_rpc_coop_job_set_result(ipc_rpc_coop_job_t* job, i64 result);
 
-/* Unlink, drop send ownership / nested port, free. */
+/* Unlink, drop send ownership / nest state, free. */
 void ipc_rpc_coop_job_release(ipc_rpc_coop_job_t* job);
+
+bool ipc_rpc_is_nest_token(const char* name);
+u64 ipc_rpc_nest_token_cookie(const char* name);
+
+/*
+ * Leaf → nest-caller reply: enqueue on self + ipc_transfer_message(self, peer).
+ * Retries with schedule() on transient failure. Peer must be draining its
+ * recv queue (coop NESTED_RECV poll) — transfer does not wake recv_msg.
+ */
+bool ipc_rpc_nest_reply_transfer(Thread_Base* peer, u64 cookie, i64 result);
 
 /*
  * Begin nested RPC from the listen thread.
+ * Request: try_send to @server_port_name (port rendezvous).
+ * Reply: leaf uses nest token + ipc_rpc_nest_reply_transfer to this thread.
  * SUCCESS → job NESTED_RECV (send slot free).
  * -E_REND_AGAIN → NESTED_SEND if we own the send slot; or slot busy (no state
  * change — caller should PARKED and retry later).
@@ -228,23 +235,22 @@ void ipc_rpc_coop_job_release(ipc_rpc_coop_job_t* job);
  */
 error_t ipc_rpc_coop_nested_call_va(ipc_rpc_coop_job_t* job,
                                     const char* server_port_name,
-                                    Message_Port_t* nested_reply,
                                     u16 req_opcode, const char* req_fmt,
-                                    u16 resp_opcode, const char* resp_fmt,
                                     va_list ap);
 
 error_t ipc_rpc_coop_nested_call(ipc_rpc_coop_job_t* job,
-                                 const char* server_port_name,
-                                 Message_Port_t* nested_reply, u16 req_opcode,
-                                 const char* req_fmt, u16 resp_opcode,
-                                 const char* resp_fmt, ...);
+                                 const char* server_port_name, u16 req_opcode,
+                                 const char* req_fmt, ...);
 
 /*
- * Progress NEED_REPLY / NESTED_* jobs. Never schedule()-spin.
- * module/resp_* are the *client* reply kmsg (VFS: service_id + VFS_RESP).
+ * Progress NEED_REPLY / NESTED_* jobs (includes draining nest-reply inbox).
+ * Never schedule()-spin. module/resp_* are the *client* reply kmsg.
  */
 void ipc_rpc_coop_queue_poll(ipc_rpc_coop_queue_t* q, u16 module,
                              u16 resp_opcode, const char* resp_fmt);
+
+/* True if @msg was a nest reply and was applied (caller must ref_put msg). */
+bool ipc_rpc_coop_try_apply_nest_resp(ipc_rpc_coop_queue_t* q, Message_t* msg);
 
 /*
  * Request–reply coop listen. poll_extra runs after queue_poll each turn

@@ -198,52 +198,43 @@ i64 result = vfs_ipc_request_response(KMSG_OP_VFS_GETCWD,
 
 ### 🖥️ 服务端使用模板
 
-**Request-Reply服务器**（如VFS）：
+**Request-Reply（coop）**（如 VFS）：
 ```c
-// 1. 定义handler处理不同opcode
-static i64 my_rpc_handler(u16 opcode, const kmsg_t* km, char** reply_port_out)
+static ipc_rpc_coop_queue_t g_q;
+
+static ipc_rpc_coop_disp_t on_req(ipc_rpc_coop_job_t *job, u16 opcode,
+                                  const kmsg_t *km, i64 *result_out)
 {
-        u64 param1, param2;
-        i64 result = 0;
-
-        switch (opcode) {
-        case MY_OP_GETCWD:
-                // 解码参数：业务参数 + reply port ('t')
-                ipc_serial_decode(km->payload, km->hdr.payload_len,
-                                "put", &param1, &param2, reply_port_out);
-                // 处理请求...
-                result = 0;  // 返回Linux errno或0
-                break;
-        default:
-                return -LINUX_ENOSYS;
-        }
-
-        return result;
+        error_t e = ipc_rpc_coop_nested_call(job, BACKEND_PORT, BE_OP, "s",
+                                             path);
+        if (e == REND_SUCCESS || e == -E_REND_AGAIN)
+                return IPC_RPC_COOP_PARKED;
+        *result_out = -LINUX_ENOSYS;
+        return IPC_RPC_COOP_HANDLED;
 }
 
-// 2. 服务器线程入口
 static void my_server_thread(void)
 {
-        ipc_rpc_server_loop(MY_SERVER_PORT_NAME,  // 监听端口名
-                           my_service_id,          // 服务ID
-                           MY_RESP_OPCODE,          // 响应opcode
-                           "q",                    // 响应格式
-                           my_rpc_handler);        // handler函数
+        ipc_rpc_coop_queue_init(&g_q);
+        ipc_rpc_coop_server_loop(MY_SERVER_PORT_NAME,
+                                 my_service_id,
+                                 MY_RESP_OPCODE,
+                                 "q",
+                                 on_req,
+                                 &g_q,
+                                 NULL,
+                                 NULL);
 }
 
-// 3. 初始化服务器
 static void my_server_init(void)
 {
-        // 创建并注册服务器端口
         Message_Port_t* port = create_message_port(MY_SERVER_PORT_NAME);
         my_service_id = port->service_id;
         register_port(global_port_table, port);
-
-        // 创建服务器线程
         gen_thread_from_func(&server_thread_ptr,
-                            (kthread_func)my_server_thread,
-                            "my_server_thread",
-                            percpu(core_tm), NULL);
+                             (kthread_func)my_server_thread,
+                             "my_server_thread",
+                             percpu(core_tm), NULL);
 }
 DEFINE_INIT(my_server_init);
 ```
@@ -265,14 +256,16 @@ void clean_server_thread(void)
    - Listen：`{service}_c{cpu}`（或文档标明的全局 `{service}_listen`）
    - Worker：`{service}_c{cpu}_w{wid}`
    - Client reply：`{service}_cli_{pid}`
+   - Nested VFS→backend reply：TLV `t` = `@n<cookie>`（**不**注册 port；leaf `ipc_transfer_message`）
    - 历史名如 `*_server_port` / `ipc_wk_*` 仅过渡期；新代码勿再发明第三套
 
 2. **消息格式**：
-   - 请求：业务参数格式 + `'t'`（reply port）
-   - 响应：默认`"q"`（单个i64），可自定义
+   - 请求：业务参数格式 + `'t'`（reply port 名，或 nest token `@n*`）
+   - 响应：默认`"q"`（单个 i64）；nest reply 用框架 `IPC_RPC_NEST_RESP_*`
 
 3. **错误处理**：
-   - 服务端必须使用`ipc_rpc_reply`发送响应（blocking rendezvous；遗弃 client 靠 reply-port teardown 唤醒）
+   - 对 blocking-recv client：`ipc_rpc_reply` 或 coop `NEED_REPLY`+`try_send`
+   - 对 nested VFS：`ipc_rpc_nest_reply_transfer`（勿对 nest 用 reply-port rendezvous）
    - 避免客户端卡在`recv_msg`等待
 
 4. **引用计数**：

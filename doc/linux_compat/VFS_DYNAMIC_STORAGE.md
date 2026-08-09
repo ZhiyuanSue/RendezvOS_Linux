@@ -1,7 +1,7 @@
 # VFS 动态存储（page_slice 表）
 
 > **Status**: S0–S3 已落地（2026-07-27）  
-> **从属**: 原 busybox 容量妥协，见 [`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md) §P1 容量（已回收）  
+> **从属**: 原 busybox 容量妥协，见 [`archive/BUSYBOX_BOOT_DEFERRALS.md`](archive/BUSYBOX_BOOT_DEFERRALS.md)（已归档；容量项已回收）  
 > **不阻塞**: busybox Path B / execve / `run_all.sh` 回收（那些仍是更高优先级）
 
 ## 问题

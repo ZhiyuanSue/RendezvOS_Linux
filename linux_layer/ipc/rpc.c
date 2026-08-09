@@ -790,95 +790,6 @@ void ipc_server_coop_loop(const char* listen_port_name,
         }
 }
 
-/*
- * Same-thread blocking request–reply. Not a worker pool: handler and
- * send_msg(reply) run on the listen thread (can wedge the whole service).
- */
-void ipc_rpc_server_loop(const char* listen_port_name, u16 service_id,
-                         u16 resp_opcode, const char* resp_fmt,
-                         ipc_rpc_server_handler_t handler)
-{
-        Message_Port_t* port = NULL;
-
-        if (!listen_port_name || !handler) {
-                return;
-        }
-
-        while (!port) {
-                port = thread_lookup_port(listen_port_name);
-                if (!port) {
-                        schedule(percpu(core_tm));
-                }
-        }
-
-        pr_info("[IPC-RPC] server loop on '%s' service_id=%u\n",
-                listen_port_name,
-                service_id);
-
-        while (1) {
-                error_t ret = recv_msg(port);
-                if (ret != REND_SUCCESS) {
-                        ref_put(&port->refcount, free_message_port_ref);
-                        port = NULL;
-                        while (!port) {
-                                port = thread_lookup_port(listen_port_name);
-                                if (!port) {
-                                        schedule(percpu(core_tm));
-                                }
-                        }
-                        continue;
-                }
-
-                while (1) {
-                        Message_t* msg = dequeue_recv_msg();
-                        const kmsg_t* km;
-                        char* reply_port = NULL;
-                        i64 result;
-
-                        if (!msg) {
-                                break;
-                        }
-
-                        km = kmsg_from_msg(msg);
-                        if (!km || km->hdr.module != service_id) {
-                                ipc_rpc_reply(km,
-                                              NULL,
-                                              service_id,
-                                              resp_opcode,
-                                              resp_fmt,
-                                              -LINUX_EIO);
-                                ref_put(&msg->ms_queue_node.refcount,
-                                        free_message_ref);
-                                continue;
-                        }
-
-                        if (linux_ipc_kmsg_is_port_closed(port, msg)) {
-                                ref_put(&msg->ms_queue_node.refcount,
-                                        free_message_ref);
-                                ref_put(&port->refcount, free_message_port_ref);
-                                port = NULL;
-                                while (!port) {
-                                        port = thread_lookup_port(
-                                                listen_port_name);
-                                        if (!port) {
-                                                schedule(percpu(core_tm));
-                                        }
-                                }
-                                break;
-                        }
-
-                        result = handler(km->hdr.opcode, km, &reply_port);
-                        ipc_rpc_reply(km,
-                                      reply_port,
-                                      service_id,
-                                      resp_opcode,
-                                      resp_fmt,
-                                      result);
-                        ref_put(&msg->ms_queue_node.refcount, free_message_ref);
-                }
-        }
-}
-
 /* ========================================================================
  * Request–reply cooperative server
  * ======================================================================== */
@@ -921,12 +832,123 @@ static void ipc_rpc_coop_clear_send_owner(ipc_rpc_coop_queue_t* q,
         }
 }
 
-static void ipc_rpc_coop_nested_release_port(ipc_rpc_coop_job_t* job)
+static void ipc_rpc_coop_nested_clear(ipc_rpc_coop_job_t* job)
 {
-        if (!job || !job->nested_reply)
+        if (!job)
                 return;
-        ref_put(&job->nested_reply->refcount, free_message_port_ref);
-        job->nested_reply = NULL;
+        job->nest_cookie = 0;
+        job->nest_token[0] = '\0';
+        job->nested_server[0] = '\0';
+}
+
+bool ipc_rpc_is_nest_token(const char* name)
+{
+        size_t i;
+
+        if (!name || name[0] != '@' || name[1] != 'n' || !name[2])
+                return false;
+        for (i = 2; name[i]; i++) {
+                if (name[i] < '0' || name[i] > '9')
+                        return false;
+        }
+        return true;
+}
+
+u64 ipc_rpc_nest_token_cookie(const char* name)
+{
+        u64 v = 0;
+        size_t i;
+
+        if (!ipc_rpc_is_nest_token(name))
+                return 0;
+        for (i = 2; name[i]; i++)
+                v = v * 10u + (u64)(name[i] - '0');
+        return v;
+}
+
+static bool ipc_rpc_format_nest_token(char* buf, size_t bufsize, u64 cookie)
+{
+        char digits[24];
+        u32 nd = 0;
+        u64 tmp = cookie;
+        u32 i;
+        size_t n;
+
+        if (!buf || bufsize < 4)
+                return false;
+        if (tmp == 0) {
+                digits[nd++] = '0';
+        } else {
+                while (tmp && nd < sizeof(digits)) {
+                        digits[nd++] = (char)('0' + (tmp % 10u));
+                        tmp /= 10u;
+                }
+        }
+        if (2u + nd >= bufsize)
+                return false;
+        buf[0] = '@';
+        buf[1] = 'n';
+        n = 2;
+        for (i = 0; i < nd; i++)
+                buf[n++] = digits[nd - 1u - i];
+        buf[n] = '\0';
+        return true;
+}
+
+bool ipc_rpc_nest_reply_transfer(Thread_Base* peer, u64 cookie, i64 result)
+{
+        Thread_Base* self = get_cpu_current_thread();
+        Msg_Data_t* md;
+        Message_t* msg;
+        error_t e;
+        bool enqueued = false;
+
+        if (!peer || !self)
+                return false;
+
+        for (;;) {
+                if (!enqueued) {
+                        md = kmsg_create(0,
+                                         IPC_RPC_NEST_RESP_OPCODE,
+                                         IPC_RPC_NEST_RESP_FMT,
+                                         (i64)cookie,
+                                         result);
+                        if (!md) {
+                                schedule(percpu(core_tm));
+                                continue;
+                        }
+                        msg = create_message_with_msg(md);
+                        ref_put(&md->refcount, md->free_data);
+                        if (!msg) {
+                                schedule(percpu(core_tm));
+                                continue;
+                        }
+                        e = enqueue_msg_for_send(msg);
+                        if (e != REND_SUCCESS) {
+                                ref_put(&msg->ms_queue_node.refcount,
+                                        free_message_ref);
+                                schedule(percpu(core_tm));
+                                continue;
+                        }
+                        enqueued = true;
+                }
+
+                e = ipc_transfer_message(self, peer);
+                if (e == REND_SUCCESS)
+                        return true;
+                if (e == -E_REND_AGAIN || e == -E_REND_NO_MSG) {
+                        /*
+                         * AGAIN: peer exiting / retry — msg in send_pending.
+                         * NO_MSG: pending cleared oddly; re-enqueue next loop.
+                         */
+                        if (e == -E_REND_NO_MSG)
+                                enqueued = false;
+                        schedule(percpu(core_tm));
+                        continue;
+                }
+                enqueued = false;
+                schedule(percpu(core_tm));
+        }
 }
 
 void ipc_rpc_coop_queue_init(ipc_rpc_coop_queue_t* q)
@@ -980,8 +1002,7 @@ void ipc_rpc_coop_job_set_result(ipc_rpc_coop_job_t* job, i64 result)
         if (!job)
                 return;
         ipc_rpc_coop_clear_send_owner(job->q, job);
-        ipc_rpc_coop_nested_release_port(job);
-        job->nested_server[0] = '\0';
+        ipc_rpc_coop_nested_clear(job);
         job->result = result;
         job->state = IPC_RPC_COOP_ST_NEED_REPLY;
 }
@@ -993,7 +1014,7 @@ void ipc_rpc_coop_job_release(ipc_rpc_coop_job_t* job)
         if (!job)
                 return;
         ipc_rpc_coop_clear_send_owner(job->q, job);
-        ipc_rpc_coop_nested_release_port(job);
+        ipc_rpc_coop_nested_clear(job);
         list_del_init(&job->node);
         if (alloc && alloc->m_free)
                 alloc->m_free(alloc, job);
@@ -1020,17 +1041,15 @@ static error_t ipc_rpc_coop_enqueue_kmsg(Msg_Data_t* md)
 
 error_t ipc_rpc_coop_nested_call_va(ipc_rpc_coop_job_t* job,
                                     const char* server_port_name,
-                                    Message_Port_t* nested_reply,
                                     u16 req_opcode, const char* req_fmt,
-                                    u16 resp_opcode, const char* resp_fmt,
                                     va_list ap)
 {
         Message_Port_t* server;
         Msg_Data_t* md;
         error_t e;
-        const char* rfmt = resp_fmt ? resp_fmt : IPC_RPC_RESP_FMT_DEFAULT;
+        static u64 nest_cookie_seq;
 
-        if (!job || !job->q || !server_port_name || !nested_reply || !req_fmt)
+        if (!job || !job->q || !server_port_name || !req_fmt)
                 return -E_IN_PARAM;
 
         if (job->q->send_owner && job->q->send_owner != job)
@@ -1058,42 +1077,44 @@ error_t ipc_rpc_coop_nested_call_va(ipc_rpc_coop_job_t* job,
         if (job->state != IPC_RPC_COOP_ST_NONE)
                 return -E_REND_AGAIN;
 
-        if (!ref_get_not_zero(&nested_reply->refcount))
+        job->nest_cookie = ++nest_cookie_seq;
+        if (!job->nest_cookie)
+                job->nest_cookie = ++nest_cookie_seq;
+        if (!ipc_rpc_format_nest_token(job->nest_token,
+                                       sizeof(job->nest_token),
+                                       job->nest_cookie)) {
+                ipc_rpc_coop_nested_clear(job);
                 return -E_RENDEZVOS;
+        }
 
         server = thread_lookup_port(server_port_name);
         if (!server) {
-                ref_put(&nested_reply->refcount, free_message_port_ref);
+                ipc_rpc_coop_nested_clear(job);
                 return -E_RENDEZVOS;
         }
 
         md = ipc_kmsg_create_request(server->service_id,
                                      req_opcode,
                                      req_fmt,
-                                     nested_reply->name,
+                                     job->nest_token,
                                      ap);
         if (!md) {
                 ref_put(&server->refcount, free_message_port_ref);
-                ref_put(&nested_reply->refcount, free_message_port_ref);
+                ipc_rpc_coop_nested_clear(job);
                 return -E_RENDEZVOS;
         }
 
         e = ipc_rpc_coop_enqueue_kmsg(md);
         if (e != REND_SUCCESS) {
                 ref_put(&server->refcount, free_message_port_ref);
-                ref_put(&nested_reply->refcount, free_message_port_ref);
+                ipc_rpc_coop_nested_clear(job);
                 return e;
         }
 
-        ipc_rpc_coop_nested_release_port(job);
-        job->nested_reply = nested_reply;
         strncpy(job->nested_server,
                 server_port_name,
                 sizeof(job->nested_server) - 1u);
         job->nested_server[sizeof(job->nested_server) - 1u] = '\0';
-        job->nested_resp_opcode = resp_opcode;
-        strncpy(job->nested_resp_fmt, rfmt, sizeof(job->nested_resp_fmt) - 1u);
-        job->nested_resp_fmt[sizeof(job->nested_resp_fmt) - 1u] = '\0';
         job->reply_payload_queued = true;
         job->q->send_owner = job;
         job->state = IPC_RPC_COOP_ST_NESTED_SEND;
@@ -1110,28 +1131,23 @@ error_t ipc_rpc_coop_nested_call_va(ipc_rpc_coop_job_t* job,
                 return -E_REND_AGAIN;
 
         ipc_rpc_coop_clear_send_owner(job->q, job);
-        ipc_rpc_coop_nested_release_port(job);
+        ipc_rpc_coop_nested_clear(job);
         job->state = IPC_RPC_COOP_ST_NONE;
         return e;
 }
 
 error_t ipc_rpc_coop_nested_call(ipc_rpc_coop_job_t* job,
-                                 const char* server_port_name,
-                                 Message_Port_t* nested_reply, u16 req_opcode,
-                                 const char* req_fmt, u16 resp_opcode,
-                                 const char* resp_fmt, ...)
+                                 const char* server_port_name, u16 req_opcode,
+                                 const char* req_fmt, ...)
 {
         va_list ap;
         error_t e;
 
-        va_start(ap, resp_fmt);
+        va_start(ap, req_fmt);
         e = ipc_rpc_coop_nested_call_va(job,
                                         server_port_name,
-                                        nested_reply,
                                         req_opcode,
                                         req_fmt,
-                                        resp_opcode,
-                                        resp_fmt,
                                         ap);
         va_end(ap);
         return e;
@@ -1193,69 +1209,53 @@ static error_t ipc_rpc_coop_try_client_reply(ipc_rpc_coop_job_t* job,
         return e;
 }
 
-static void ipc_rpc_coop_poll_nested_recv(ipc_rpc_coop_job_t* job)
+bool ipc_rpc_coop_try_apply_nest_resp(ipc_rpc_coop_queue_t* q, Message_t* msg)
 {
-        error_t e;
-        Message_t* msg;
         const kmsg_t* km;
+        i64 cookie_i = 0;
         i64 nested_result = 0;
-        const char* rfmt;
+        u64 cookie;
+        struct list_entry* pos;
+        struct list_entry* n;
 
-        if (!job || job->state != IPC_RPC_COOP_ST_NESTED_RECV
-            || !job->nested_reply)
-                return;
-
-        e = ipc_try_recv_msg(job->nested_reply);
-        if (e == -E_REND_AGAIN)
-                return;
-        if (e == -E_REND_PORT_CLOSED) {
-                ipc_rpc_coop_nested_release_port(job);
-                job->state = IPC_RPC_COOP_ST_NONE;
-                ipc_rpc_coop_job_set_result(job, -LINUX_EIO);
-                return;
-        }
-        if (e != REND_SUCCESS)
-                return;
-
-        msg = dequeue_recv_msg();
-        if (!msg)
-                return;
-
-        if (linux_ipc_kmsg_is_port_closed(job->nested_reply, msg)) {
-                ref_put(&msg->ms_queue_node.refcount, free_message_ref);
-                ipc_rpc_coop_nested_release_port(job);
-                job->state = IPC_RPC_COOP_ST_NONE;
-                ipc_rpc_coop_job_set_result(job, -LINUX_EIO);
-                return;
-        }
-        if (ipc_rpc_recv_is_interrupt(job->nested_reply, msg)) {
-                ref_put(&msg->ms_queue_node.refcount, free_message_ref);
-                return;
-        }
+        if (!q || !msg)
+                return false;
 
         km = kmsg_from_msg(msg);
-        rfmt = job->nested_resp_fmt[0] ? job->nested_resp_fmt :
-                                         IPC_RPC_RESP_FMT_DEFAULT;
-        if (!km || km->hdr.opcode != job->nested_resp_opcode
-            || ipc_serial_decode(
-                       km->payload, km->hdr.payload_len, rfmt, &nested_result)
-                       != REND_SUCCESS) {
-                ref_put(&msg->ms_queue_node.refcount, free_message_ref);
-                ipc_rpc_coop_nested_release_port(job);
-                job->state = IPC_RPC_COOP_ST_NONE;
-                ipc_rpc_coop_job_set_result(job, -LINUX_EIO);
-                return;
+        if (!km || km->hdr.opcode != IPC_RPC_NEST_RESP_OPCODE)
+                return false;
+
+        if (ipc_serial_decode(km->payload,
+                              km->hdr.payload_len,
+                              IPC_RPC_NEST_RESP_FMT,
+                              &cookie_i,
+                              &nested_result)
+            != REND_SUCCESS) {
+                return true; /* consume corrupt nest reply */
         }
 
-        ref_put(&msg->ms_queue_node.refcount, free_message_ref);
-        job->nested_result = nested_result;
-        ipc_rpc_coop_nested_release_port(job);
-        job->state = IPC_RPC_COOP_ST_NONE;
+        cookie = (u64)cookie_i;
+        list_for_each_safe(pos, n, &q->jobs)
+        {
+                ipc_rpc_coop_job_t* job =
+                        list_entry(pos, ipc_rpc_coop_job_t, node);
 
-        if (job->q && job->q->resume_fn)
-                job->q->resume_fn(job, nested_result, job->q->resume_ctx);
-        else
-                ipc_rpc_coop_job_set_result(job, nested_result);
+                if (job->state != IPC_RPC_COOP_ST_NESTED_RECV
+                    || job->nest_cookie != cookie)
+                        continue;
+
+                job->nested_result = nested_result;
+                ipc_rpc_coop_nested_clear(job);
+                job->state = IPC_RPC_COOP_ST_NONE;
+                if (job->q && job->q->resume_fn)
+                        job->q->resume_fn(job, nested_result, job->q->resume_ctx);
+                else
+                        ipc_rpc_coop_job_set_result(job, nested_result);
+                return true;
+        }
+
+        /* Orphan nest reply (job gone) — consume. */
+        return true;
 }
 
 void ipc_rpc_coop_queue_poll(ipc_rpc_coop_queue_t* q, u16 module,
@@ -1281,7 +1281,7 @@ void ipc_rpc_coop_queue_poll(ipc_rpc_coop_queue_t* q, u16 module,
                         server = thread_lookup_port(job->nested_server);
                         if (!server) {
                                 ipc_rpc_coop_clear_send_owner(q, job);
-                                ipc_rpc_coop_nested_release_port(job);
+                                ipc_rpc_coop_nested_clear(job);
                                 job->state = IPC_RPC_COOP_ST_NONE;
                                 ipc_rpc_coop_job_set_result(job, -LINUX_EIO);
                                 continue;
@@ -1294,7 +1294,7 @@ void ipc_rpc_coop_queue_poll(ipc_rpc_coop_queue_t* q, u16 module,
                                 job->state = IPC_RPC_COOP_ST_NESTED_RECV;
                         } else if (e != -E_REND_AGAIN) {
                                 ipc_rpc_coop_clear_send_owner(q, job);
-                                ipc_rpc_coop_nested_release_port(job);
+                                ipc_rpc_coop_nested_clear(job);
                                 job->state = IPC_RPC_COOP_ST_NONE;
                                 ipc_rpc_coop_job_set_result(job, -LINUX_EIO);
                         }
@@ -1302,7 +1302,10 @@ void ipc_rpc_coop_queue_poll(ipc_rpc_coop_queue_t* q, u16 module,
                 }
 
                 if (job->state == IPC_RPC_COOP_ST_NESTED_RECV) {
-                        ipc_rpc_coop_poll_nested_recv(job);
+                        /*
+                         * Nest reply is transfer'd onto this thread's recv
+                         * queue; coop_server_loop drains + try_apply_nest_resp.
+                         */
                         continue;
                 }
 
@@ -1313,6 +1316,96 @@ void ipc_rpc_coop_queue_poll(ipc_rpc_coop_queue_t* q, u16 module,
                                 ipc_rpc_coop_job_release(job);
                         /* AGAIN / NO_MSG: keep for next poll */
                 }
+        }
+}
+
+/*
+ * Handle one dequeued listen message (already classified as non-nest-reply).
+ * Returns true if @port was refreshed (caller should break drain loop).
+ */
+static bool ipc_rpc_coop_accept_one(Message_Port_t** port_io,
+                                    const char* listen_port_name, u16 service_id,
+                                    u16 resp_opcode, const char* resp_fmt,
+                                    ipc_rpc_coop_handler_t handler,
+                                    ipc_rpc_coop_queue_t* q, Message_t* msg)
+{
+        Message_Port_t* port = *port_io;
+        const kmsg_t* km;
+        const char* reply_name;
+        ipc_rpc_coop_job_t* job;
+        i64 result = 0;
+        ipc_rpc_coop_disp_t disp;
+
+        if (linux_ipc_kmsg_is_port_closed(port, msg)) {
+                ref_put(&msg->ms_queue_node.refcount, free_message_ref);
+                ref_put(&port->refcount, free_message_port_ref);
+                *port_io = ipc_server_coop_lookup(listen_port_name);
+                return true;
+        }
+
+        km = kmsg_from_msg(msg);
+        if (!km || km->hdr.module != service_id) {
+                ipc_rpc_reply(km,
+                              NULL,
+                              service_id,
+                              resp_opcode,
+                              resp_fmt,
+                              -LINUX_EIO);
+                ref_put(&msg->ms_queue_node.refcount, free_message_ref);
+                return false;
+        }
+
+        reply_name = ipc_serial_payload_reply_port(km->payload,
+                                                   km->hdr.payload_len);
+        job = ipc_rpc_coop_job_create(q, reply_name);
+        if (!job) {
+                ipc_rpc_reply(km,
+                              reply_name,
+                              service_id,
+                              resp_opcode,
+                              resp_fmt,
+                              -LINUX_ENOMEM);
+                ref_put(&msg->ms_queue_node.refcount, free_message_ref);
+                return false;
+        }
+
+        disp = handler(job, km->hdr.opcode, km, &result);
+        if (disp == IPC_RPC_COOP_REPLIED) {
+                ipc_rpc_coop_job_release(job);
+        } else if (disp == IPC_RPC_COOP_HANDLED) {
+                if (job->state != IPC_RPC_COOP_ST_NEED_REPLY)
+                        ipc_rpc_coop_job_set_result(job, result);
+                ipc_rpc_coop_queue_poll(q, service_id, resp_opcode, resp_fmt);
+        }
+
+        ref_put(&msg->ms_queue_node.refcount, free_message_ref);
+        return false;
+}
+
+static void ipc_rpc_coop_drain_recv(Message_Port_t** port_io,
+                                    const char* listen_port_name, u16 service_id,
+                                    u16 resp_opcode, const char* resp_fmt,
+                                    ipc_rpc_coop_handler_t handler,
+                                    ipc_rpc_coop_queue_t* q)
+{
+        while (1) {
+                Message_t* msg = dequeue_recv_msg();
+
+                if (!msg)
+                        return;
+                if (ipc_rpc_coop_try_apply_nest_resp(q, msg)) {
+                        ref_put(&msg->ms_queue_node.refcount, free_message_ref);
+                        continue;
+                }
+                if (ipc_rpc_coop_accept_one(port_io,
+                                            listen_port_name,
+                                            service_id,
+                                            resp_opcode,
+                                            resp_fmt,
+                                            handler,
+                                            q,
+                                            msg))
+                        return;
         }
 }
 
@@ -1341,6 +1434,20 @@ void ipc_rpc_coop_server_loop(const char* listen_port_name, u16 service_id,
                 bool parked;
 
                 ipc_rpc_coop_queue_poll(q, service_id, resp_opcode, resp_fmt);
+                /*
+                 * Nest replies via transfer land on recv_msg_queue while we
+                 * schedule with parked NESTED_RECV jobs. Drain before listen
+                 * try_recv / blocking recv.
+                 */
+                ipc_rpc_coop_drain_recv(&port,
+                                        listen_port_name,
+                                        service_id,
+                                        resp_opcode,
+                                        resp_fmt,
+                                        handler,
+                                        q);
+                /* Nest resume may have produced NEED_REPLY — progress it. */
+                ipc_rpc_coop_queue_poll(q, service_id, resp_opcode, resp_fmt);
                 parked = !list_empty(&q->jobs);
                 if (poll_extra)
                         parked = poll_extra(poll_extra_ctx) || parked;
@@ -1366,77 +1473,12 @@ void ipc_rpc_coop_server_loop(const char* listen_port_name, u16 service_id,
                                 continue;
                 }
 
-                while (1) {
-                        Message_t* msg = dequeue_recv_msg();
-                        const kmsg_t* km;
-                        const char* reply_name;
-                        ipc_rpc_coop_job_t* job;
-                        i64 result = 0;
-                        ipc_rpc_coop_disp_t disp;
-
-                        if (!msg)
-                                break;
-
-                        if (linux_ipc_kmsg_is_port_closed(port, msg)) {
-                                ref_put(&msg->ms_queue_node.refcount,
-                                        free_message_ref);
-                                ref_put(&port->refcount, free_message_port_ref);
-                                port = ipc_server_coop_lookup(listen_port_name);
-                                break;
-                        }
-
-                        km = kmsg_from_msg(msg);
-                        if (!km || km->hdr.module != service_id) {
-                                ipc_rpc_reply(km,
-                                              NULL,
-                                              service_id,
-                                              resp_opcode,
-                                              resp_fmt,
-                                              -LINUX_EIO);
-                                ref_put(&msg->ms_queue_node.refcount,
-                                        free_message_ref);
-                                continue;
-                        }
-
-                        reply_name = ipc_serial_payload_reply_port(
-                                km->payload, km->hdr.payload_len);
-                        job = ipc_rpc_coop_job_create(q, reply_name);
-                        if (!job) {
-                                ipc_rpc_reply(km,
-                                              reply_name,
-                                              service_id,
-                                              resp_opcode,
-                                              resp_fmt,
-                                              -LINUX_ENOMEM);
-                                ref_put(&msg->ms_queue_node.refcount,
-                                        free_message_ref);
-                                continue;
-                        }
-
-                        disp = handler(job, km->hdr.opcode, km, &result);
-                        if (disp == IPC_RPC_COOP_REPLIED) {
-                                /*
-                                 * Handler used blocking ipc_rpc_reply (leaf
-                                 * backends). Nested callers only try_recv and
-                                 * never enqueue a RECV wait — try_send reply
-                                 * livelocks against that. Release only.
-                                 */
-                                ipc_rpc_coop_job_release(job);
-                        } else if (disp == IPC_RPC_COOP_HANDLED) {
-                                if (job->state != IPC_RPC_COOP_ST_NEED_REPLY)
-                                        ipc_rpc_coop_job_set_result(job,
-                                                                    result);
-                                /*
-                                 * Try progress immediately so the common
-                                 * case (client already in recv) completes
-                                 * without waiting for another listen wake.
-                                 */
-                                ipc_rpc_coop_queue_poll(
-                                        q, service_id, resp_opcode, resp_fmt);
-                        }
-                        /* PARKED: job stays until resume / set_result */
-
-                        ref_put(&msg->ms_queue_node.refcount, free_message_ref);
-                }
+                ipc_rpc_coop_drain_recv(&port,
+                                        listen_port_name,
+                                        service_id,
+                                        resp_opcode,
+                                        resp_fmt,
+                                        handler,
+                                        q);
         }
 }

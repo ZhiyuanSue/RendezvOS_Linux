@@ -196,9 +196,9 @@ error_t linux_thread_append_init(Thread_Base *thread,
         }
 
         /*
-         * Legacy Path B (gen_task_from_elf → run_elf_program): attach only.
-         * PID1 no longer uses this path — see linux_boot.c + linux_exec_replace_image.
-         * Stack/auxv for glibc must come from exec; do not bootstrap here.
+         * append.init for gen_task_from_elf / run_elf_program only.
+         * Linux user images must use linux_exec_replace_image (PID1 / sys_execve);
+         * this hook must not build argv/auxv (that was the old Path B bootstrap).
          */
         if (linux_user_task_prepare_new(tcb, thr) != REND_SUCCESS) {
                 pr_emer("[LINUX_ELF_INIT] ERROR: prepare_new failed pid=%d\n",

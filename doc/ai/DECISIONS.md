@@ -5,6 +5,22 @@ Format: Context / Decision / Consequences.
 
 ---
 
+## 2026-08-09 | CMDLINE policy lives in upper Makefile (not core)
+
+- Context: Hybrid split kernel — core must not hardcode compat busybox boot argv (`sh /tests/run_all.sh`) into its Makefile/`configure.py`. Invading core with that default couples mechanism to upper-layer demo policy.
+- Decision: **core** only accepts `CMDLINE=` (empty if omitted) and may pass it to QEMU `-append` / bootargs. **Root `Makefile`** injects `LINUX_BOOT_CMDLINE_DEFAULT` via `CONFIG_CMDLINE` / `RUN_CMDLINE`. Empty bootargs still fall back in `linux_boot.c` for compat PID1.
+- Consequences: Rebuilding core alone without upper inject yields empty cmdline (compat default argv still applies at PID1). Do not reintroduce busybox strings into `core/Makefile`. See [`NEXT_PLAN.md`](../linux_compat/NEXT_PLAN.md) §1.
+
+---
+
+## 2026-08-09 | Busybox bring-up compromise ledger closed
+
+- Context: `BUSYBOX_BOOT_DEFERRALS.md` tracked demo compromises; `/init` + `run_all` gate is good enough to stop treating that list as live P0.
+- Decision: Archive to [`archive/BUSYBOX_BOOT_DEFERRALS.md`](../linux_compat/archive/BUSYBOX_BOOT_DEFERRALS.md). Live backlog → [`NEXT_PLAN.md`](../linux_compat/NEXT_PLAN.md). UART/console server is **extra**, not a busybox-close blocker.
+- Consequences: Further work is Phase 5 / polish / uart_server design; do not reopen “busybox deferral” as the primary tracking doc.
+
+---
+
 ## 2026-07-27 | VFS tables use growable page_slice (no fixed BSS)
 
 - Context: cpio/ns raised to 2048 fixed BSS, readdir used 128KiB static/`names[][]` on stack, handles/ramfs/blkdev similarly hard-capped — demo-era bombs.
@@ -104,6 +120,15 @@ Format: Context / Decision / Consequences.
 - Context: After backends moved to coop `NEED_REPLY`+`try_send`, boot hung at `exec /init`. Nested VFS uses `try_recv` only (no RECV waiter on the nested reply port); leaf `try_send` never enqueues a SEND waiter either → poll livelock.
 - Decision: Leaf backends complete with **blocking `ipc_rpc_reply`** and return **`IPC_RPC_COOP_REPLIED`** (framework releases job; no second try_send). Keep `NEED_REPLY`+`try_send` only when the peer **blocking-`recv_msg`** (user/kern RPC clients).
 - Consequences: Nested READ/WRITE and blocking `vfs_backend_ipc_call` (kern load / sync OPEN) rendezvous again; leaf may block in reply (acceptable — no nested work on that thread).
+- Superseded (reply path): 2026-08-06 nest reply transfer.
+
+---
+
+## 2026-08-06 | Nested VFS reply = `ipc_transfer_message` (request still port)
+
+- Context: Nested reply via `vfs_cli_k_j*` + leaf blocking `send_msg` worked but was asymmetric port rendezvous. §8.3 already allows known-peer transfer. Pure transfer does **not** wake `recv_msg` port waiters — so request→leaf must stay on listen port; reply→VFS is safe because VFS is in coop `NESTED_RECV` (parked poll drains `recv_msg_queue`).
+- Decision: Nested TLV `t` = `@n<cookie>` (not a registered port). Leaf `enqueue` + `ipc_transfer_message` to `vfs_server_thread_get()`. VFS coop loop drains nest-resp kmsgs (`IPC_RPC_NEST_RESP_OPCODE` / `"qq"`). Sync `vfs_backend_ipc_call` unchanged (real reply port + blocking reply). Do **not** invent port-wait wake in linux_layer. Also delete unused transitional **`ipc_rpc_server_loop`** / `ipc_rpc_server_handler_t` (all FS already on coop).
+- Consequences: Drop per-job `vfs_cli_k_j*` for coop nested; request-side direct deliver deferred until leaf idle model or core wake API.
 
 ---
 

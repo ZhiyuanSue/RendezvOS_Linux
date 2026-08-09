@@ -31,11 +31,13 @@
 /*
  * Kernel PID1 launcher:
  *   empty user task → linux_exec_replace_image("/init", argv) → drop to user
- * Default argv (no cmdline yet): sh /tests/run_all.sh
+ * argv: core cmdline_ptr (QEMU -append / bootargs), else sh /tests/run_all.sh
  */
 
 extern volatile bool is_print_sche_info;
 extern VSpace root_vspace;
+/* Core boot: multiboot cmdline / DTB chosen.bootargs (stable for kernel life). */
+extern char *cmdline_ptr;
 
 static volatile u64 g_boot_wait_cookie;
 static volatile i64 g_boot_wait_exit_code;
@@ -52,6 +54,75 @@ static const char *const linux_init_default_argv[] = {
         "/tests/run_all.sh",
         NULL,
 };
+
+/* Mutable copy for whitespace split; points into this for replace_image. */
+static char linux_boot_cmdline_buf[4096];
+static const char *linux_boot_argv_ptrs[LINUX_EXEC_MAX_ARGS + 1];
+
+/*
+ * Build argv for /init from core cmdline_ptr (space-separated tokens).
+ * Returns argc (>= 1) and sets *@argv_out; on empty cmdline uses default.
+ */
+static i64 linux_boot_resolve_argv(const char *const **argv_out)
+{
+        const char *src;
+        char *p;
+        i64 argc;
+        u64 n;
+        u64 i;
+        bool in_token;
+
+        if (!argv_out) {
+                return -1;
+        }
+
+        src = cmdline_ptr;
+        if (!src || !src[0]) {
+                *argv_out = linux_init_default_argv;
+                return 2;
+        }
+
+        n = strlen(src);
+        if (n >= sizeof(linux_boot_cmdline_buf)) {
+                n = sizeof(linux_boot_cmdline_buf) - 1;
+                pr_error("[ LINUX BOOT ] cmdline truncated to %llu bytes\n",
+                         (unsigned long long)n);
+        }
+        memcpy(linux_boot_cmdline_buf, src, (size_t)n);
+        linux_boot_cmdline_buf[n] = '\0';
+
+        argc = 0;
+        in_token = false;
+        p = linux_boot_cmdline_buf;
+        for (i = 0; i <= n; i++) {
+                char c = linux_boot_cmdline_buf[i];
+
+                if (c == '\0' || c == ' ' || c == '\t' || c == '\n'
+                    || c == '\r') {
+                        if (in_token) {
+                                linux_boot_cmdline_buf[i] = '\0';
+                                if (argc < LINUX_EXEC_MAX_ARGS) {
+                                        linux_boot_argv_ptrs[argc++] = p;
+                                }
+                                in_token = false;
+                        }
+                        continue;
+                }
+                if (!in_token) {
+                        p = &linux_boot_cmdline_buf[i];
+                        in_token = true;
+                }
+        }
+
+        if (argc == 0) {
+                *argv_out = linux_init_default_argv;
+                return 2;
+        }
+
+        linux_boot_argv_ptrs[argc] = NULL;
+        *argv_out = linux_boot_argv_ptrs;
+        return argc;
+}
 
 static void linux_boot_release_task(Tcb_Base *task)
 {
@@ -78,6 +149,8 @@ static void linux_run_init_exec(void)
         vaddr entry = 0;
         vaddr sp = 0;
         i64 ret;
+        i64 argc;
+        const char *const *argv;
         struct trap_frame drop_tf;
 
         if (!self || !task || !task->vs) {
@@ -90,11 +163,20 @@ static void linux_run_init_exec(void)
                 goto hang;
         }
 
+        argc = linux_boot_resolve_argv(&argv);
+        if (argc < 1 || !argv) {
+                pr_error("[ LINUX BOOT ] init exec: bad argv\n");
+                goto hang;
+        }
+        pr_info("[ LINUX BOOT ] exec /init argc=%lld argv0=%s\n",
+                (long long)argc,
+                argv[0] ? argv[0] : "(null)");
+
         ret = linux_exec_replace_image(task,
                                        self,
                                        "/init",
-                                       2,
-                                       linux_init_default_argv,
+                                       argc,
+                                       argv,
                                        false,
                                        &entry,
                                        &sp);
@@ -256,7 +338,7 @@ static void *linux_boot_thread(void *arg)
         linux_vfs_wait_backends_ready();
 
         is_print_sche_info = false;
-        pr_info("[ Linux compat ] Boot: exec /init → sh /tests/run_all.sh\n");
+        pr_info("[ Linux compat ] Boot: exec /init (cmdline or default argv)\n");
         if (linux_spawn_and_wait_init() != REND_SUCCESS) {
                 pr_error("[ Linux compat ] Boot: /init failed\n");
         } else {

@@ -371,16 +371,23 @@ When a new bug pattern appears during review/debug:
   yields while parked (do not `gen_thread`; do not block `send_msg(wait_port)`
   on listen). Checklist: §2 + `EXIT_CLEAN.md`.
 
-- 2026-08-02: **VFS READ/WRITE nested coop:** per-job cookie +
-  `vfs_cli_k_j*`; do not reuse `vfs_cli_k_t<tid>` for concurrent parked
+- 2026-08-02: **VFS READ/WRITE nested coop:** per-job cookie + nest
+  token (`@n*`); do not reuse `vfs_cli_k_t<tid>` for concurrent parked
   nested calls. Checklist: §2 + `IPC_RPC_FRAMEWORK.md`.
 
 - 2026-08-02: **try_send ↔ try_recv livelock:** if one side only
   `ipc_try_recv_msg` (no port wait), the peer must **blocking `send_msg`**
-  (or otherwise enqueue a SEND waiter). Leaf backends use
-  `IPC_RPC_COOP_REPLIED` + `ipc_rpc_reply`; do not `NEED_REPLY`+`try_send`
-  to nested VFS reply ports. Symptom: hang after `Boot: exec /init`.
+  (or otherwise enqueue a SEND waiter). Leaf backends historically used
+  `IPC_RPC_COOP_REPLIED` + `ipc_rpc_reply` for nested reply ports.
+  Symptom: hang after `Boot: exec /init`.
   Checklist: §2 + `IPC_RPC_FRAMEWORK.md` + DECISIONS.
+
+- 2026-08-06: **Nested reply = transfer, not reply-port rendezvous:**
+  VFS `NESTED_RECV` drains `recv_msg_queue` while parked; leaf
+  `enqueue`+`ipc_transfer_message` to `vfs_server_thread_get()` with
+  `@n<cookie>`. Do **not** invent wake for `block_on_receive`; nested
+  **request** stays on backend listen port. Checklist: §2 + DECISIONS
+  2026-08-06 + `lockfree-ipc` §8.3.
 
 - 2026-08-03: **VFS path nested FSM:** namespace prepare/commit + 
   `vfs_coop_path` for OPEN/MKDIR/UNLINK/STAT/CHDIR/FACCESSAT. Do not
@@ -506,7 +513,7 @@ When a new bug pattern appears during review/debug:
     Unregister: CLOSING → wait inflight==0 → `port_clean` → CLOSED. Blocking
     send/recv `end` before `schedule`; wake checks `PORT_CLOSED` (+ drop
     orphan send). RPC reply treats `-E_REND_PORT_CLOSED` as handled.
-  - Checklist: §0 + IPC_RPC_FRAMEWORK §6; BUSYBOX_BOOT_DEFERRALS IPC P0 §2.
+  - Checklist: §0 + IPC_RPC_FRAMEWORK §6; historical busybox IPC notes in archive/BUSYBOX_BOOT_DEFERRALS.
 
 - 2026-08-01: **RPC / EXIT_NOTIFY must not abandon after commit or drop notify:**
   - Symptom: intermittent FS wedge or parent stuck in wait4 after child exit.

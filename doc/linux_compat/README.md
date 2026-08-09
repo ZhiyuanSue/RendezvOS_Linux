@@ -43,7 +43,8 @@
 | [`FILE_LOADING.md`](FILE_LOADING.md) | page_slice 统一文件加载（CPIO / IPC / embedded） |
 | [`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) | cpio initramfs 方案 |
 | [`BOOT_PATH_EVOLUTION.md`](BOOT_PATH_EVOLUTION.md) | **启动路径演进叙事**（incbin 测例 → cpio → busybox → `run_all` → 正规 PID1） |
-| [`BUSYBOX_BOOT_DEFERRALS.md`](BUSYBOX_BOOT_DEFERRALS.md) | busybox demo 临时妥协与**剩余开放项**（容量已迁动态表） |
+| [`NEXT_PLAN.md`](NEXT_PLAN.md) | **busybox 收尾后的下一步**（主线 + UART server 额外项 + core TODO 索引） |
+| [`archive/BUSYBOX_BOOT_DEFERRALS.md`](archive/BUSYBOX_BOOT_DEFERRALS.md) | ~~busybox 妥协 live 清单~~ → **已归档**（2026-08-09） |
 | [`VFS_DYNAMIC_STORAGE.md`](VFS_DYNAMIC_STORAGE.md) | **VFS page_slice 可增长表（S0–S3 已落地）** |
 | [`ROOTFS.md`](ROOTFS.md) | **rootfs/ 目录、Git 策略、fixtures vs generated** |
 | [`RAMFS_AND_VFS_STORAGE.md`](RAMFS_AND_VFS_STORAGE.md) | ramfs/存储后端笔记 |
