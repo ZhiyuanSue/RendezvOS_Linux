@@ -50,8 +50,8 @@ error_t linux_mm_copy_user_range(VSpace* vs, u64 dst_user_va, u64 src_user_va,
 
 /**
  * Map @p page_num user pages at @p hint (page-aligned; 0 = failure).
- * VA-contiguous only: large ranges are split into <= 2^BUDDY_MAXORDER
- * power-of-two chunks so each call stays within buddy pmm_alloc limits.
+ * VA-contiguous only. Physically: try greedy <= 2^BUDDY_MAXORDER pow2 chunks;
+ * on buddy failure (fragmentation) shrink chunk to 1 page and continue.
  */
 void* linux_mm_map_user_range(VSpace* vs, vaddr hint, size_t page_num,
                               ENTRY_FLAGS_t flags);

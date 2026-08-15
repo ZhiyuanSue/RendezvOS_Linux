@@ -33,9 +33,8 @@ static vaddr linux_mm_l0_lock_lo(vaddr range_start)
 }
 
 /*
- * Buddy pmm_alloc requires one physically contiguous block of size
- * round_up_pow2(n) and n <= 2^BUDDY_MAXORDER. User mappings only need VA
- * contiguity — split large requests into greedy power-of-two chunks.
+ * Buddy pmm_alloc needs one contiguous pow2 block, size <= 2^BUDDY_MAXORDER.
+ * User maps only need VA contiguity — prefer large chunks; fall back smaller.
  */
 static size_t linux_mm_buddy_chunk_pages(size_t remaining)
 {
@@ -44,6 +43,43 @@ static size_t linux_mm_buddy_chunk_pages(size_t remaining)
         while (chunk > remaining)
                 chunk >>= 1;
         return chunk;
+}
+
+/* Try greedy chunk then shrink on buddy failure (fragmentation). */
+static size_t linux_mm_fill_one_span(VSpace *vs, vaddr chunk_va,
+                                     size_t remaining, ENTRY_FLAGS_t flags)
+{
+        size_t chunk = linux_mm_buddy_chunk_pages(remaining);
+
+        while (chunk >= 1) {
+                if (mm_user_utils_set_range_and_fill(
+                            vs, chunk_va, chunk, flags))
+                        return chunk;
+                if (chunk == 1)
+                        break;
+                chunk >>= 1;
+        }
+        return 0;
+}
+
+static void linux_mm_unmap_prefix_pages(VSpace *vs, vaddr hint,
+                                        size_t mapped_pages)
+{
+        struct map_handler *handler = &percpu(Map_Handler);
+        size_t done;
+
+        for (done = 0; done < mapped_pages; done++) {
+                vaddr page_va = hint + done * PAGE_SIZE;
+                ENTRY_FLAGS_t pte_flags = 0;
+                int pte_level = 3;
+                ppn_t ppn = have_mapped(
+                        vs, VPN(page_va), &pte_flags, &pte_level, handler);
+
+                if (!invalid_ppn(ppn)) {
+                        (void)mm_user_utils_clean_range_and_unfill(
+                                vs, page_va, 1, ppn);
+                }
+        }
 }
 
 static bool linux_mm_page_is_reserved(VSpace* vs, vaddr va)
@@ -308,7 +344,6 @@ error_t linux_mm_copy_user_range(VSpace* vs, u64 dst_user_va, u64 src_user_va,
 void* linux_mm_map_user_range(VSpace* vs, vaddr hint, size_t page_num,
                               ENTRY_FLAGS_t flags)
 {
-        struct map_handler* handler = &percpu(Map_Handler);
         size_t mapped_pages = 0;
 
         if (!linux_mm_user_vspace_ok(vs) || page_num == 0 || hint == 0
@@ -325,47 +360,22 @@ void* linux_mm_map_user_range(VSpace* vs, vaddr hint, size_t page_num,
                 return NULL;
 
         while (mapped_pages < page_num) {
-                size_t chunk =
-                        linux_mm_buddy_chunk_pages(page_num - mapped_pages);
-                vaddr chunk_va = hint + mapped_pages * PAGE_SIZE;
+                size_t got = linux_mm_fill_one_span(
+                        vs,
+                        hint + mapped_pages * PAGE_SIZE,
+                        page_num - mapped_pages,
+                        flags);
 
-                if (!mm_user_utils_set_range_and_fill(
-                            vs, chunk_va, chunk, flags)) {
+                if (!got)
                         goto out_rollback;
-                }
-                mapped_pages += chunk;
+                mapped_pages += got;
         }
 
         (void)vmm_radix_tree_unlock_range_big(vs, l0_lo, range_end);
         return (void*)hint;
 
 out_rollback:
-        /*
-         * Each chunk is physically contiguous; unmap per chunk so we do not
-         * pass a false contiguous ppn_first across chunk boundaries.
-         */
-        {
-                size_t done = 0;
-
-                while (done < mapped_pages) {
-                        size_t chunk =
-                                linux_mm_buddy_chunk_pages(mapped_pages - done);
-                        vaddr chunk_va = hint + done * PAGE_SIZE;
-                        ENTRY_FLAGS_t pte_flags = 0;
-                        int pte_level = 3;
-                        ppn_t ppn = have_mapped(vs,
-                                                VPN(chunk_va),
-                                                &pte_flags,
-                                                &pte_level,
-                                                handler);
-
-                        if (!invalid_ppn(ppn)) {
-                                (void)mm_user_utils_clean_range_and_unfill(
-                                        vs, chunk_va, chunk, ppn);
-                        }
-                        done += chunk;
-                }
-        }
+        linux_mm_unmap_prefix_pages(vs, hint, mapped_pages);
         (void)vmm_radix_tree_unlock_range_big(vs, l0_lo, range_end);
         return NULL;
 }

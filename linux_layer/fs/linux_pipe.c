@@ -1,5 +1,8 @@
 /*
  * In-process pipe buffers for pipe2 (compat layer, scheme B).
+ *
+ * Open ends are counted (not bools): after fork both parent and child hold
+ * read+write fds, so one close must not mark the whole pipe EOF/EPIPE.
  */
 
 #include <linux_compat/errno.h>
@@ -20,9 +23,9 @@ typedef struct linux_pipe {
         u8 data[LINUX_PIPE_BUF_SIZE];
         u32 head;
         u32 len;
-        u32 refcnt;
-        bool read_open;
-        bool write_open;
+        u32 refcnt; /* open fds (read ends + write ends) */
+        u32 readers; /* open read-end fds */
+        u32 writers; /* open write-end fds */
 } linux_pipe_t;
 
 static linux_pipe_t *linux_pipes[LINUX_PIPE_MAX];
@@ -51,8 +54,8 @@ static u32 linux_pipe_alloc_slot(void)
                         }
                         memset(pipe, 0, sizeof(*pipe));
                         pipe->refcnt = 2;
-                        pipe->read_open = true;
-                        pipe->write_open = true;
+                        pipe->readers = 1;
+                        pipe->writers = 1;
                         linux_pipes[i] = pipe;
                         return i;
                 }
@@ -100,13 +103,41 @@ static void linux_pipe_release(u32 id)
         linux_pipe_free_slot(id);
 }
 
-static void linux_pipe_retain(u32 id)
+void linux_pipe_fork_retain(u32 pipe_id, bool read_end)
 {
-        linux_pipe_t *pipe = linux_pipe_from_id(id);
+        linux_pipe_t *pipe = linux_pipe_from_id(pipe_id);
 
-        if (pipe) {
-                pipe->refcnt++;
+        if (!pipe) {
+                return;
         }
+
+        pipe->refcnt++;
+        if (read_end) {
+                pipe->readers++;
+        } else {
+                pipe->writers++;
+        }
+}
+
+void linux_pipe_fd_closed(u32 pipe_id, bool read_end)
+{
+        linux_pipe_t *pipe = linux_pipe_from_id(pipe_id);
+
+        if (!pipe) {
+                return;
+        }
+
+        if (read_end) {
+                if (pipe->readers > 0) {
+                        pipe->readers--;
+                }
+        } else {
+                if (pipe->writers > 0) {
+                        pipe->writers--;
+                }
+        }
+
+        linux_pipe_release(pipe_id);
 }
 
 i64 linux_pipe_create2(Tcb_Base *task, u64 user_pipefd, i32 flags)
@@ -180,35 +211,13 @@ i64 linux_pipe_create2(Tcb_Base *task, u64 user_pipefd, i32 flags)
         return 0;
 }
 
-void linux_pipe_fork_retain(u32 pipe_id)
-{
-        linux_pipe_retain(pipe_id);
-}
-
-void linux_pipe_fd_closed(u32 pipe_id, bool read_end)
-{
-        linux_pipe_t *pipe = linux_pipe_from_id(pipe_id);
-
-        if (!pipe) {
-                return;
-        }
-
-        if (read_end) {
-                pipe->read_open = false;
-        } else {
-                pipe->write_open = false;
-        }
-
-        linux_pipe_release(pipe_id);
-}
-
 i64 linux_pipe_read(Tcb_Base *task, u32 pipe_id, u64 user_buf, u64 count)
 {
         linux_pipe_t *pipe = linux_pipe_from_id(pipe_id);
         u8 chunk[256];
         u64 total = 0;
 
-        if (!task || !task->vs || !pipe || !pipe->read_open) {
+        if (!task || !task->vs || !pipe || pipe->readers == 0) {
                 return -LINUX_EBADF;
         }
 
@@ -218,7 +227,7 @@ i64 linux_pipe_read(Tcb_Base *task, u32 pipe_id, u64 user_buf, u64 count)
 
         while (total < count) {
                 if (pipe->len == 0) {
-                        if (!pipe->write_open) {
+                        if (pipe->writers == 0) {
                                 break;
                         }
                         schedule(percpu(core_tm));
@@ -249,7 +258,7 @@ i64 linux_pipe_read(Tcb_Base *task, u32 pipe_id, u64 user_buf, u64 count)
                 total += n;
         }
 
-        if (total == 0 && !pipe->write_open) {
+        if (total == 0 && pipe->writers == 0) {
                 return 0;
         }
 
@@ -262,7 +271,7 @@ i64 linux_pipe_write(Tcb_Base *task, u32 pipe_id, u64 user_buf, u64 count)
         u8 chunk[256];
         u64 total = 0;
 
-        if (!task || !task->vs || !pipe || !pipe->write_open) {
+        if (!task || !task->vs || !pipe || pipe->writers == 0) {
                 return -LINUX_EBADF;
         }
 
@@ -277,7 +286,7 @@ i64 linux_pipe_write(Tcb_Base *task, u32 pipe_id, u64 user_buf, u64 count)
                 u32 n;
 
                 if (pipe->len >= LINUX_PIPE_BUF_SIZE) {
-                        if (!pipe->read_open) {
+                        if (pipe->readers == 0) {
                                 break;
                         }
                         schedule(percpu(core_tm));
@@ -312,7 +321,7 @@ i64 linux_pipe_write(Tcb_Base *task, u32 pipe_id, u64 user_buf, u64 count)
                 total += n;
         }
 
-        if (total == 0 && !pipe->read_open) {
+        if (total == 0 && pipe->readers == 0) {
                 return -LINUX_EPIPE;
         }
 

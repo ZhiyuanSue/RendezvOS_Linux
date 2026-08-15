@@ -784,7 +784,7 @@ static void linux_fs_fork_retain_resources(linux_fs_state_t *fs)
                         continue;
                 }
                 if (ent.kind == LINUX_FD_PIPE) {
-                        linux_pipe_fork_retain(ent.vfs_handle);
+                        linux_pipe_fork_retain(ent.vfs_handle, ent.pipe_read);
                         continue;
                 }
                 if (ent.kind != LINUX_FD_VFS || ent.vfs_handle == 0) {
@@ -1163,7 +1163,7 @@ i64 linux_fd_dup2(Tcb_Base *task, i32 oldfd, i32 newfd)
         if (newent.kind == LINUX_FD_VFS && newent.vfs_handle != 0) {
                 linux_fs_retain_vfs_handle(newent.vfs_handle);
         } else if (newent.kind == LINUX_FD_PIPE) {
-                linux_pipe_fork_retain(newent.vfs_handle);
+                linux_pipe_fork_retain(newent.vfs_handle, newent.pipe_read);
         }
 
         if (replaced_handle != 0
