@@ -131,7 +131,8 @@ compat **假定** core 已提供下列机制；**不要求** core 理解 Linux�
 - `cancel_ipc`（用 `ipc_try_send_msg` + 协议消息替代，见 `core/docs/ipc.md`）
 - 独立 VMA / Nexus
 - VFS、fd、pipe、socket（在 servers/compat）
-- swap、多 zone、异步 log
+- swap、异步 log  
+- 第二物理池 / DMA zone **策略**（core 已有多 zone 骨架：`configure_pmm_zones_hook`；是否切 DMA 归平台/设备）
 
 ---
 

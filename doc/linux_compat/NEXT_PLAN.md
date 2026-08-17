@@ -83,11 +83,11 @@
 
 和上层交叉多的几条：
 
-- 平台：IOAPIC、UART getc、TLB IPI——交互 console / 外设中断前提  
+- 平台：UART getc；TLB IPI（软 IPI 已有）；x86 IOAPIC / 外设 IRQ 为**远期**（非冻结）  
 - 37、38、46：日志前后端与 IPC 输出；交接说明见 `core/docs/log.md`  
 - 42：Linux argv 归兼容层，别塞回 core  
 - 52：系统化 call→IPC wrapper 偏上层；core 留 port 原语  
-- 内存：改页属性、多 zone、boot 栈——fork/COW / mmap 后续  
+- 内存：boot 栈已结（见 core TODO_DONE #58）；多 zone **骨架**已结（#60，`configure_pmm_zones_hook`）；第二 DMA 池等有硬件约束再加。fork/COW / mmap 后续仍可能动 MM  
 
 规则：compat 需要动 core 时先提案再改；别把上层 cmdline 策略写进 core Makefile。
 

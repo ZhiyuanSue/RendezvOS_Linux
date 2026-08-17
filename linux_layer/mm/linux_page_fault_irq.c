@@ -337,8 +337,8 @@ unhandled_fault:
 }
 
 /*
- * Per-CPU: register compat page-fault handler on this CPU's trap vector.
- * AP initcalls must run this; global state is not touched.
+ * Register compat page-fault handler. register_irq_handler fans out to all
+ * percpu slots; APs still run this initcall (idempotent) after local trap init.
  */
 static void linux_page_fault_irq_init(void)
 {

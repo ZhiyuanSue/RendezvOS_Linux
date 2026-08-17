@@ -5,6 +5,14 @@ Format: Context / Decision / Consequences.
 
 ---
 
+## 2026-08-16 | Multi-zone PMM: weak hook fills `mem_zones` directly
+
+- Context: Need fixed-capacity multi-zone before buddy is up (no early allocator). A parallel `pmm_zone_config` / “slot” table duplicated `MemZone` fields. Initcall / compat is too late for `phy_mm_init`.
+- Decision: `ZONE_NR_MAX` capacity + `nr_mem_zones` compact prefix. Weak **`configure_pmm_zones_hook`** (strong override in arch/early `.o`) writes `mem_zones[i].{lower_addr,upper_addr,pmm}` and `nr_mem_zones`; `pmm_configure_zones` validates / falls back to single NORMAL+buddy; `split_pmm_zones` only intersects with `m_regions`. No second boot-config struct.
+- Consequences: Second pool (e.g. DMA) is an early strong hook + static `struct pmm`, not a late compat feature. Callers pick the zone’s `pmm` explicitly. See [`core/docs/memory.md`](../../core/docs/memory.md) §2.4.1, USING §3.8a, TODO_DONE #60.
+
+---
+
 ## 2026-08-09 | CMDLINE policy lives in upper Makefile (not core)
 
 - Context: Hybrid split kernel — core must not hardcode compat busybox boot argv (`sh /tests/run_all.sh`) into its Makefile/`configure.py`. Invading core with that default couples mechanism to upper-layer demo policy.
