@@ -46,7 +46,7 @@ servers/fs/              namespace 树、page cache、mount、perm、ramfs/cpio 
 
 | 用途 | 谁持有 | 内容 | 生命周期 |
 |------|--------|------|----------|
-| **A. fd 表 slice** | `linux_proc_append_t.fs` | hdr(cwd,capacity) + `linux_fd_entry_t[]` | 与进程同寿；fork **clone** |
+| **A. fd 表 slice** | `linux_proc_resource_t.fs` | hdr(cwd,capacity) + `linux_fd_entry_t[]` | 与进程同寿；fork **clone** |
 | **B. 文件字节 slice**（目标态） | server **page cache** | cpio/ramfs 文件内容 pgoff→kva | LRU/引用；按需填充 |
 | **C. ingest 临时 slice** | exec/manifest/test harness | 单次读入后 map/load | **load → destroy** |
 
@@ -111,7 +111,7 @@ servers/fs/              namespace 树、page cache、mount、perm、ramfs/cpio 
 | M2 | 路径常量 + equal | ✅ | `VFS_PATH_MAX` 统一；`vfs_path_equal()` |
 | M3 | kern load ↔ exec load | ✅ | `vfs_page_cache_clone_inode` |
 | M4 | cache vs backend direct | ✅ | `vfs_page_cache_read_inode` |
-| M5 | perm cred vs setuid | ⬜ | cred 真源 `linux_proc_append_t` |
+| M5 | perm cred vs setuid | ⬜ | cred 真源 `linux_proc_resource_t` |
 | M6 | 文档三角 | 🚧 | 本文 + ARCHITECTURE + IMPLEMENTATION_STATUS |
 
 ---

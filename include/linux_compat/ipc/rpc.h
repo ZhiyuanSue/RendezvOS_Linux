@@ -10,7 +10,7 @@
 #include <rendezvos/ipc/kmsg.h>
 #include <rendezvos/ipc/message.h>
 #include <rendezvos/ipc/port.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 /*
  * IPC helpers on core send_msg/recv_msg + kmsg TLV (reply port = 't').
@@ -67,7 +67,7 @@ i64 ipc_rpc_call_va(Message_Port_t* server_port, Message_Port_t* reply_port,
 
 /*
  * Same post-commit wait as ipc_rpc_call_va, but never returns -EINTR even
- * before send (kernel-internal completion RPCs, e.g. TASK_REAP_SYNC / VFS).
+ * before send (kernel-internal completion RPCs, e.g. VFS).
  */
 i64 ipc_rpc_call_va_uninterruptible(Message_Port_t* server_port,
                                     Message_Port_t* reply_port, u16 req_opcode,

@@ -7,7 +7,7 @@
 #include <rendezvos/ipc/kmsg.h>
 #include <rendezvos/ipc/kmsg_system.h>
 #include <rendezvos/ipc/port.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 #include "vfs_backend.h"
 

@@ -50,7 +50,7 @@
 
 | 项 | 建议 |
 |----|------|
-| 存储 | `linux_proc_append_t.cwd[VFS_PATH_MAX]`，初始 `"/"` |
+| 存储 | `linux_proc_resource_t.cwd[VFS_PATH_MAX]`，初始 `"/"` |
 | chdir | `sys_chdir` → RPC `KMSG_OP_VFS_CHDIR` 或 compat 内 lookup 目录后写 cwd |
 | getcwd | 去掉 `fake_cwd`；从 append 或 RPC 读真实 cwd |
 | 校验 | chdir 到非目录 → `-ENOTDIR`；不存在 → `-ENOENT` |

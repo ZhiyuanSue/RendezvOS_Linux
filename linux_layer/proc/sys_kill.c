@@ -6,7 +6,7 @@
 #include <linux_compat/signal/signal_types.h>
 #include <linux_compat/signal/signal_queue.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <syscall.h>
 
 /*
@@ -30,7 +30,7 @@ i64 sys_kill(i64 pid_i, i64 sig_i)
 
         /* sig == 0 只做存在性检查 */
         if (sig == 0) {
-                Tcb_Base *target = find_task_by_pid(pid);
+                linux_proc_resource_t *target = find_proc_by_pid(pid);
                 return target ? 0 : -LINUX_ESRCH;
         }
 
@@ -40,7 +40,7 @@ i64 sys_kill(i64 pid_i, i64 sig_i)
         }
 
         /* 找到目标进程 */
-        Tcb_Base *target = find_task_by_pid(pid);
+        linux_proc_resource_t *target = find_proc_by_pid(pid);
         if (!target) {
                 return -LINUX_ESRCH;
         }

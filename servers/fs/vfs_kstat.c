@@ -8,7 +8,7 @@
 #include <linux_compat/errno.h>
 #include <linux_compat/linux_mm_radix.h>
 #include <rendezvos/mm/vmm.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 u64 vfs_path_to_ino(const char *path)
 {
@@ -75,7 +75,7 @@ void linux_user_stat_from_kstat(const vfs_kstat_t *in, linux_user_stat_t *out)
         out->st_ctime_nsec = in->st_ctime_nsec;
 }
 
-i64 vfs_store_inode_stat(Tcb_Base *task, u64 user_statbuf,
+i64 vfs_store_inode_stat(linux_proc_resource_t *task, u64 user_statbuf,
                          const vfs_inode_t *ino)
 {
         vfs_kstat_t kstat;

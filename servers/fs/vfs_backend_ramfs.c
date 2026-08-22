@@ -10,7 +10,7 @@
 #include <linux_compat/ipc/rpc.h>
 #include <modules/log/log.h>
 #include <rendezvos/task/initcall.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 static u16 vfs_ramfs_service_id;
 static Thread_Base *vfs_ramfs_thread_ptr;

@@ -2,7 +2,7 @@
 
 **地位**：与 [`EXIT_CLEAN.md`](EXIT_CLEAN.md) 配套的权威交互模型。
 
-- `EXIT_CLEAN`：谁删线程 / 谁发 `EXIT_NOTIFY` / `exit_state` / `TASK_REAP_SYNC`。
+- `EXIT_CLEAN`（v2）：谁删线程 / 谁发 `EXIT_NOTIFY` / `exit_state`；parent **本地** `linux_proc_reap`。
 - **本文**：父进程在阻塞 wait、收尸返回、信号投递、再 wait 上的合法顺序与禁止项。
 
 **实现纪律**：先改本文并达成一致，再改 `linux_layer/`。
@@ -13,9 +13,8 @@
 
 ```text
                     ┌─────────────────────────────────────┐
-  child exit        │  Channel R — Reap (EXIT_CLEAN)      │
-  ─────────────────►│  EXIT_NOTIFY → wait4 → REAPED       │
-                    │  → TASK_REAP_SYNC                    │
+  child exit        │  Channel R — Reap (EXIT_CLEAN v2) │
+  ─────────────────►│  EXIT_NOTIFY → wait4 → linux_proc_reap (local) │
                     └─────────────────────────────────────┘
   child exit        ┌─────────────────────────────────────┐
   ─────────────────►│  Channel S — Signal (Layer A/B)     │
@@ -49,7 +48,7 @@
 
 ```text
 T1  child exit → EXIT_NOTIFY + SIGCHLD pending
-T2  parent wait4 被 EXIT_NOTIFY 唤醒 → REAPED + TASK_REAP_SYNC → 返回 child pid
+T2  parent wait4 被 EXIT_NOTIFY 唤醒 → wstatus → linux_proc_reap → 返回 child pid
 T3  syscall 出口：Layer B 可投递 pending（含 SIGCHLD）
 T4  parent 再 wait(-1) → -ECHILD（Linux 合法，表示无未收尸子进程）
 ```

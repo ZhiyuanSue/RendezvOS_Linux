@@ -33,5 +33,11 @@ error_t linux_copy_vspace(VSpace *parent_vs, VSpace **child_vs_ptr)
                 return e;
         }
 
+        e = register_vspace(*child_vs_ptr, &root_vspace);
+        if (e != REND_SUCCESS) {
+                del_vspace(child_vs_ptr);
+                return e;
+        }
+
         return REND_SUCCESS;
 }

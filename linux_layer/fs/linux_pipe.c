@@ -10,11 +10,12 @@
 #include <linux_compat/fs/linux_fd_table.h>
 #include <linux_compat/fs/linux_pipe.h>
 #include <linux_compat/linux_mm_radix.h>
+#include <linux_compat/proc_compat.h>
 
 #include <common/string.h>
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 #define LINUX_PIPE_BUF_SIZE 4096u
 #define LINUX_PIPE_MAX      64u
@@ -140,7 +141,7 @@ void linux_pipe_fd_closed(u32 pipe_id, bool read_end)
         linux_pipe_release(pipe_id);
 }
 
-i64 linux_pipe_create2(Tcb_Base *task, u64 user_pipefd, i32 flags)
+i64 linux_pipe_create2(linux_proc_resource_t *task, u64 user_pipefd, i32 flags)
 {
         linux_fd_entry_t read_ent;
         linux_fd_entry_t write_ent;
@@ -162,7 +163,7 @@ i64 linux_pipe_create2(Tcb_Base *task, u64 user_pipefd, i32 flags)
                 open_flags |= LINUX_O_NONBLOCK;
         }
 
-        if (!task || !task->vs) {
+        if (!task || !linux_current_vs()) {
                 return -LINUX_EFAULT;
         }
 
@@ -201,7 +202,7 @@ i64 linux_pipe_create2(Tcb_Base *task, u64 user_pipefd, i32 flags)
         fds[0] = read_fd;
         fds[1] = write_fd;
 
-        e = linux_mm_store_to_user(task->vs, user_pipefd, fds, sizeof(fds));
+        e = linux_mm_store_to_user(linux_current_vs(), user_pipefd, fds, sizeof(fds));
         if (e != REND_SUCCESS) {
                 (void)linux_fd_close(task, write_fd);
                 (void)linux_fd_close(task, read_fd);
@@ -211,13 +212,13 @@ i64 linux_pipe_create2(Tcb_Base *task, u64 user_pipefd, i32 flags)
         return 0;
 }
 
-i64 linux_pipe_read(Tcb_Base *task, u32 pipe_id, u64 user_buf, u64 count)
+i64 linux_pipe_read(linux_proc_resource_t *task, u32 pipe_id, u64 user_buf, u64 count)
 {
         linux_pipe_t *pipe = linux_pipe_from_id(pipe_id);
         u8 chunk[256];
         u64 total = 0;
 
-        if (!task || !task->vs || !pipe || pipe->readers == 0) {
+        if (!task || !linux_current_vs() || !pipe || pipe->readers == 0) {
                 return -LINUX_EBADF;
         }
 
@@ -248,7 +249,7 @@ i64 linux_pipe_read(Tcb_Base *task, u32 pipe_id, u64 user_buf, u64 count)
 
                 n = (u32)chunk_len;
                 memcpy(chunk, pipe->data + off, n);
-                if (linux_mm_store_to_user(task->vs, user_buf + total, chunk, n)
+                if (linux_mm_store_to_user(linux_current_vs(), user_buf + total, chunk, n)
                     != REND_SUCCESS) {
                         return total > 0 ? (i64)total : -LINUX_EFAULT;
                 }
@@ -265,13 +266,13 @@ i64 linux_pipe_read(Tcb_Base *task, u32 pipe_id, u64 user_buf, u64 count)
         return (i64)total;
 }
 
-i64 linux_pipe_write(Tcb_Base *task, u32 pipe_id, u64 user_buf, u64 count)
+i64 linux_pipe_write(linux_proc_resource_t *task, u32 pipe_id, u64 user_buf, u64 count)
 {
         linux_pipe_t *pipe = linux_pipe_from_id(pipe_id);
         u8 chunk[256];
         u64 total = 0;
 
-        if (!task || !task->vs || !pipe || pipe->writers == 0) {
+        if (!task || !linux_current_vs() || !pipe || pipe->writers == 0) {
                 return -LINUX_EBADF;
         }
 
@@ -302,7 +303,7 @@ i64 linux_pipe_write(Tcb_Base *task, u32 pipe_id, u64 user_buf, u64 count)
                 }
 
                 n = (u32)chunk_len;
-                if (linux_mm_load_from_user(task->vs, user_buf + total, chunk, n)
+                if (linux_mm_load_from_user(linux_current_vs(), user_buf + total, chunk, n)
                     != REND_SUCCESS) {
                         return total > 0 ? (i64)total : -LINUX_EFAULT;
                 }

@@ -81,9 +81,11 @@ flowchart TB
 
 | 规则 | 说明 |
 |------|------|
-| **登记簿** | `pid`/`ppid`/`pgid`/zombie 状态以 `proc_registry` 为真源（[`DATA_MODEL.md`](DATA_MODEL.md)）。 |
-| **exit_group** | 最后一线程才 `delete_task`；与 `clean_server`、wait 唤醒顺序一致。 |
-| **tgid** | 多线程 Linux 语义需要 `linux_proc_append.tgid`；未实现前文档与测例不得假设 `getpid()==gettid()` 恒成立。 |
+| **Core 模型** | 仅 `Thread_Base` + `VSpace`；进程语义在堆 `linux_proc_resource_t`（见 [`protocols/THREAD_AND_VSPACE.md`](protocols/THREAD_AND_VSPACE.md)）。 |
+| **登记簿** | `pid`/`ppid`/`pgid`/zombie 以 `proc_registry` 为真源（[`DATA_MODEL.md`](DATA_MODEL.md)）。 |
+| **fork/clone** | 新 AS：`clone_vspace` + `register_vspace` + `copy_thread`；共享 AS：`ref_get` 后 `copy_thread`。 |
+| **exit_group** | 末线程 `thread_number==0` 后 `fini` detach；`linux_proc_reap` 与 [`EXIT_CLEAN.md`](protocols/EXIT_CLEAN.md) 一致。 |
+| **tgid** | 多线程需 `linux_proc_resource_t.tgid`；未实现前不得假设 `getpid()==gettid()` 恒成立。 |
 
 ### 3.3 IPC 与阻塞 syscall
 
@@ -121,6 +123,7 @@ compat **假定** core 已提供下列机制；**不要求** core 理解 Linux�
 | `vspace_clear_user_mappings` | exec 清映射 | 同上 §0.5 |
 | `mm_user_utils_*` + radix 锁序 | mmap/munmap/mprotect | `MM_AND_COW.md` |
 | `register_fixed_trap(PAGE_FAULT)` | COW / lazy / SIGSEGV | `trap.md` |
+| `create_thread` / `copy_thread` / `register_vspace` | fork、boot、server 线程 | `THREAD_AND_VSPACE.md`, `task-thread.md` |
 | `schedule` / 线程状态 | 阻塞、exit、server 循环 | `task-thread.md` |
 | `send_msg` / `recv_msg` / port 表 | wait、RPC、clean | `ipc.md` |
 | 弱符号 `syscall(trap_frame*)` | 全部分发 | `trap.md` |
@@ -142,7 +145,7 @@ compat **假定** core 已提供下列机制；**不要求** core 理解 Linux�
 
 | 优先级 | 能力 | 档位 | compat 侧 |
 |--------|------|------|-----------|
-| **P0 审核** | 调度 + `current_vspace` 不变式（kernel 线程回 `root_vspace`；无 ready 落 idle） | M1–M4 | 无需新 API，审 `task_manager.c` |
+| **P0 审核** | 调度 + `current_vspace` 不变式（user 切换才换 AS；teardown 不卸 leftover） | M1–M4 | 见 `EXIT_CLEAN` / `task-thread.md` |
 | **P0 审核** | `clone_vspace` + COW 缺页路径 | M1–M3 | 标志在 `linux_copy_vspace` |
 | **P1** | SMP：`arch_tlb_invalidate_vspace_page` + 可选 `vspace_quiesce` 辅助 | M4 | 停线程政策仍在 compat |
 | **P2** | **线程睡眠/唤醒原语**（非 port，如按用户态地址键 wait/wake） | M3 | `futex`/`pthread` 语义 |
@@ -166,7 +169,7 @@ compat 日常迭代 **不必** 全盘 review core。仅在下列 **审阅包** �
 |----|----------|--------|------|
 | **A 调度** | 改 `schedule`、exit 路径、server 主循环 | user↔kernel `vspace`、idle | 签字：不变式 OK / 已知限制一句 |
 | **B fork/COW** | 改 `clone_vspace`、radix fault、fork | 锁序、COW 测例设计 | 签字：fork 写压力可信 |
-| **C 销毁/SMP** | 开 SMP、`delete_task`、exec 多线程 | TLB、`del_vspace`、quiesce | 签字：单核 ship / SMP 前置 TLBI |
+| **C 销毁/SMP** | 开 SMP、末线程 `del_vspace`、exec 多线程 | TLB、`linux_proc_reap`、quiesce | 签字：单核 ship / SMP 前置 TLBI |
 | **D IPC+exit** | wait/RPC/clean 协议变更 | exit 是否唤醒阻塞方；无 cancel | 签字：无 cancel 可接受 |
 
 compat 侧审查：以 [`SYSCALLS.md`](SYSCALLS.md) 阶段 + [`USER_TESTS.md`](USER_TESTS.md) 为准，不按 syscall 个数。

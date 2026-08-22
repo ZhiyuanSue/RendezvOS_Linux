@@ -1,92 +1,56 @@
 /*
- * wait4 port wake: child exit notify + signal EINTR interrupt (see sys_wait.c).
+ * wait4 port wake: EXIT_NOTIFY delivery + signal EINTR interrupt (sys_wait.c).
  */
 
 #include <linux_compat/ipc/exit_protocol.h>
-#include <linux_compat/proc/clean_ipc.h>
 #include <linux_compat/proc/wait_ipc.h>
+#include <linux_compat/proc_compat.h>
 #include <linux_compat/proc_registry.h>
 #include <linux_compat/signal/signal_deliver.h>
-#include <linux_compat/initcall.h>
 #include <modules/log/log.h>
 #include <common/dsa/list.h>
 #include <rendezvos/ipc/ipc.h>
-#include <rendezvos/sync/cas_lock.h>
 #include <rendezvos/ipc/kmsg.h>
 #include <rendezvos/ipc/message.h>
 #include <rendezvos/ipc/port.h>
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
-#include <rendezvos/task/thread_loader.h>
-#include <rendezvos/task/initcall.h>
+#include <rendezvos/task/thread.h>
 
 typedef struct linux_wait_pending_exit {
         struct list_entry node;
+        linux_proc_resource_t *child;
         pid_t pid;
         i32 exit_code;
 } linux_wait_pending_exit_t;
 
-static error_t linux_proc_wait_deliver_message(Message_t *msg,
-                                               Message_Port_t *port)
+bool linux_proc_wait_pid_matches(i32 want_pid, pid_t child_pid,
+                                 linux_proc_resource_t *parent)
 {
-        error_t err;
-
-        err = enqueue_msg_for_send(msg);
-        if (err != REND_SUCCESS) {
-                ref_put(&msg->ms_queue_node.refcount, free_message_ref);
-                ref_put(&port->refcount, free_message_port_ref);
-                pr_error("[PROC/wait_ipc] enqueue_msg_for_send failed e=%d\n",
-                         (int)err);
-                return err;
-        }
-
-        err = send_msg(port);
-        ref_put(&port->refcount, free_message_port_ref);
-        /*
-         * PORT_CLOSED: peer tore down wait/kernel port; core dropped orphan.
-         * Treat as delivered-from-sender (no live waiter).
-         */
-        if (err == -E_REND_PORT_CLOSED)
-                return REND_SUCCESS;
-        if (err != REND_SUCCESS)
-                pr_error("[PROC/wait_ipc] send_msg failed e=%d\n", (int)err);
-        return err;
-}
-
-static bool wait_pending_pid_matches(i32 want_pid, pid_t child_pid,
-                                     Tcb_Base *parent,
-                                     linux_proc_append_t *parent_pa)
-{
-        Tcb_Base *child;
-        linux_proc_append_t *child_pa;
+        linux_proc_resource_t *child;
 
         if (want_pid == -1)
                 return true;
         if (want_pid > 0)
                 return child_pid == (pid_t)want_pid;
+        if (!parent)
+                return false;
 
-        child = find_task_by_pid(child_pid);
-        if (!child)
+        child = find_proc_by_pid(child_pid);
+        if (!child || child->ppid != parent->pid)
                 return false;
-        child_pa = linux_proc_append(child);
-        if (!child_pa || child_pa->ppid != parent->pid)
-                return false;
-        if (want_pid == 0) {
-                if (!parent_pa)
-                        return false;
-                return child_pa->pgid == parent_pa->pgid;
-        }
-        return child_pa->pgid == (pid_t)(-want_pid);
+        if (want_pid == 0)
+                return child->pgid == parent->pgid;
+        return child->pgid == (pid_t)(-want_pid);
 }
 
-bool linux_proc_wait_pending_push(linux_proc_append_t *parent_pa, pid_t pid,
-                                  i32 exit_code)
+bool linux_proc_wait_pending_push(linux_proc_resource_t *parent,
+                                  linux_proc_resource_t *child, i32 exit_code)
 {
         struct allocator *alloc;
         linux_wait_pending_exit_t *ent;
 
-        if (!parent_pa || pid <= 0)
+        if (!parent || !child || child->pid <= 0)
                 return false;
 
         alloc = percpu(kallocator);
@@ -98,37 +62,37 @@ bool linux_proc_wait_pending_push(linux_proc_append_t *parent_pa, pid_t pid,
                 return false;
 
         INIT_LIST_HEAD(&ent->node);
-        ent->pid = pid;
+        ent->child = child;
+        ent->pid = child->pid;
         ent->exit_code = exit_code;
-        list_add_tail(&ent->node, &parent_pa->pending_exits);
+        list_add_tail(&ent->node, &parent->pending_exits);
         return true;
 }
 
-bool linux_proc_wait_pending_take(linux_proc_append_t *parent_pa, i32 want_pid,
-                                  Tcb_Base *parent, pid_t *pid_out,
+bool linux_proc_wait_pending_take(linux_proc_resource_t *parent, i32 want_pid,
+                                  linux_proc_resource_t **child_out,
                                   i32 *exit_code_out)
 {
         struct list_entry *pos;
         struct list_entry *n;
         struct allocator *alloc;
 
-        if (!parent_pa || !parent || !pid_out || !exit_code_out)
+        if (!parent || !child_out || !exit_code_out)
                 return false;
-        if (!list_node_is_valid(&parent_pa->pending_exits)
-            || list_empty(&parent_pa->pending_exits))
+        if (!list_node_is_valid(&parent->pending_exits)
+            || list_empty(&parent->pending_exits))
                 return false;
 
         alloc = percpu(kallocator);
-        list_for_each_safe(pos, n, &parent_pa->pending_exits)
+        list_for_each_safe(pos, n, &parent->pending_exits)
         {
                 linux_wait_pending_exit_t *ent =
                         list_entry(pos, linux_wait_pending_exit_t, node);
 
-                if (!wait_pending_pid_matches(
-                            want_pid, ent->pid, parent, parent_pa))
+                if (!linux_proc_wait_pid_matches(want_pid, ent->pid, parent))
                         continue;
 
-                *pid_out = ent->pid;
+                *child_out = ent->child;
                 *exit_code_out = ent->exit_code;
                 list_del_init(&ent->node);
                 if (alloc && alloc->m_free)
@@ -138,19 +102,19 @@ bool linux_proc_wait_pending_take(linux_proc_append_t *parent_pa, i32 want_pid,
         return false;
 }
 
-void linux_proc_wait_pending_drain(linux_proc_append_t *parent_pa)
+void linux_proc_wait_pending_drain(linux_proc_resource_t *parent)
 {
         struct list_entry *pos;
         struct list_entry *n;
         struct allocator *alloc;
 
-        if (!parent_pa)
+        if (!parent)
                 return;
-        if (!list_node_is_valid(&parent_pa->pending_exits))
+        if (!list_node_is_valid(&parent->pending_exits))
                 return;
 
         alloc = percpu(kallocator);
-        list_for_each_safe(pos, n, &parent_pa->pending_exits)
+        list_for_each_safe(pos, n, &parent->pending_exits)
         {
                 linux_wait_pending_exit_t *ent =
                         list_entry(pos, linux_wait_pending_exit_t, node);
@@ -159,7 +123,7 @@ void linux_proc_wait_pending_drain(linux_proc_append_t *parent_pa)
                 if (alloc && alloc->m_free)
                         alloc->m_free(alloc, ent);
         }
-        INIT_LIST_HEAD(&parent_pa->pending_exits);
+        INIT_LIST_HEAD(&parent->pending_exits);
 }
 
 static bool linux_proc_wait_post_interrupt(Message_Port_t *port)
@@ -187,18 +151,18 @@ static bool linux_proc_wait_post_interrupt(Message_Port_t *port)
         return err == REND_SUCCESS;
 }
 
-void linux_proc_wait_wake_for_signal(Thread_Base *thread, Tcb_Base *process)
+void linux_proc_wait_wake_for_signal(Thread_Base *thread, linux_proc_resource_t *proc)
 {
         Message_Port_t *wait_port;
 
-        if (!thread || !process)
+        if (!thread || !proc)
                 return;
         if (thread_get_status(thread) != thread_status_block_on_receive)
                 return;
         if (!linux_signal_wait4_should_return_eintr(thread))
                 return;
 
-        wait_port = proc_get_or_create_wait_port(process->pid);
+        wait_port = proc_get_or_create_wait_port(proc->pid);
         if (!wait_port)
                 return;
         if ((Message_Port_t *)thread->port_ptr != wait_port) {
@@ -228,7 +192,7 @@ bool linux_proc_wait_poke(pid_t parent_pid)
 }
 
 linux_proc_try_result_t linux_proc_try_post_exit_notify(pid_t parent_pid,
-                                                        pid_t child_pid,
+                                                        linux_proc_resource_t *child,
                                                         i32 exit_code)
 {
         Message_Port_t *wait_port;
@@ -236,7 +200,7 @@ linux_proc_try_result_t linux_proc_try_post_exit_notify(pid_t parent_pid,
         Message_t *msg;
         error_t err;
 
-        if (parent_pid <= 0 || child_pid <= 0)
+        if (parent_pid <= 0 || !child || child->pid <= 0)
                 return LINUX_PROC_TRY_FAIL;
 
         wait_port = proc_get_or_create_wait_port(parent_pid);
@@ -246,11 +210,11 @@ linux_proc_try_result_t linux_proc_try_post_exit_notify(pid_t parent_pid,
         md = kmsg_create(wait_port->service_id,
                          KMSG_OP_PROC_EXIT_NOTIFY,
                          LINUX_KMSG_FMT_EXIT_NOTIFY,
-                         (i64)child_pid,
+                         (i64)child->pid,
+                         child,
                          exit_code);
         if (!md) {
                 ref_put(&wait_port->refcount, free_message_port_ref);
-                /* Transient OOM — park and retry. */
                 return LINUX_PROC_TRY_AGAIN;
         }
 
@@ -261,11 +225,6 @@ linux_proc_try_result_t linux_proc_try_post_exit_notify(pid_t parent_pid,
                 return LINUX_PROC_TRY_AGAIN;
         }
 
-        /*
-         * send_pending_msg path: does not occupy listen send_msg_queue, so
-         * the same clean thread can still recv TASK_REAP_SYNC. On AGAIN the
-         * helper drops msg; caller parks the (ppid,child,code) job.
-         */
         err = ipc_system_try_deliver(wait_port, msg, false);
         ref_put(&wait_port->refcount, free_message_port_ref);
 
@@ -275,204 +234,3 @@ linux_proc_try_result_t linux_proc_try_post_exit_notify(pid_t parent_pid,
                 return LINUX_PROC_TRY_AGAIN;
         return LINUX_PROC_TRY_FAIL;
 }
-
-bool linux_proc_post_exit_notify(pid_t parent_pid, pid_t child_pid,
-                                 i32 exit_code)
-{
-        Message_Port_t *wait_port;
-        Msg_Data_t *md;
-        Message_t *msg;
-        error_t err;
-
-        if (parent_pid <= 0 || child_pid <= 0)
-                return false;
-
-        /*
-         * Legacy blocking path (tests / rare callers). Clean listen uses
-         * linux_proc_try_post_exit_notify + park instead.
-         */
-        for (;;) {
-                wait_port = proc_get_or_create_wait_port(parent_pid);
-                if (!wait_port)
-                        return false;
-
-                md = kmsg_create(wait_port->service_id,
-                                 KMSG_OP_PROC_EXIT_NOTIFY,
-                                 LINUX_KMSG_FMT_EXIT_NOTIFY,
-                                 (i64)child_pid,
-                                 exit_code);
-                if (!md) {
-                        ref_put(&wait_port->refcount, free_message_port_ref);
-                        schedule(percpu(core_tm));
-                        continue;
-                }
-
-                msg = create_message_with_msg(md);
-                ref_put(&md->refcount, free_msgdata_ref_default);
-                if (!msg) {
-                        ref_put(&wait_port->refcount, free_message_port_ref);
-                        schedule(percpu(core_tm));
-                        continue;
-                }
-
-                err = linux_proc_wait_deliver_message(msg, wait_port);
-                return err == REND_SUCCESS;
-        }
-}
-
-bool linux_proc_post_kernel_exit_notify(pid_t child_pid, i32 exit_code)
-{
-        Message_Port_t *kernel_port;
-        Msg_Data_t *md;
-        Message_t *msg;
-        error_t err;
-
-        if (child_pid <= 0)
-                return false;
-
-        for (;;) {
-                kernel_port = thread_lookup_port(KERNEL_PORT_NAME);
-                if (!kernel_port) {
-                        pr_error("[PROC/wait_ipc] kernel port '%s' not found\n",
-                                 KERNEL_PORT_NAME);
-                        return false;
-                }
-
-                md = kmsg_create(kernel_port->service_id,
-                                 KMSG_OP_PROC_EXIT_NOTIFY,
-                                 LINUX_KMSG_FMT_EXIT_NOTIFY,
-                                 (i64)child_pid,
-                                 exit_code);
-                if (!md) {
-                        ref_put(&kernel_port->refcount, free_message_port_ref);
-                        schedule(percpu(core_tm));
-                        continue;
-                }
-
-                msg = create_message_with_msg(md);
-                ref_put(&md->refcount, free_msgdata_ref_default);
-                if (!msg) {
-                        ref_put(&kernel_port->refcount, free_message_port_ref);
-                        schedule(percpu(core_tm));
-                        continue;
-                }
-
-                err = linux_proc_wait_deliver_message(msg, kernel_port);
-                return err == REND_SUCCESS;
-        }
-}
-
-bool linux_proc_reap_zombie_by_pid(pid_t child_pid)
-{
-        Tcb_Base *child;
-        linux_proc_append_t *pa;
-        bool task_empty;
-        i64 sync_ret;
-
-        if (child_pid <= 0)
-                return false;
-
-        child = find_task_by_pid(child_pid);
-        if (!child)
-                return false;
-
-        pa = linux_proc_append(child);
-        if (!pa || pa->exit_state != LINUX_EXIT_ZOMBIE)
-                return false;
-
-        lock_cas(&child->thread_list_lock);
-        task_empty = (child->thread_number == 0);
-        if (!task_empty) {
-                unlock_cas(&child->thread_list_lock);
-                return false;
-        }
-        pa->exit_state = LINUX_EXIT_REAPED;
-        unlock_cas(&child->thread_list_lock);
-
-        sync_ret = linux_clean_task_reap_sync(LINUX_INIT_REAP_PPID, child_pid);
-        if (sync_ret < 0 && find_task_by_pid(child_pid) != NULL) {
-                pa->exit_state = LINUX_EXIT_ZOMBIE;
-                return false;
-        }
-
-        return true;
-}
-
-/*
- * Dedicated reaper: keeps kernel_port recv loop free for EXIT_NOTIFY.
- * Protocol: protocols/EXIT_CLEAN.md (init must not nest SYNC in notify
- * handler).
- */
-#define LINUX_INIT_REAP_QUEUE_CAP 64u
-
-static pid_t linux_init_reap_queue[LINUX_INIT_REAP_QUEUE_CAP];
-static u32 linux_init_reap_head;
-static u32 linux_init_reap_tail;
-static u32 linux_init_reap_count;
-static cas_lock_t linux_init_reap_lock;
-static bool linux_init_reaper_started;
-
-void linux_proc_schedule_init_reap(pid_t child_pid)
-{
-        if (child_pid <= 0)
-                return;
-
-        lock_cas(&linux_init_reap_lock);
-        if (linux_init_reap_count >= LINUX_INIT_REAP_QUEUE_CAP) {
-                unlock_cas(&linux_init_reap_lock);
-                pr_error("[PROC] init reap queue full, drop pid=%d\n",
-                         (int)child_pid);
-                return;
-        }
-        linux_init_reap_queue[linux_init_reap_tail] = child_pid;
-        linux_init_reap_tail =
-                (linux_init_reap_tail + 1u) % LINUX_INIT_REAP_QUEUE_CAP;
-        linux_init_reap_count++;
-        unlock_cas(&linux_init_reap_lock);
-}
-
-static void *linux_init_reaper_thread(void *arg)
-{
-        (void)arg;
-
-        for (;;) {
-                pid_t pid = 0;
-
-                lock_cas(&linux_init_reap_lock);
-                if (linux_init_reap_count > 0) {
-                        pid = linux_init_reap_queue[linux_init_reap_head];
-                        linux_init_reap_head = (linux_init_reap_head + 1u)
-                                               % LINUX_INIT_REAP_QUEUE_CAP;
-                        linux_init_reap_count--;
-                }
-                unlock_cas(&linux_init_reap_lock);
-
-                if (pid > 0)
-                        (void)linux_proc_reap_zombie_by_pid(pid);
-                else
-                        schedule(percpu(core_tm));
-        }
-        return NULL;
-}
-
-static void linux_init_reaper_init(void)
-{
-        Thread_Base *thr = NULL;
-        static char name[] = "init_reaper";
-
-        if (!linux_init_bsp_once(&linux_init_reaper_started))
-                return;
-
-        lock_init_cas(&linux_init_reap_lock);
-        if (gen_thread_from_func(
-                    &thr, linux_init_reaper_thread, name, percpu(core_tm), NULL)
-                    != REND_SUCCESS
-            || !thr) {
-                pr_error("[PROC] failed to start init_reaper thread\n");
-        } else {
-                pr_info("[PROC] init_reaper thread started\n");
-        }
-        linux_init_bsp_mark_done(&linux_init_reaper_started);
-}
-
-DEFINE_INIT(linux_init_reaper_init);

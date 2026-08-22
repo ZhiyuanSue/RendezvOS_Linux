@@ -1,6 +1,6 @@
 #include <modules/log/log.h>
 #include <rendezvos/error.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <rendezvos/trap/trap.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/fs/linux_fd_table.h>

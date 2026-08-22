@@ -1,7 +1,8 @@
 #include <linux_compat/errno.h>
 #include <linux_compat/linux_mm_radix.h>
+#include <linux_compat/proc_compat.h>
 #include <rendezvos/error.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <syscall.h>
 
 typedef struct {
@@ -35,19 +36,19 @@ static void linux_rlimit64_default(u32 resource, linux_rlimit64_t *out)
 
 i64 sys_prlimit64(i32 pid, u32 resource, u64 user_new_rlim, u64 user_old_rlim)
 {
-        Tcb_Base *task = get_cpu_current_task();
+        linux_proc_resource_t *task = linux_current_proc();
         VSpace *vs;
         linux_rlimit64_t rlim;
         error_t e;
 
-        if (!task || !task->vs) {
+        if (!task || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
         if (pid != 0 && pid != (i32)task->pid) {
                 return -LINUX_ESRCH;
         }
 
-        vs = task->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }

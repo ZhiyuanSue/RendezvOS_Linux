@@ -91,7 +91,7 @@ make ARCH=aarch64 config user build run | tee aarch64_run.log
 | I/O RPC | 第一参数是 **handle**，不是 compat fd |
 | fd 表 hdr | **勿**在 kstack 上大 struct；见 FD_TABLE §4 |
 | exit vs exec | exit **release only**；exec **reset** slice |
-| 测例 cookie | THREAD_REAP 早于 TASK_REAP；runner 等 pid 消失 |
+| 测例 cookie | `THREAD_REAP` + EXIT_NOTIFY / wait4（Path A）；boot_wait cookie 仅 Path-B |
 | fd 表 SMP | 多线程同进程改表无锁；见 EVOLUTION §SMP |
 
 ---

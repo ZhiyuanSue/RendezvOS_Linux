@@ -11,13 +11,14 @@
 #include <linux_compat/fs/linux_fd_table.h>
 #include <linux_compat/fs/linux_poll.h>
 #include <linux_compat/linux_mm_radix.h>
+#include <linux_compat/proc_compat.h>
 #include <linux_compat/time/linux_ktime.h>
 #include <linux_compat/time/linux_time_types.h>
 #include <modules/log/log.h>
 #include <rendezvos/error.h>
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <rendezvos/time.h>
 #include <syscall.h>
 
@@ -80,7 +81,7 @@ static i16 linux_poll_revents_for(const linux_fd_entry_t *ent, i16 want)
         return got;
 }
 
-static i64 linux_poll_scan(Tcb_Base *task, VSpace *vs, u64 ufds, u32 nfds)
+static i64 linux_poll_scan(linux_proc_resource_t *task, VSpace *vs, u64 ufds, u32 nfds)
 {
         struct allocator *alloc = percpu(kallocator);
         linux_pollfd_t *kfds;
@@ -216,17 +217,17 @@ static i32 linux_poll_remaining_ms(tick_t deadline)
 
 i64 sys_poll(u64 ufds, u32 nfds, i32 timeout_ms)
 {
-        Tcb_Base *task = get_cpu_current_task();
+        linux_proc_resource_t *task = linux_current_proc();
         VSpace *vs;
         i64 ready;
         i64 wait_ret;
         tick_t deadline = 0;
         bool have_deadline = false;
 
-        if (!task || !task->vs) {
+        if (!task || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
-        vs = task->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }
@@ -300,7 +301,7 @@ i64 sys_poll(u64 ufds, u32 nfds, i32 timeout_ms)
 i64 sys_ppoll(u64 ufds, u32 nfds, u64 user_tsp, u64 user_sigmask,
               u64 sigsetsize)
 {
-        Tcb_Base *task;
+        linux_proc_resource_t *task;
         VSpace *vs;
         linux_timespec_t ts;
         i64 ms;
@@ -313,11 +314,11 @@ i64 sys_ppoll(u64 ufds, u32 nfds, u64 user_tsp, u64 user_sigmask,
                 return sys_poll(ufds, nfds, -1);
         }
 
-        task = get_cpu_current_task();
-        if (!task || !task->vs) {
+        task = linux_current_proc();
+        if (!task || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
-        vs = task->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }

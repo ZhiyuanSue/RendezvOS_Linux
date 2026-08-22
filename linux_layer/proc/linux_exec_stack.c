@@ -7,10 +7,11 @@
 #include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/mm/linux_page_slice_file.h>
 #include <linux_compat/proc/linux_exec_stack.h>
+#include <linux_compat/proc_compat.h>
 #include <modules/elf/elf.h>
 #include <rendezvos/error.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 #define LINUX_EXEC_AUXV_MAX_PAIRS 24
 
@@ -108,7 +109,7 @@ static u64 linux_exec_rng_state = 1;
 static void linux_exec_fill_random16(u8 buf[LINUX_EXEC_RANDOM_BYTES], vaddr mix)
 {
         u64 s = linux_exec_rng_state;
-        Tcb_Base *task = get_cpu_current_task();
+        linux_proc_resource_t *task = linux_current_proc();
         Thread_Base *thr = get_cpu_current_thread();
         u64 lo, hi;
 

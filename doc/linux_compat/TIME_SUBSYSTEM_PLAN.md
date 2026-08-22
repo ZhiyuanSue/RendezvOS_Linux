@@ -148,7 +148,7 @@ void linux_time_init_from_arch(void);   /* called from linux initcall */
 | `u64 rendezvos_ktime_monotonic_ns(void)` | 统一单调源（x86: TSC/APIC；aarch64: CNTVCT） |
 | `void rendezvos_ktime_init(void)` | boot 校准、频率 |
 | `error_t thread_sleep_until_ns(Thread_Base *, u64 deadline_ns)` | 真 sleep + timer IRQ 唤醒 |
-| 可选：`struct task_cputime` in TCB append | `times()` |
+| 可选：`struct task_cputime` in `linux_proc` / thread append | `times()` |
 
 linux_layer 档 B  syscall 层 **接口不变**，只替换 `linux_ktime.c` 后端。
 
@@ -181,7 +181,7 @@ linux_layer 档 B  syscall 层 **接口不变**，只替换 `linux_ktime.c` 后�
    aarch64: export CNTVCT_EL0 via header; document CNTFRQ
 
 3. task/
-   + thread timer wait: TCB flag + sorted per-CPU timer queue OR
+   + thread timer wait: thread flag + sorted per-CPU timer queue OR
      reuse jeffies compare in schedule() path
    + thread_sleep_until_ns() — block, wakeup on IRQ if deadline passed
 

@@ -9,7 +9,7 @@
 #include <linux_compat/signal/signal_uapi.h>
 #include <rendezvos/error.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <syscall.h>
 
 static inline bool signal_is_valid(int signum)
@@ -24,13 +24,13 @@ static inline bool signal_can_catch_or_ignore(int signum)
 
 i64 sys_rt_sigaction(i64 signum_i, u64 act_ptr, u64 oldact_ptr, u64 sigsetsize)
 {
-        Tcb_Base* current = get_cpu_current_task();
+        linux_proc_resource_t* current = linux_current_proc();
         linux_signal_proc_state_t* ps;
         VSpace* vs;
         int signum = (int)signum_i;
         sigaction_t new_action;
 
-        if (!current || !current->vs) {
+        if (!current || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
 
@@ -39,7 +39,7 @@ i64 sys_rt_sigaction(i64 signum_i, u64 act_ptr, u64 oldact_ptr, u64 sigsetsize)
                 return -LINUX_ENOMEM;
         }
 
-        vs = current->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }

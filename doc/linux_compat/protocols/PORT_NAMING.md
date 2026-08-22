@@ -72,7 +72,7 @@
 ```
 
 - `caller_id`：通常为 **Linux `pid`**（或项目内等价进程 id）；特殊调用方用文档写死的字面量（如 init 收尸用 `0` / `init`，须在该服务协议里写明）。
-- 示例：`vfs_cli_12`、`clean_cli_0`。
+- 示例：`vfs_cli_12`。
 
 Client **不**编码 cpu：reply 跟进程走，不跟某核的 server 实例绑死。
 
@@ -119,8 +119,7 @@ Client **不**编码 cpu：reply 跟进程走，不跟某核的 server 实例绑
 
 | 角色 | 现行名字 | 说明 |
 |------|----------|------|
-| clean listen | `clean_listen` | **§4 全局单例 port**；每核一条线程都 `recv` 该 port（跨核收尸） |
-| clean client | `clean_cli_{pid}` | 含 init 的 `clean_cli_0` |
+| clean listen | `clean_listen` | **§4 全局单例 port**；每核一条线程都 `recv` 该 port（跨核收尸）；**无 client reply port** |
 | vfs listen | `vfs_listen` | 绑 VFS service CPU（§4） |
 | vfs client | `vfs_cli_{pid}` | 用户进程 → VFS |
 | vfs kernel client | `vfs_cli_k_srv` | VFS → backend（listen 串行） |

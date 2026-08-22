@@ -10,7 +10,7 @@
 
 - **入口**：fork 的实现通过 core 侧 [`copy_thread()`](../../core/kernel/task/thread.c) 克隆用户线程上下文。
 - **架构**：尤以 **x86_64** 为典型：**用户态 `%rsp`** 在syscall 入口保存在 **per-CPU scratch**（如 `user_rsp_scratch`），而 `Thread_Base::ctx.user_rsp` 往往主要在 **上下文切换** 的路径上更新；在长 syscall（或尚未切走 CPU）的阶段， **`ctx.user_rsp` 可能落后于真实硬件栈指针**。
-- **AArch64**：同类问题表现在 **SP_EL0**、用户 TLS（如 **TPIDR_EL0**）——同样应在 **syscall/陷入服务** 语义下优先读硬件寄存器，而不是盲信最近一次 `switch_to` 写回的 `Arch_Task_Context` 快照。
+- **AArch64**：同类问题表现在 **SP_EL0**、用户 TLS（如 **TPIDR_EL0**）——同样应在 **syscall/陷入服务** 语义下优先读硬件寄存器，而不是盲信最近一次 `switch_to` 写回的 `Arch_Thread_Context` 快照。
 
 ### 症状
 
@@ -33,9 +33,9 @@ fork 在用户进程里往往通过 **syscall（如 x86 clone/fork ABI）** 进�
 
 ### 参考锚点
 
-- [`core/kernel/task/thread.c`](../../core/kernel/task/thread.c)： `copy_thread` 内 **`Arch_Task_Context src_ctx`** + **`arch_ctx_refresh`** 再 **`arch_ctx_merge_from_src`**。
+- [`core/kernel/task/thread.c`](../../core/kernel/task/thread.c)： `copy_thread` 内 **`Arch_Thread_Context src_ctx`** + **`arch_ctx_refresh`** 再 **`arch_ctx_merge_from_src`**。
 - [`core/arch/x86_64/task/arch_thread.c`](../../core/arch/x86_64/task/arch_thread.c)、[`core/arch/aarch64/task/arch_thread.c`](../../core/arch/aarch64/task/arch_thread.c)：`arch_ctx_refresh` 的实现。
-- 头文件：[`core/include/arch/x86_64/tcb_arch.h`](../../core/include/arch/x86_64/tcb_arch.h)、[`core/include/arch/aarch64/tcb_arch.h`](../../core/include/arch/aarch64/tcb_arch.h)。
+- 头文件：[`core/include/arch/x86_64/thread_arch.h`](../../core/include/arch/x86_64/thread_arch.h)、[`core/include/arch/aarch64/thread_arch.h`](../../core/include/arch/aarch64/thread_arch.h)。
 
 ---
 

@@ -19,7 +19,7 @@
 #include <linux_compat/time/linux_time_sleep.h>
 #include <linux_compat/initcall.h>
 #include <modules/log/log.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <rendezvos/task/initcall.h>
 #include <rendezvos/ipc/ipc.h>
 #include <rendezvos/ipc/port.h>
@@ -27,95 +27,12 @@
 
 extern struct Port_Table *global_port_table;
 
-const task_append_hooks_t linux_task_append_hooks = {
-        .append_info_len = LINUX_PROC_APPEND_BYTES,
-        .copy = linux_task_append_copy,
-        .fini = linux_task_append_fini,
-};
-
 const thread_append_hooks_t linux_thread_append_hooks = {
         .append_info_len = LINUX_THREAD_APPEND_BYTES,
-        .init = linux_thread_append_init,
+        .init = NULL, /* user image: linux_exec_replace_image / prepare_new */
         .copy = linux_thread_append_copy,
         .fini = linux_thread_append_fini,
 };
-
-void linux_task_append_fini(Tcb_Base *tcb)
-{
-        Tcb_Base *task = tcb;
-        linux_proc_append_t *pa;
-        pid_t pid;
-
-        if (!task)
-                return;
-
-        pa = linux_proc_append(task);
-        if (pa)
-                linux_proc_wait_pending_drain(pa);
-
-        pid = task->pid;
-        proc_reparent_children(pid, LINUX_INIT_REAP_PPID);
-        proc_unregister_wait_port(pid);
-        ipc_rpc_unregister_port_by_pid(VFS_CLIENT_PORT_PREFIX, pid);
-        ipc_rpc_unregister_port_by_pid(CLEAN_CLIENT_PORT_PREFIX, pid);
-        unregister_process(task);
-        linux_signal_proc_destroy(task);
-        linux_fs_proc_destroy(task);
-}
-
-error_t linux_task_append_copy(Tcb_Base *dst, Tcb_Base *src)
-{
-        Tcb_Base *d = dst;
-        Tcb_Base *s = src;
-        linux_proc_append_t *spa;
-
-        if (!d) {
-                return -E_IN_PARAM;
-        }
-
-        spa = s ? linux_proc_append(s) : NULL;
-        if (spa) {
-                if (linux_signal_proc_fork(d, s) != REND_SUCCESS) {
-                        return -E_RENDEZVOS;
-                }
-                if (linux_fs_proc_fork(d, s) != REND_SUCCESS) {
-                        return -E_RENDEZVOS;
-                }
-        } else {
-                if (linux_signal_proc_attach(d) != REND_SUCCESS) {
-                        return -E_RENDEZVOS;
-                }
-                if (linux_fs_proc_attach(d) != REND_SUCCESS) {
-                        return -E_RENDEZVOS;
-                }
-        }
-
-        return REND_SUCCESS;
-}
-
-error_t linux_task_append_clone(Tcb_Base *dst, Tcb_Base *src, u64 clone_flags)
-{
-        Tcb_Base *d = dst;
-        Tcb_Base *s = src;
-
-        if (!d) {
-                return -E_IN_PARAM;
-        }
-        if (!s) {
-                return linux_task_append_copy(dst, NULL);
-        }
-        if (clone_flags & CLONE_VM) {
-                if (linux_signal_proc_attach(d) != REND_SUCCESS) {
-                        return -E_RENDEZVOS;
-                }
-        } else if (linux_signal_proc_fork(d, s) != REND_SUCCESS) {
-                return -E_RENDEZVOS;
-        }
-        if (linux_fs_proc_fork(d, s) != REND_SUCCESS) {
-                return -E_RENDEZVOS;
-        }
-        return REND_SUCCESS;
-}
 
 void linux_thread_append_fini(Thread_Base *thread)
 {
@@ -147,6 +64,7 @@ void linux_thread_append_fini(Thread_Base *thread)
 
         linux_time_sleep_port_teardown(thr);
         linux_signal_thread_destroy(thr);
+        linux_proc_detach_thread(thr);
 }
 
 error_t linux_thread_append_copy(Thread_Base *dst, Thread_Base *src)
@@ -168,52 +86,10 @@ error_t linux_thread_append_copy(Thread_Base *dst, Thread_Base *src)
          */
         dst_ta->boot_wait_cookie = 0;
         dst_ta->clear_tid = 0;
+        dst_ta->res = NULL;
+        INIT_LIST_HEAD(&dst_ta->res_thread_node);
 
         return linux_signal_thread_fork_inherit(d, s, true);
-}
-
-error_t linux_thread_append_init(Thread_Base *thread,
-                                 const elf_load_info_t *info)
-{
-        Thread_Base *thr = thread;
-        Tcb_Base *tcb = thr ? thr->belong_tcb : NULL;
-        linux_proc_append_t *pa;
-
-        if (!info) {
-                return -E_IN_PARAM;
-        }
-        if (!thr || !(thr->flags & THREAD_FLAG_USER)) {
-                pr_emer("[LINUX_ELF_INIT] ERROR: not a user thread (thr=%p)\n",
-                        (void *)thr);
-                return -E_IN_PARAM;
-        }
-
-        pa = linux_proc_append(tcb);
-        if (!tcb || !pa) {
-                pr_emer("[LINUX_ELF_INIT] ERROR: missing belong_tcb/pa (tcb=%p)\n",
-                        (void *)tcb);
-                return -E_IN_PARAM;
-        }
-
-        /*
-         * append.init for gen_task_from_elf / run_elf_program only.
-         * Linux user images must use linux_exec_replace_image (PID1 / sys_execve);
-         * this hook must not build argv/auxv (that was the old Path B bootstrap).
-         */
-        if (linux_user_task_prepare_new(tcb, thr) != REND_SUCCESS) {
-                pr_emer("[LINUX_ELF_INIT] ERROR: prepare_new failed pid=%d\n",
-                        tcb->pid);
-                return -E_RENDEZVOS;
-        }
-        linux_proc_set_heap_from_elf_load(tcb, info->max_load_end);
-
-        if (info->slice) {
-                struct page_slice *s = info->slice;
-
-                page_slice_destroy(&s);
-        }
-
-        return REND_SUCCESS;
 }
 
 static bool linux_elf_init_logged;

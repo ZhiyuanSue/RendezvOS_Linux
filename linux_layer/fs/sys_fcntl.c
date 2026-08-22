@@ -5,13 +5,14 @@
 #include <linux_compat/errno.h>
 #include <linux_compat/fs/linux_fcntl.h>
 #include <linux_compat/fs/linux_fd_table.h>
+#include <linux_compat/proc_compat.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <syscall.h>
 
 i64 sys_fcntl(i32 fd, i32 cmd, u64 arg)
 {
-        Tcb_Base *current = get_cpu_current_task();
+        linux_proc_resource_t *current = linux_current_proc();
         linux_fd_entry_t *ent;
         i32 newfd;
         i64 ret;

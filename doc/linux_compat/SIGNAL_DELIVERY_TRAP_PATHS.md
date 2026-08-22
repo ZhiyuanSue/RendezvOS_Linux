@@ -47,7 +47,7 @@ flowchart TB
   E --> C
 ```
 
-- **层 A**：只改 `linux_proc_append_t` / `linux_thread_append_t`（disposition、mask、pending），必要时 `thread_set_status` / `cancel_ipc`（与 `wait4`、EINTR 协调）。
+- **层 A**：只改 `linux_proc_resource_t` / `linux_thread_append_t`（disposition、mask、pending），必要时 `thread_set_status` / `cancel_ipc`（与 `wait4`、EINTR 协调）。
 - **层 B**：在**当前线程**、**当前这条返回用户态的路径**上执行；不阻塞在 `recv_msg`。
 - **层 C**：复用现有 exit/wait IPC；见 [`IPC_BASED_SIGNAL_DESIGN.md`](IPC_BASED_SIGNAL_DESIGN.md)。
 
@@ -61,8 +61,8 @@ flowchart TB
 
 | 位置 | 字段 | 语义 |
 |------|------|------|
-| `linux_proc_append_t` | `signal_dispositions[NSIG]` | 每进程 handler（`rt_sigaction`） |
-| `linux_proc_append_t` | `pending_signals` | 进程级 pending（部分信号） |
+| `linux_proc_resource_t` | `signal_dispositions[NSIG]` | 每进程 handler（`rt_sigaction`） |
+| `linux_proc_resource_t` | `pending_signals` | 进程级 pending（部分信号） |
 | `linux_thread_append_t` | `blocked_signals` | 每线程掩码（`rt_sigprocmask`） |
 | `linux_thread_append_t` | `pending_signals` | 每线程 pending |
 | `linux_thread_append_t` | `alt_stack` | 备用信号栈（`sigaltstack`） |
@@ -196,7 +196,7 @@ void linux_x86_deliver_on_syscall_return(struct trap_frame *tf, int sig,
 |------|----------|
 | 用户 PC → handler | `syscall_ctx->ELR` |
 | 用户 SP（若退出路径使用帧内 `SP`） | `syscall_ctx->SP`（与 `sys_clone` 一致） |
-| 用户 SP（EL0 栈指针寄存器） | 同时维护 **`Arch_Task_Context.sp_el0`** / 必要时 `msr SP_EL0`（与 `arch_ctx_refresh` 语义一致） |
+| 用户 SP（EL0 栈指针寄存器） | 同时维护 **`Arch_Thread_Context.sp_el0`** / 必要时 `msr SP_EL0`（与 `arch_ctx_refresh` 语义一致） |
 | Syscall 返回值 | `syscall_ctx->REGS[0]` 或按 handler 调用约定 |
 | 保存上下文 | 用户栈 **aarch64 rt_sigframe** |
 

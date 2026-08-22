@@ -10,9 +10,10 @@
 #include <modules/log/log.h>
 #include <rendezvos/system/powerd.h>
 #include <rendezvos/task/initcall.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <rendezvos/trap/trap.h>
 #include <linux_compat/errno.h>
+#include <linux_compat/proc_compat.h>
 #include <linux_compat/initcall.h>
 #include <syscall.h>
 #include <rendezvos/smp/percpu.h>
@@ -35,7 +36,7 @@ static void linux_trap_kernel_fatal(struct trap_frame *tf, const char *summary)
 
 static void linux_illegal_instr_trap_handler(struct trap_frame *tf)
 {
-        Tcb_Base *current;
+        linux_proc_resource_t *current;
         bool is_user = false;
         u64 trap_id = 0;
 
@@ -55,7 +56,7 @@ static void linux_illegal_instr_trap_handler(struct trap_frame *tf)
 #error "Unsupported architecture"
 #endif
 
-        current = get_cpu_current_task();
+        current = linux_current_proc();
 
         if (is_user && current) {
                 pr_warn("[TRAP] illegal instruction in user mode pid=%d trap_id=%lu - exiting\n",
@@ -72,7 +73,7 @@ static void linux_illegal_instr_trap_handler(struct trap_frame *tf)
 
 static void linux_unknown_class_trap_handler(struct trap_frame *tf)
 {
-        Tcb_Base *current;
+        linux_proc_resource_t *current;
         bool is_user = false;
         u64 trap_id = 0;
 
@@ -92,7 +93,7 @@ static void linux_unknown_class_trap_handler(struct trap_frame *tf)
 #error "Unsupported architecture"
 #endif
 
-        current = get_cpu_current_task();
+        current = linux_current_proc();
 
         if (is_user && current) {
                 pr_warn("[TRAP] unhandled trap in user mode pid=%d trap_id=%lu - exiting\n",

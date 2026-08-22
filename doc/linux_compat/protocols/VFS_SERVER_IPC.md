@@ -13,7 +13,7 @@
 
 ```text
 用户 syscall (linux_layer)              vfs_server 线程
-  查 linux_proc_append_t.fs                  |
+  查 linux_proc_resource_t.fs                  |
   路径展开 / fd→handle                      | recv RPC
   IPC(handle 或 abs path)  ---------------->|
   recv reply <------------------------------|

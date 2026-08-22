@@ -1,8 +1,9 @@
 #include <linux_compat/errno.h>
 #include <linux_compat/linux_mm_radix.h>
+#include <linux_compat/proc_compat.h>
 #include <rendezvos/error.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <syscall.h>
 
 #define LINUX_GETRANDOM_MAX_BYTES 256U
@@ -16,7 +17,7 @@ static void linux_fill_pseudo_random(u8 *buf, size_t len, u64 mix)
 
 i64 sys_getrandom(u64 user_buf, u64 count, u32 flags)
 {
-        Tcb_Base *task = get_cpu_current_task();
+        linux_proc_resource_t *task = linux_current_proc();
         VSpace *vs;
         u8 stack_buf[LINUX_GETRANDOM_MAX_BYTES];
         u64 mix;
@@ -24,7 +25,7 @@ i64 sys_getrandom(u64 user_buf, u64 count, u32 flags)
 
         (void)flags;
 
-        if (!task || !task->vs) {
+        if (!task || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
         if (count == 0) {
@@ -34,7 +35,7 @@ i64 sys_getrandom(u64 user_buf, u64 count, u32 flags)
                 return -LINUX_EFAULT;
         }
 
-        vs = task->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }

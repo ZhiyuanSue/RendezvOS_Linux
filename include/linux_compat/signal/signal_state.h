@@ -4,7 +4,9 @@
 #include <linux_compat/signal/signal_types.h>
 #include <linux_compat/signal/signal_restore_arch.h>
 #include <rendezvos/error.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
+
+struct linux_proc_resource;
 
 /*
  * Heap-backed signal state (append holds pointers only — same pattern as fs).
@@ -39,10 +41,11 @@ typedef struct linux_signal_thread_state {
 void linux_signal_reinit_proc_state(linux_signal_proc_state_t *ps);
 void linux_signal_reinit_thread_state(linux_signal_thread_state_t *ts);
 
-error_t linux_signal_proc_attach(Tcb_Base *task);
-void linux_signal_proc_destroy(Tcb_Base *task);
-error_t linux_signal_proc_fork(Tcb_Base *child, Tcb_Base *parent);
-void linux_signal_proc_reset(Tcb_Base *task);
+error_t linux_signal_proc_attach(struct linux_proc_resource *proc);
+void linux_signal_proc_destroy(struct linux_proc_resource *proc);
+error_t linux_signal_proc_fork(struct linux_proc_resource *child,
+                               struct linux_proc_resource *parent);
+void linux_signal_proc_reset(struct linux_proc_resource *proc);
 
 error_t linux_signal_thread_attach(Thread_Base *thread);
 void linux_signal_thread_destroy(Thread_Base *thread);
@@ -50,7 +53,7 @@ error_t linux_signal_thread_fork_inherit(Thread_Base *child,
                                          Thread_Base *parent,
                                          bool copy_blocked);
 
-linux_signal_proc_state_t *linux_signal_proc_state(Tcb_Base *task);
+linux_signal_proc_state_t *linux_signal_proc_state(struct linux_proc_resource *proc);
 linux_signal_thread_state_t *linux_signal_thread_state(Thread_Base *thread);
 
 #endif /* _LINUX_COMPAT_SIGNAL_STATE_H_ */

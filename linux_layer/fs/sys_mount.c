@@ -5,15 +5,16 @@
 #include <linux_compat/fs/fs_ipc.h>
 #include <linux_compat/fs/vfs_protocol.h>
 #include <linux_compat/linux_mm_radix.h>
+#include <linux_compat/proc_compat.h>
 #include <rendezvos/error.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <syscall.h>
 
 i64 sys_mount(u64 user_source, u64 user_target, u64 user_fstype, u64 flags,
               u64 user_data)
 {
-        Tcb_Base *current = get_cpu_current_task();
+        linux_proc_resource_t *current = linux_current_proc();
         VSpace *vs;
         char source[256];
         char target[LINUX_VFS_PATH_MAX];
@@ -22,11 +23,11 @@ i64 sys_mount(u64 user_source, u64 user_target, u64 user_fstype, u64 flags,
 
         (void)user_data;
 
-        if (!current || !current->vs) {
+        if (!current || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
 
-        vs = current->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }
@@ -62,16 +63,16 @@ i64 sys_mount(u64 user_source, u64 user_target, u64 user_fstype, u64 flags,
 
 i64 sys_umount2(u64 user_target, i32 flags)
 {
-        Tcb_Base *current = get_cpu_current_task();
+        linux_proc_resource_t *current = linux_current_proc();
         VSpace *vs;
         char target[LINUX_VFS_PATH_MAX];
         error_t e;
 
-        if (!current || !current->vs) {
+        if (!current || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
 
-        vs = current->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }

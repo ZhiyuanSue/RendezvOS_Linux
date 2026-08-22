@@ -5,7 +5,7 @@
 #include <linux_compat/linux_mm_radix.h>
 #include <linux_compat/proc_registry.h>
 #include <rendezvos/mm/vmm.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 bool vfs_rpc_client_pid(const char *reply_port_name, pid_t *pid_out)
 {
@@ -42,9 +42,9 @@ bool vfs_rpc_client_pid(const char *reply_port_name, pid_t *pid_out)
         return true;
 }
 
-Tcb_Base *vfs_task_user_for_pid(pid_t pid)
+linux_proc_resource_t *vfs_task_user_for_pid(pid_t pid)
 {
-        Tcb_Base *task = find_task_by_pid(pid);
+        linux_proc_resource_t *task = find_proc_by_pid(pid);
 
         if (!task || !task->vs || !linux_vspace_is_user_table(task->vs)) {
                 return NULL;

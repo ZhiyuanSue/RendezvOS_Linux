@@ -24,7 +24,7 @@
 #include <rendezvos/ipc/port.h>
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 extern struct Port_Table* global_port_table;
 

@@ -22,7 +22,7 @@ Linux **VMA** 解决的是：**按用户 VA 区间** 记录映射属性，并支
 > **状态**: ✅ Phase 1 完成
 
 - **语义**：调整 **堆顶**；失败返回当前 brk。
-- **实现要点**：`linux_proc_append` 中 `start_brk`/`brk`；从 `brk_old` 到 `brk_new` 用 `mm_user_utils_set_range_and_fill` / `mm_user_utils_clean_range_and_unfill`，**堆范围**与 ELF program header 对齐（loader 已有信息可传入 append 初始化）。
+- **实现要点**：`linux_proc_resource_t` 中 `start_brk`/`brk`；从 `brk_old` 到 `brk_new` 用 `mm_user_utils_set_range_and_fill` / `mm_user_utils_clean_range_and_unfill`，**堆范围**与 ELF program header 对齐（loader 已有信息可传入资源束初始化）。
 - **实现文件**：`linux_layer/mm/sys_brk.c`
 - **测试验证**: ✅ TEST 03/04, 04/04 PASS
 - **锁**：按 core 既有顺序：L0 big lock → L2 band lock → PMM zone lock（rmap 操作）。
@@ -74,7 +74,7 @@ Linux **VMA** 解决的是：**按用户 VA 区间** 记录映射属性，并支
 
 > **状态**: ✅ Phase 1 完成
 
-- **子进程**：新 `Tcb_Base` + 新 `VSpace` + **复制或共享** L0…L3 策略（COW 通常为 **共享只读 + 引用计数**）。
+- **子进程**：新 `linux_proc` + 新 `VSpace`（绑在子 `Thread_Base`）+ **复制或共享** L0…L3 策略（COW 通常为 **共享只读 + 引用计数**）。
 - **实现文件**：
   - `linux_layer/proc/sys_fork.c` - fork系统调用实现
   - `linux_layer/mm/linux_vspace.c` - `linux_copy_vspace()` 地址空间COW复制

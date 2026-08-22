@@ -22,7 +22,7 @@
 #include <rendezvos/mm/page_slice.h>
 #include <rendezvos/mm/vmm.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 #define LINUX_AT_FDCWD (-100)
 #define LINUX_O_RDONLY 0
@@ -33,7 +33,7 @@
 
 static vaddr linux_exec_scratch_hint(VSpace *vs)
 {
-        linux_proc_append_t *pa = linux_proc_append(get_cpu_current_task());
+        linux_proc_resource_t *pa = linux_current_proc();
 
         (void)vs;
         if (pa && pa->mmap_hint != 0) {

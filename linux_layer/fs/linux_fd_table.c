@@ -541,15 +541,15 @@ void linux_fd_set_is_dir(linux_fs_state_t *fs, i32 fd, bool is_dir)
         (void)linux_fs_entry_store(fs, fd, &ent);
 }
 
-linux_fs_state_t *linux_fs_state(Tcb_Base *task)
+linux_fs_state_t *linux_fs_state(linux_proc_resource_t *task)
 {
-        linux_proc_append_t *pa;
+        linux_proc_resource_t *pa;
 
         if (!task) {
                 return NULL;
         }
 
-        pa = linux_proc_append(task);
+        pa = task;
         if (!pa) {
                 return NULL;
         }
@@ -628,9 +628,9 @@ static error_t linux_fs_init_state(linux_fs_state_t *fs)
         return linux_fs_entry_store(fs, 2, &ent);
 }
 
-error_t linux_fs_proc_attach(Tcb_Base *task)
+error_t linux_fs_proc_attach(linux_proc_resource_t *task)
 {
-        linux_proc_append_t *pa;
+        linux_proc_resource_t *pa;
         linux_fs_state_t *fs;
         error_t err;
 
@@ -638,7 +638,7 @@ error_t linux_fs_proc_attach(Tcb_Base *task)
                 return -E_IN_PARAM;
         }
 
-        pa = linux_proc_append(task);
+        pa = task;
         if (!pa) {
                 return -E_IN_PARAM;
         }
@@ -720,7 +720,7 @@ static void linux_fs_reset_state(linux_fs_state_t *fs)
         (void)linux_fs_init_state(fs);
 }
 
-void linux_fs_proc_release_for_exit(Tcb_Base *task)
+void linux_fs_proc_release_for_exit(linux_proc_resource_t *task)
 {
         linux_fs_state_t *fs = linux_fs_state(task);
 
@@ -730,12 +730,13 @@ void linux_fs_proc_release_for_exit(Tcb_Base *task)
 
         /*
          * sys_exit: drop VFS/pipe references only. Do not rebuild page_slice
-         * here — delete_task append fini will destroy fs after vspace teardown.
+         * here — linux_proc_reap / linux_proc_fini destroys fs after the last
+         * thread has already dropped its VSpace ref.
          */
         linux_fs_release_open_resources(fs);
 }
 
-void linux_fs_proc_reset(Tcb_Base *task)
+void linux_fs_proc_reset(linux_proc_resource_t *task)
 {
         linux_fs_state_t *fs = linux_fs_state(task);
 
@@ -747,16 +748,16 @@ void linux_fs_proc_reset(Tcb_Base *task)
         linux_fs_reset_state(fs);
 }
 
-void linux_fs_proc_destroy(Tcb_Base *task)
+void linux_fs_proc_destroy(linux_proc_resource_t *task)
 {
-        linux_proc_append_t *pa;
+        linux_proc_resource_t *pa;
         linux_fs_state_t *fs;
 
         if (!task) {
                 return;
         }
 
-        pa = linux_proc_append(task);
+        pa = task;
         if (!pa || !pa->fs) {
                 return;
         }
@@ -820,9 +821,9 @@ static error_t linux_fs_fork_copy_state(linux_fs_state_t *child,
         return REND_SUCCESS;
 }
 
-error_t linux_fs_proc_fork(Tcb_Base *child, Tcb_Base *parent)
+error_t linux_fs_proc_fork(linux_proc_resource_t *child, linux_proc_resource_t *parent)
 {
-        linux_proc_append_t *pa;
+        linux_proc_resource_t *pa;
         linux_fs_state_t *parent_fs;
         linux_fs_state_t *child_fs;
         error_t e;
@@ -831,7 +832,7 @@ error_t linux_fs_proc_fork(Tcb_Base *child, Tcb_Base *parent)
                 return -E_IN_PARAM;
         }
 
-        pa = linux_proc_append(child);
+        pa = child;
         if (!pa) {
                 return -E_IN_PARAM;
         }
@@ -885,7 +886,7 @@ bool linux_fs_handle_in_use(const linux_fs_state_t *fs, u32 handle)
         return false;
 }
 
-linux_fd_entry_t *linux_fd_get(Tcb_Base *task, i32 fd)
+linux_fd_entry_t *linux_fd_get(linux_proc_resource_t *task, i32 fd)
 {
         linux_fd_entry_t *ent;
         linux_fs_state_t *fs;
@@ -931,7 +932,7 @@ static i32 linux_fd_find_free(linux_fs_state_t *fs)
         return -1;
 }
 
-i32 linux_fd_alloc(Tcb_Base *task, const linux_fd_entry_t *ent_in)
+i32 linux_fd_alloc(linux_proc_resource_t *task, const linux_fd_entry_t *ent_in)
 {
         linux_fs_state_t *fs;
         i32 fd;
@@ -967,7 +968,7 @@ i32 linux_fd_alloc(Tcb_Base *task, const linux_fd_entry_t *ent_in)
         return fd;
 }
 
-i32 linux_fd_lowest_free(Tcb_Base *task)
+i32 linux_fd_lowest_free(linux_proc_resource_t *task)
 {
         return linux_fd_lowest_free_from(task, 0);
 }
@@ -994,7 +995,7 @@ static i32 linux_fd_find_free_from(linux_fs_state_t *fs, i32 minfd)
         return -1;
 }
 
-i32 linux_fd_lowest_free_from(Tcb_Base *task, i32 minfd)
+i32 linux_fd_lowest_free_from(linux_proc_resource_t *task, i32 minfd)
 {
         linux_fs_state_t *fs = linux_fs_state(task);
         i32 fd;
@@ -1025,7 +1026,7 @@ i32 linux_fd_lowest_free_from(Tcb_Base *task, i32 minfd)
         return linux_fd_find_free_from(fs, minfd);
 }
 
-error_t linux_fd_store(Tcb_Base *task, i32 fd, const linux_fd_entry_t *ent)
+error_t linux_fd_store(linux_proc_resource_t *task, i32 fd, const linux_fd_entry_t *ent)
 {
         linux_fs_state_t *fs;
 
@@ -1041,7 +1042,7 @@ error_t linux_fd_store(Tcb_Base *task, i32 fd, const linux_fd_entry_t *ent)
         return linux_fs_entry_store(fs, fd, ent);
 }
 
-i64 linux_fd_close(Tcb_Base *task, i32 fd)
+i64 linux_fd_close(linux_proc_resource_t *task, i32 fd)
 {
         linux_fs_state_t *fs;
         linux_fd_entry_t ent;
@@ -1098,7 +1099,7 @@ i64 linux_fd_close(Tcb_Base *task, i32 fd)
         return 0;
 }
 
-i64 linux_fd_dup2(Tcb_Base *task, i32 oldfd, i32 newfd)
+i64 linux_fd_dup2(linux_proc_resource_t *task, i32 oldfd, i32 newfd)
 {
         linux_fs_state_t *fs;
         linux_fd_entry_t oldent;

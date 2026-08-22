@@ -8,14 +8,14 @@
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/mm/vmm.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <rendezvos/trap/trap.h>
 #include <syscall.h>
 
 #if defined(_X86_64_)
-#include <arch/x86_64/tcb_arch.h>
+#include <arch/x86_64/thread_arch.h>
 #elif defined(_AARCH64_)
-#include <arch/aarch64/tcb_arch.h>
+#include <arch/aarch64/thread_arch.h>
 #endif
 
 static bool exec_arg_string_valid(const char *buf, size_t cap)
@@ -101,7 +101,7 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
 {
         (void)user_envp;
 
-        Tcb_Base *current = get_cpu_current_task();
+        linux_proc_resource_t *current = linux_current_proc();
         Thread_Base *current_thread = get_cpu_current_thread();
         VSpace *vs;
         struct allocator *alloc = percpu(kallocator);
@@ -114,14 +114,14 @@ i64 sys_execve(struct trap_frame *syscall_ctx, u64 user_filename, u64 user_argv,
         vaddr entry_addr = 0;
         vaddr initial_stack_sp = 0;
 
-        if (!current || !current_thread || !current->vs) {
+        if (!current || !current_thread || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
         if (!alloc) {
                 return -LINUX_ENOMEM;
         }
 
-        vs = current->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }

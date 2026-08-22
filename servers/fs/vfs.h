@@ -2,7 +2,7 @@
 #define _VFS_SERVER_H_
 
 #include <common/types.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 #include <linux_compat/fs/vfs_protocol.h>
 

@@ -7,6 +7,7 @@ Design essays and status docs stay under `doc/linux_compat/`; **message order, p
 |----------|--------|
 | [`PORT_NAMING.md`](PORT_NAMING.md) | Global port-table name grammar (`service` / `cpu` / worker / `cli`) |
 | [`IPC_RPC_FRAMEWORK.md`](IPC_RPC_FRAMEWORK.md) | Request-reply / one-way server templates |
+| [`THREAD_AND_VSPACE.md`](THREAD_AND_VSPACE.md) | core thread/VSpace ownership；compat 创建 fork/exec 顺序 |
 | [`EXIT_CLEAN.md`](EXIT_CLEAN.md) | exit ↔ clean_server ↔ wait4（链路 A/B、`exit_state`） |
 | [`WAIT_AND_SIGCHLD.md`](WAIT_AND_SIGCHLD.md) | wait4 ↔ SIGCHLD ↔ Layer B（Channel R/S、禁止项） |
 | [`VFS_SERVER_IPC.md`](VFS_SERVER_IPC.md) | vfs_server opcodes and client RPC |

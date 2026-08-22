@@ -187,7 +187,7 @@ static i64 vfs_coop_try_follow_symlink(vfs_coop_ctx_t *ctx)
 static i64 vfs_coop_finish_lookup_op(vfs_coop_ctx_t *ctx)
 {
         u32 check = 0;
-        Tcb_Base *task;
+        linux_proc_resource_t *task;
 
         switch (ctx->kind) {
         case VFS_COOP_KIND_STAT:
@@ -223,7 +223,7 @@ static i64 vfs_coop_finish_lookup_op(vfs_coop_ctx_t *ctx)
 static i64 vfs_coop_store_readlink(vfs_coop_ctx_t *ctx, const char *buf,
                                    i64 len)
 {
-        Tcb_Base *task;
+        linux_proc_resource_t *task;
         u64 copy_len;
         error_t e;
 
@@ -700,7 +700,7 @@ static u16 vfs_dirent64_reclen(u64 name_len)
 /* Bytes packed, 0 = no room (stop), <0 errno. */
 static i64 vfs_coop_getdents_pack_one(vfs_coop_ctx_t *ctx)
 {
-        Tcb_Base *task;
+        linux_proc_resource_t *task;
         u64 name_len;
         u16 reclen;
         u64 next_index;

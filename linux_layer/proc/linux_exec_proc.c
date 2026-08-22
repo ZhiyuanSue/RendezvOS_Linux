@@ -9,9 +9,9 @@
 #include <modules/log/log.h>
 #include <rendezvos/mm/page_slice.h>
 
-void linux_proc_set_heap_from_elf_load(Tcb_Base *task, vaddr max_load_end)
+void linux_proc_set_heap_from_elf_load(linux_proc_resource_t *task, vaddr max_load_end)
 {
-        linux_proc_append_t *pa = linux_proc_append(task);
+        linux_proc_resource_t *pa = task;
         u64 brk0;
 
         if (!pa) {
@@ -30,9 +30,9 @@ void linux_proc_set_heap_from_elf_load(Tcb_Base *task, vaddr max_load_end)
         pa->mmap_hint = ROUND_UP(brk0, PAGE_SIZE) + PAGE_SIZE;
 }
 
-void linux_exec_reset_proc_state(Tcb_Base *task, vaddr max_load_end)
+void linux_exec_reset_proc_state(linux_proc_resource_t *task, vaddr max_load_end)
 {
-        linux_proc_append_t *pa = linux_proc_append(task);
+        linux_proc_resource_t *pa = task;
 
         if (!pa) {
                 return;

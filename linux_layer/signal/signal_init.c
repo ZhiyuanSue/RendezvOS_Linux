@@ -1,7 +1,8 @@
+#include <linux_compat/proc_compat.h>
 #include <linux_compat/signal/signal_init.h>
 #include <linux_compat/signal/signal_state.h>
 
-void linux_signal_init_proc_append(linux_proc_append_t* pa)
+void linux_signal_init_proc_append(linux_proc_resource_t* pa)
 {
         if (pa && pa->signal) {
                 linux_signal_reinit_proc_state(pa->signal);

@@ -1,90 +1,86 @@
 # 数据模型：进程、线程、append 区
 
-> **📅 阶段状态**：
-> - ✅ **Phase 1 完成**：基础的进程/线程数据模型、proc_registry、append区
-> - 📋 **后续阶段**：多线程支持（tgid）、clone相关字段
+> **阶段状态**
+> - ✅ Phase 1：资源束 + proc_registry + thread append
+> - 📋 后续：多线程 `tgid`、clone 扩展字段
 
 ## 1. 与 Linux 概念的映射
 
-| Linux | RendezvOS（Phase 1） | 说明 |
-|-------|-------------------|------|
-| 调度实体 `task_struct` | `Thread_Base` | `tid`、`ctx`、IPC 队列 |
-| 线程组 / 进程 `tgid` | `Tcb_Base::pid`（初期单线程） | ✅ Phase 1：单线程进程 `getpid` = `Tcb_Base::pid`<br/>📋 后续：多线程需要 `tgid` 字段 |
-| 内存描述 `mm_struct` | `Tcb_Base::vs` → `VSpace` | **Radix Tree** 挂在 vspace |
-| 子进程、wait | `proc_registry`（✅ Phase 1完成） | O(1) PID查找，支持wait4 |
+| Linux | RendezvOS | 说明 |
+|-------|-----------|------|
+| 调度实体 `task_struct` | `Thread_Base` | `tid`、`ctx`、IPC、`thread->vs` |
+| 线程组 / 进程 `tgid` | 堆上 **`linux_proc_resource_t`**（`pid`） | 多线程经 append **`ta->res`** 共享 |
+| 内存描述 `mm_struct` | `Thread_Base::vs` → `VSpace` | Radix 在 vspace；`proc->vs` 仅为非拥有缓存 |
+| 子进程、wait | `proc_registry` | O(1) `pid` → `linux_proc_resource_t*` |
 
-## 2. append 区（单一真源）
+core **没有**进程对象；`linux_proc_resource_t` 是 **共享资源束**（pid / brk / fs / signal / wait），不是 TCB 替身。
 
-**约束**：不在 core 的 `TCB_COMMON` / `THREAD_COMMON` 里加入 Linux 专用字段；`append_hooks` 与 append 尾数组紧挨在 `Tcb_Base` / `Thread_Base` 结构体末尾（见 core `tcb.h`）。
+## 2. 两类结构（单一真源）
 
-定义见 [`include/linux_compat/proc_compat.h`](../../include/linux_compat/proc_compat.h)：
+定义：[`include/linux_compat/proc_compat.h`](../../include/linux_compat/proc_compat.h)
 
-- `linux_proc_append_t` → `Tcb_Base.append_tcb_info[]`
-- `linux_thread_append_t` → `Thread_Base.append_thread_info[]`
-- `LINUX_PROC_APPEND_BYTES` / `LINUX_THREAD_APPEND_BYTES` — 仅用于填 **静态 hook 表** 的 `append_info_len`
+| 结构 | 分配 | 与线程关系 |
+|------|------|------------|
+| **`linux_proc_resource_t`** | `linux_proc_alloc()`（堆） | 若干线程 `linux_proc_attach_thread` → `ref_get` |
+| **`linux_thread_append_t`** | core `Thread_Base.append_thread_info[]` | 每线程一份；`ta->res` 指向资源束 |
 
-**生命周期**由 core + compat hook 驱动，详见 [`APPEND_HOOKS.md`](APPEND_HOOKS.md)：
+**约束**：不在 core `THREAD_COMMON` 里塞 Linux 字段；`create_thread` 只传 hook 表指针（`LINUX_THREAD_APPEND_BYTES`）。
 
-| 路径 | task hook | thread hook |
-|------|-----------|-------------|
-| `gen_task_from_elf` | `new_task_structure(&linux_task_append_hooks)` | `init` 在 `run_elf_program` |
-| fork/clone | `copy` 在填好 `child_pa` 后 | `copy` 在 `copy_thread` 内 |
-| exit/teardown | `fini` on `delete_task` | `fini` on `del_thread_structure` |
+### 2.1 `linux_proc_resource_t`（资源束）
 
-调用 `new_task_structure` / `create_thread` / `gen_task_from_elf` 时 **只传 hook 表指针**，不再单独传 append 长度。
+| 字段 | 说明 |
+|------|------|
+| `refcount` | alloc ref + 每 attach 一线程一票 |
+| `pid` / `ppid` / `pgid` | 进程关系；`LINUX_INIT_REAP_PPID`(0) → Link B orphan |
+| `thread_number` / `thread_head_node` | 附着线程数；`res_thread_node` 链表 |
+| `start_brk` / `brk` / `mmap_hint` | 堆与 mmap 游标 |
+| `uid`…`egid` | ID（`sys_id`） |
+| `exit_code` / `exit_state` | wait4；见 [`EXIT_CLEAN.md`](protocols/EXIT_CLEAN.md) |
+| `exit_last_thread` | **sys_exit 提示**（`tn==1`）；**clean 在 `tn==0` 时置位**（权威） |
+| `pending_exits` | wait4 pid 不匹配时的 EXIT_NOTIFY 队列 |
+| `signal` / `fs` | 堆上 proc 级状态 |
+| `vs` | 非拥有 AS 缓存（末线程 detach 后清空） |
 
-### 2.1 `linux_proc_append`（Phase 1 已实现字段）
+`exit_state`：`RUNNING` / `ZOMBIE` / `NOTIFIED` / `CLAIMED`（`linux_proc_reap` 认领中）。Link B 由 clean 侧 `proc_has_wait_reaper` 判定，不在 sys_exit 自标单独状态。
 
-| 字段 | 状态 | 阶段 | 目的 |
-|------|------|------|------|
-| `start_brk`, `brk` | ✅ 完成 | P1 | `brk()` 与 ELF 初始 brk 对齐 |
-| `ppid` | ✅ 完成 | P1 | `getppid()`、进程树查询 |
-| `pgid` | ✅ 完成 | P1 | 进程组，wait4进程组语义 |
-| `exit_code` | ✅ 完成 | P1 | 进程退出码 |
-| `exit_state` | ✅ 完成 | P1 | 0..3：RUNNING/ZOMBIE/REAPED/TASK_CLAIMED（见 EXIT_CLEAN） |
-| `exit_notify_sent` | ✅ 完成 | P1 | EXIT_NOTIFY 至多一次 |
-| `tgid` | 📋 未实现 | 后续 | 多线程时 `getpid`≠`gettid` |
-| `exit_signal` / `clone` 相关 | 📋 未实现 | 后续 | `clone` flags |
+**不**在资源束存 VMA 根：用户映射由 **`thread->vs` Radix** 表达。
 
-**不**在此结构保存「VMA 根指针」：用户映射由 **`vs` 的 Radix Tree** 表达。
+### 2.2 `linux_thread_append_t`（每线程）
 
-### 2.2 `linux_thread_append`（Phase 1+ 字段）
+| 字段 | 说明 |
+|------|------|
+| `signal` | 每线程 signal 状态 |
+| `sleep_port` / `sleep_timer_*` | nanosleep / 定时器 |
+| `clear_tid` | `set_tid_address` / CLEARTID |
+| `boot_wait_cookie` | Path-B boot 等待（fork 子须为 0） |
+| **`res`** | 指向共享 `linux_proc_resource_t` |
+| **`res_thread_node`** | 挂到 `proc->thread_head_node` |
 
-| 字段 | 阶段 | 目的 |
-|------|------|------|
-| `clear_tid` | P1 | `set_tid_address` / `CLONE_CHILD_CLEARTID` |
-| `boot_wait_cookie` | boot | Path-B 等 `/init` 退出（fork 子进程须为 0，见 APPEND_HOOKS） |
-| `signal` / `sleep_port` | P2 | 每线程信号与 sleep IPC |
+访问：`linux_thread_append(thread)`、`linux_proc_of(thread)` → `ta->res`。
 
-## 3. 进程登记簿（proc registry）
+## 3. 生命周期（摘要）
 
-> **状态**: ✅ Phase 1 完成（采用阶段1方案：锁保护）
+| 路径 | 资源束 | thread append |
+|------|--------|---------------|
+| boot / exec | `alloc` + `attach` | `prepare_new` + exec |
+| fork | `alloc` 或共享父 `res` | `copy_thread` 后 `attach` |
+| 线程退出 | detach 降 `thread_number`；末线程 zombie 壳 | `fini` → `linux_proc_detach_thread` |
+| wait / clean | `linux_proc_reap`（fini + 末 `ref_put`） | 已由 `delete_thread` 回收 |
 
-**Phase 1 实现**（已完成）：
+详见 [`APPEND_HOOKS.md`](APPEND_HOOKS.md)、[`protocols/EXIT_CLEAN.md`](protocols/EXIT_CLEAN.md)。
 
-- **实现文件**：`linux_layer/proc/proc_registry.c` + `include/linux_compat/proc_registry.h`
-- **数据结构**：`pid` → `Tcb_Base*` 映射，基于core的name_index实现O(1)查找
-- **扩展查询**：支持反向查询（ppid、pgid查找），为wait4提供支持
-- **同步机制**：使用core的锁机制保护注册、注销
-- **功能**：
-  - `register_process()` - 注册进程
-  - `unregister_process()` - 注销进程
-  - `find_task_by_pid()` - O(1) PID查找
-  - `find_zombie_child()` - 查找zombie子进程（wait4支持）
-  - `find_zombie_child_in_pgid()` - 进程组查找（wait4支持）
-- **目的**：完成 `wait4`/`exit` 父子交互，与 `ARCHITECTURE.md` 中「先锁后 IPC」一致
-- **测试验证**: ✅ 所有wait4测试通过，O(1)查找性能正常
+## 4. proc registry
 
-**阶段 2**（可选，暂不需要）：
+实现：`linux_layer/proc/sys_proc_registry.c`、`include/linux_compat/proc_registry.h`
 
-- 将 **同一套操作** 移到 **`proc_coordinator`** 内核线程；syscall 侧 **send 请求 / recv 回复**。
-- **目的**：锁序简化、与无锁 IPC 哲学一致；**不改变** Linux 语义，只改变实现位置。
+- `register_process` / `unregister_process` / `find_proc_by_pid`
+- `proc_parent_has_unreaped_child` — wait4 阻塞 / ECHILD
+- `proc_has_wait_reaper` — Link A vs B
 
-## 4. 与 `clean_server` 的关系
+**已删除（v1）**：`find_zombie_child*`（wait4 用 EXIT_NOTIFY `proc*` handoff）。
 
-权威协议：[`protocols/EXIT_CLEAN.md`](protocols/EXIT_CLEAN.md)。
+## 5. 与 clean_server
 
-- **线程物理回收**：`THREAD_REAP` → listen 内联 `delete_thread`；链路 B 末线程同线程认领 `delete_task`（[`servers/clean_server.c`](../../servers/clean_server.c)）。
-- **进程物理回收**：`TASK_REAP_SYNC`（wait4）或链路 B 的 THREAD_REAP 尾部；必须 `REAPED→TASK_CLAIMED` 认领后 `delete_task`。
-- **wait4**：async `EXIT_NOTIFY` → 标 REAPED → **同步** `TASK_REAP_SYNC`。
-- **孤儿 exit**：REAPED + 仅 `THREAD_REAP`（listen 内联完成）。
+- **THREAD_REAP** → `delete_thread` + sync detach
+- **Link A**：EXIT_NOTIFY → parent `wait4` → `linux_proc_reap`
+- **Link B**：clean inline `linux_proc_reap`

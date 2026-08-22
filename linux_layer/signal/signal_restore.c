@@ -3,7 +3,7 @@
 #include <linux_compat/signal/signal_context.h>
 #include <linux_compat/signal/signal_restore.h>
 #include <linux_compat/signal/signal_state.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <rendezvos/trap/trap.h>
 
 bool signal_restore_user_context(struct trap_frame* tf)

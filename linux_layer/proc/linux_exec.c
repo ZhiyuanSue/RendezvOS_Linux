@@ -25,7 +25,7 @@
 #include <rendezvos/mm/page_slice.h>
 #include <rendezvos/mm/vmm.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <rendezvos/task/thread_loader.h>
 
 static void linux_exec_abort_unrecoverable(struct allocator *alloc,
@@ -71,15 +71,15 @@ static void linux_exec_wait_remote_tlb_quiesce(VSpace *vs)
         }
 }
 
-error_t linux_user_task_prepare_new(Tcb_Base *task, Thread_Base *thread)
+error_t linux_user_task_prepare_new(linux_proc_resource_t *task, Thread_Base *thread)
 {
-        linux_proc_append_t *pa;
+        linux_proc_resource_t *pa;
 
         if (!task || !thread || !(thread->flags & THREAD_FLAG_USER)) {
                 return -E_IN_PARAM;
         }
 
-        pa = linux_proc_append(task);
+        pa = task;
         if (!pa) {
                 return -E_IN_PARAM;
         }
@@ -116,7 +116,7 @@ error_t linux_user_task_prepare_new(Tcb_Base *task, Thread_Base *thread)
         return REND_SUCCESS;
 }
 
-i64 linux_exec_replace_image(Tcb_Base *task, Thread_Base *thread,
+i64 linux_exec_replace_image(linux_proc_resource_t *task, Thread_Base *thread,
                              const char *filename, i64 argc,
                              const char *const kargv[],
                              bool may_abort_after_clear, vaddr *entry_out,
@@ -151,7 +151,7 @@ i64 linux_exec_replace_image(Tcb_Base *task, Thread_Base *thread,
                 return -LINUX_E2BIG;
         }
 
-        vs = task->vs;
+        vs = thread->vs;
         if (!vs || !linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }

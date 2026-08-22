@@ -2,7 +2,7 @@
 #define _LINUX_COMPAT_SIGNAL_DELIVER_H_
 
 #include <common/stdbool.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <rendezvos/trap/trap.h>
 
 /*

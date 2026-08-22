@@ -6,13 +6,14 @@
 #include <linux_compat/fs/fs_ipc.h>
 #include <linux_compat/fs/vfs_protocol.h>
 #include <linux_compat/ipc/rpc.h>
+#include <linux_compat/proc_compat.h>
 #include <modules/log/log.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 static Message_Port_t* vfs_get_or_create_client_port(void)
 {
-        Tcb_Base* current = get_cpu_current_task();
+        linux_proc_resource_t* current = linux_current_proc();
         char port_name[VFS_CLIENT_PORT_NAME_MAX];
 
         if (!current || current->pid <= 0) {
@@ -32,7 +33,7 @@ static Message_Port_t* vfs_get_or_create_client_port(void)
 
 i64 vfs_ipc_request_response(u16 opcode, const char* fmt, ...)
 {
-        Tcb_Base* current = get_cpu_current_task();
+        linux_proc_resource_t* current = linux_current_proc();
         Message_Port_t* vfs_port;
         Message_Port_t* client_port;
         va_list ap;

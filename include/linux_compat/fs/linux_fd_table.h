@@ -7,7 +7,8 @@
 #include <rendezvos/error.h>
 #include <rendezvos/mm/page_slice.h>
 #include <rendezvos/sync/cas_lock.h>
-#include <rendezvos/task/tcb.h>
+
+struct linux_proc_resource;
 
 #define LINUX_VFS_PATH_MAX VFS_PATH_MAX
 
@@ -50,30 +51,32 @@ typedef struct linux_fs_state {
  * pointers valid until the next call on the same CPU; copy if retained.
  */
 
-linux_fs_state_t *linux_fs_state(Tcb_Base *task);
+linux_fs_state_t *linux_fs_state(struct linux_proc_resource *proc);
 
-error_t linux_fs_proc_attach(Tcb_Base *task);
-void linux_fs_proc_reset(Tcb_Base *task);
-void linux_fs_proc_release_for_exit(Tcb_Base *task);
-void linux_fs_proc_destroy(Tcb_Base *task);
-error_t linux_fs_proc_fork(Tcb_Base *child, Tcb_Base *parent);
+error_t linux_fs_proc_attach(struct linux_proc_resource *proc);
+void linux_fs_proc_reset(struct linux_proc_resource *proc);
+void linux_fs_proc_release_for_exit(struct linux_proc_resource *proc);
+void linux_fs_proc_destroy(struct linux_proc_resource *proc);
+error_t linux_fs_proc_fork(struct linux_proc_resource *child,
+                           struct linux_proc_resource *parent);
 
 u32 linux_fs_fd_capacity(const linux_fs_state_t *fs);
 const char *linux_fs_cwd(const linux_fs_state_t *fs);
 void linux_fs_set_cwd(linux_fs_state_t *fs, const char *cwd);
 
-i64 linux_vfs_resolve_path(Tcb_Base *task, i32 dirfd, const char *path,
-                           char *out, u64 out_cap);
+i64 linux_vfs_resolve_path(struct linux_proc_resource *proc, i32 dirfd,
+                           const char *path, char *out, u64 out_cap);
 
-i32 linux_fd_alloc(Tcb_Base *task, const linux_fd_entry_t *ent);
-i32 linux_fd_lowest_free(Tcb_Base *task);
+i32 linux_fd_alloc(struct linux_proc_resource *proc, const linux_fd_entry_t *ent);
+i32 linux_fd_lowest_free(struct linux_proc_resource *proc);
 /* Lowest free fd >= minfd (grows table if needed); -1 on failure. */
-i32 linux_fd_lowest_free_from(Tcb_Base *task, i32 minfd);
-linux_fd_entry_t *linux_fd_get(Tcb_Base *task, i32 fd);
+i32 linux_fd_lowest_free_from(struct linux_proc_resource *proc, i32 minfd);
+linux_fd_entry_t *linux_fd_get(struct linux_proc_resource *proc, i32 fd);
 /* Persist a modified entry previously loaded via linux_fd_get / entry load. */
-error_t linux_fd_store(Tcb_Base *task, i32 fd, const linux_fd_entry_t *ent);
-i64 linux_fd_close(Tcb_Base *task, i32 fd);
-i64 linux_fd_dup2(Tcb_Base *task, i32 oldfd, i32 newfd);
+error_t linux_fd_store(struct linux_proc_resource *proc, i32 fd,
+                       const linux_fd_entry_t *ent);
+i64 linux_fd_close(struct linux_proc_resource *proc, i32 fd);
+i64 linux_fd_dup2(struct linux_proc_resource *proc, i32 oldfd, i32 newfd);
 
 bool linux_fs_handle_in_use(const linux_fs_state_t *fs, u32 handle);
 

@@ -9,7 +9,7 @@
 
 ### 根本原因
 core/的参数传递机制存在设计不匹配：
-- `gen_task_from_elf`传递7个参数给`create_thread`
+- `gen_thread_from_elf`（历史）传递多参数给 `create_thread` 的旧 harness 设计
 - 但`run_elf_program`只接受4个参数
 - 第7个参数`elf_init`超出了函数接收能力
 
@@ -94,7 +94,7 @@ Thread_Base *elf_thread = create_thread((void *)run_elf_program,
 
 #### 修改范围
 - **文件**: `core/kernel/task/thread_loader.c`
-- **函数**: `run_elf_program`, `gen_task_from_elf`
+- **函数**: `run_elf_program`, `gen_thread_from_elf`（均已改为 `thread_append_hooks` 模型）
 
 #### 不影响的功能
 - 现有ELF加载逻辑保持不变

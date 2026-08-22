@@ -4,7 +4,7 @@
 #include <common/types.h>
 #include <rendezvos/ipc/port.h>
 #include <rendezvos/smp/cpu_id.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 /*
  * Canonical port-name grammar: doc/linux_compat/protocols/PORT_NAMING.md
@@ -14,23 +14,18 @@
  *   {service}_c{cpu}     per-CPU listen (when a service chooses §3.1)
  *   {service}_cli_{id}   client reply (usually pid; vfs_cli_k_* for kern)
  *
- * clean: §4 global listen — all per-CPU clean threads recv the same port.
+ * clean: §4 global listen only — no per-pid client reply ports (EXIT_CLEAN v2).
  */
 
-#define IPC_PORT_SERVICE_CLEAN "clean"
 #define IPC_PORT_SERVICE_VFS   "vfs"
 
 #define CLEAN_SERVER_PORT_NAME "clean_listen"
 #define VFS_SERVER_PORT_NAME   "vfs_listen"
 
-#define CLEAN_SERVICE_NAME IPC_PORT_SERVICE_CLEAN
-#define VFS_SERVICE_NAME   IPC_PORT_SERVICE_VFS
+#define VFS_SERVICE_NAME IPC_PORT_SERVICE_VFS
 
-#define CLEAN_CLIENT_PORT_PREFIX "clean_cli_"
 #define VFS_CLIENT_PORT_PREFIX   "vfs_cli_"
-
-#define CLEAN_CLIENT_PORT_NAME_MAX PORT_NAME_LEN_MAX
-#define VFS_CLIENT_PORT_NAME_MAX   PORT_NAME_LEN_MAX
+#define VFS_CLIENT_PORT_NAME_MAX PORT_NAME_LEN_MAX
 
 /* "{service}_cli_{caller_id}" — length or 0 on error. */
 size_t ipc_port_name_cli(char *buf, size_t bufsize, const char *service,

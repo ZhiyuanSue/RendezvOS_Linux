@@ -27,7 +27,7 @@ core 仍只提供 `send_msg` / `recv_msg` / `ipc_try_*` / `kmsg_create` / `ipc_s
 |------|------|------|
 | 单 listen + `try_recv` / 空则 `recv_msg` | ✅ | `ipc_server_coop_loop` / `ipc_rpc_coop_server_loop` |
 | `poll_pending` 推进 parked 收尾 | ✅ | 返回 `bool`：仍有 park 则 `schedule` 而非堵 `recv_msg` |
-| One-way 消息 inline 处理 | ✅ | clean：`THREAD_REAP` / `TASK_REAP*` |
+| One-way 消息 inline 处理 | ✅ | clean：`THREAD_REAP` only |
 | EXIT_NOTIFY try+park | ✅ | clean listen；无 `gen_thread` |
 | **Request–reply coop**（accept → park reply） | ✅ | VFS + backends 已切 `ipc_rpc_coop_server_loop` |
 | Park **嵌套** VFS→backend | ✅ path + RW | `vfs_coop` / `vfs_coop_path`：OPEN/LOOKUP-like/MKDIR/UNLINK + READ/WRITE；rename/link/getdents/mount 仍同步 |
@@ -60,7 +60,7 @@ core 仍只提供 `send_msg` / `recv_msg` / `ipc_try_*` / `kmsg_create` / `ipc_s
 5. Server：**阻塞路径**用 `ipc_rpc_reply`；**coop→blocking client** 用 `set_result` + `try_send` park；**leaf→nested VFS** 用 `ipc_rpc_nest_reply_transfer`（TLV `t`=`@n<cookie>`）并返回 `IPC_RPC_COOP_REPLIED`。禁止对 live client 裸 `try_send` 且不 park。
 6. 遗弃 client：unregister → ops gate → `PORT_CLOSED`；`try_send`/`send_msg` 视为已处理。
 7. **Signal EINTR（仅 commit 前）**：interruptible `ipc_rpc_call*` 仅在 `send_msg(server)` 前可 `-EINTR`。
-8. **不可中断 RPC**：`ipc_rpc_call_*_uninterruptible`（`TASK_REAP_SYNC`、VFS 客户端、VFS→backend）。
+8. **不可中断 RPC**：`ipc_rpc_call_*_uninterruptible`（VFS 客户端、VFS→backend；**不再**用于 exit/wait — v2 本地 reap）。
 
 ### 5.1 Rendezvous 时序
 

@@ -56,7 +56,7 @@ flowchart TB
   exit_ipc --> chld
 ```
 
-- **层 A（产生）**：更新 `linux_proc_append_t` / `linux_thread_append_t` 中的 mask、disposition、pending；必要时唤醒阻塞线程（`thread_set_status`、`cancel_ipc`）。
+- **层 A（产生）**：更新 `linux_proc_resource_t` / `linux_thread_append_t` 中的 mask、disposition、pending；必要时唤醒阻塞线程（`thread_set_status`、`cancel_ipc`）。
 - **层 B（投递）**：在 **当前线程** 即将返回用户态时调用 `linux_deliver_pending_signals(tf)`（与初稿 §4.2 一致，但明确这是 **主路径**，不是「传统方案要废弃」）。
 - **层 C（IPC，可选）**：复用/扩展现有 kmsg，不用于「每个信号一次 server 往返」。
 
@@ -68,7 +68,7 @@ flowchart TB
 
 | 位置 | 已有字段 | 说明 |
 |------|----------|------|
-| `linux_proc_append_t` | `signal_dispositions[NSIG]`、`pending_signals` | 每进程 disposition + 进程级 pending |
+| `linux_proc_resource_t` | `signal_dispositions[NSIG]`、`pending_signals` | 每进程 disposition + 进程级 pending |
 | `linux_thread_append_t` | `blocked_signals`、`pending_signals`、`alt_stack` | 每线程 mask / pending / 备用栈 |
 
 **初稿拟增、当前不建议默认增加**：
@@ -108,7 +108,7 @@ flowchart TB
 
 ```text
 sys_kill / sys_tgkill
-  → proc_registry 解析目标 TCB / 线程
+  → proc_registry 解析目标 `linux_proc` / `Thread_Base`
   → 权限与 sig==0 存在性检查
   → linux_queue_signal(target, sig, siginfo)   /* 写 thread/proc pending，按 Linux 规则选线程 */
   → 若需立即默认动作（SIGKILL 等）：linux_signal_default_action()

@@ -12,7 +12,7 @@
 
 | 语境 | Path A | Path B |
 |------|--------|--------|
-| **用户首次进用户态**（[`SYSCALL_USER_RETURN_AND_EXECVE.md`](SYSCALL_USER_RETURN_AND_EXECVE.md)） | syscall 返回用户（execve 成功后） | `gen_task_from_elf` → fake return → append hook 搭栈 |
+| **用户首次进用户态**（[`SYSCALL_USER_RETURN_AND_EXECVE.md`](SYSCALL_USER_RETURN_AND_EXECVE.md)） | syscall 返回用户（execve 成功后） | 新线程 `run_elf_program` / PID1 Path B drop → append hook 搭栈 |
 | **initramfs 镜像如何进内核**（[`INITRAMFS_PLAN.md`](INITRAMFS_PLAN.md) §5） | `.incbin` 把 cpio 链进内核 | QEMU `-initrd`（未作为主路径） |
 
 下文默认用**第一套**（用户进场）。cpio 进内核目前是 **incbin Path A（initramfs 义）**。
@@ -23,7 +23,7 @@
 
 ### 阶段 1 — 嵌入测例 ELF 证明 syscall（~2026-04 → 05）
 
-**做法**：`make user` 把 `user_payload` 测例链进 `link_app.o`（`.incbin` / `_num_app` / `program_map`），内核 harness `gen_task_from_elf` 逐个跑。
+**做法**：`make user` 把 `user_payload` 测例链进 `link_app.o`（`.incbin` / `_num_app` / `program_map`），core harness **`gen_thread_from_elf`** 逐个跑（历史阶段；现已删除嵌入测例路径）。
 
 **目的**：在**没有完整 FS** 时，证明 fork/exit/wait/brk/mmap/信号等基本 syscall 与多架构 harness（后到 52/52）。
 
@@ -54,7 +54,7 @@
 **做法**：
 
 - static busybox + applet symlink（`/bin/ls` → busybox）
-- **首次进用户**仍用 Path B（glibc 要 auxv/栈）；栈注入放在 append.`init` bootstrap（勿在 `gen_task_from_elf` 返回前后清 pending argv）
+- **首次进用户**仍用 Path B（glibc 要 auxv/栈）；栈注入放在 append.`init` bootstrap
 - 小修：pathname 逐字节读、aarch64 busybox `stat`、wait4 vs SIGCHLD、COW/PTE、`MEM_SIZE=512M` 等
 - **VFS 定长 BSS / 栈上大数组** → `vfs_slice_table`（[`VFS_DYNAMIC_STORAGE.md`](VFS_DYNAMIC_STORAGE.md)，2026-07-27），否则 busybox/多测例容易炸栈或撑爆表
 
@@ -88,14 +88,14 @@
 | 嵌入测例 exec fallback | ✅ 已删 |
 | stub `link_app.o` / `_num_app` | ✅ **已删除**（构建与源码） |
 | cmdline → argv | ✅ make 默认 `CMDLINE=sh /tests/run_all.sh`；core `cmdline_ptr`；`linux_boot` 分词 |
-| PID1 改 `execve("/init")`（非 `gen_task_from_elf`） | ✅ `linux_exec_replace_image`；首次落入用户仍 Path B drop（无 syscall 帧） |
+| PID1 改 `execve("/init")` | ✅ `linux_exec_replace_image`；首次落入用户仍 Path B drop（无 syscall 帧） |
 | VFS 客户端 RPC 不可中断 | 🔧 2026-08-01 已改代码，**待复跑验证**（见 §3） |
 
 **目标态（「基本标准 Linux 启动」）**：
 
 ```text
 内核解析 cmdline / 默认
-  → execve("/init") 或等价（非 Path B gen_task 特例）
+  → execve("/init") 或等价
   → busybox init/ash
   → 用户脚本编排测例 / 真 init
 不再依赖：嵌入测例 ELF、内核 manifest for 循环、硬编码 Path B argv

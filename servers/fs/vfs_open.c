@@ -161,7 +161,7 @@ i64 vfs_lseek_handle(u32 handle, i64 offset, i32 whence)
 
 i64 vfs_fstat_handle(pid_t pid, u32 handle, u64 user_statbuf)
 {
-        Tcb_Base *task = vfs_task_user_for_pid(pid);
+        linux_proc_resource_t *task = vfs_task_user_for_pid(pid);
         vfs_open_handle_t *file;
 
         if (!task) {

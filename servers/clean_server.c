@@ -2,6 +2,7 @@
 #include <common/types.h>
 #include <common/string.h>
 #include <common/dsa/list.h>
+#include <common/refcount.h>
 #include <rendezvos/ipc/ipc_serial.h>
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/smp/percpu.h>
@@ -10,7 +11,7 @@
 #include <rendezvos/ipc/kmsg.h>
 #include <rendezvos/ipc/message.h>
 #include <rendezvos/ipc/port.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <rendezvos/task/thread_loader.h>
 #include <rendezvos/sync/cas_lock.h>
 #include <linux_compat/errno.h>
@@ -23,7 +24,6 @@
 #ifdef LINUX_COMPAT_TEST
 #include <linux_compat/boot_wait.h>
 #endif
-
 extern struct Port_Table *global_port_table;
 
 DEFINE_PER_CPU(Thread_Base *, clean_server_thread_ptr);
@@ -38,33 +38,20 @@ static u16 clean_server_service_id;
 static bool clean_server_service_id_valid;
 static Message_Port_t *clean_server_port_owned;
 
-static i64 clean_claim_and_delete_task(pid_t pid);
-
 /*
- * Protocol: doc/linux_compat/protocols/EXIT_CLEAN.md
- * Port names: doc/linux_compat/protocols/PORT_NAMING.md §4
- *
- * Global clean_listen + one coop thread per CPU (all recv the same port):
- *   THREAD_REAP / TASK_REAP*  — on whichever clean thread wins recv
- *   EXIT_NOTIFY              — try_send + park on listen (no gen_thread);
- *                              poll retries; yield instead of blocking recv
- *                              while jobs remain so parent can enter wait4
- *
- * Cross-CPU by design: core0's reap may run on core1. Forbidden is N private
- * ports / pending-pool lies — not "N threads on one port".
- *
- * THREAD_REAP zombie wait stays inline (schedule + ready→zombie promote).
- * Parking THREAD_REAP itself without guaranteed EXIT_NOTIFY hung ash wait4.
+ * Protocol: doc/linux_compat/protocols/EXIT_CLEAN.md (v2)
+ *   THREAD_REAP — inline delete_thread; Link B linux_proc_reap; Link A EXIT_NOTIFY
  */
 
 typedef struct clean_exit_notify_job {
         struct list_entry node;
         pid_t ppid;
-        pid_t child_pid;
+        linux_proc_resource_t *child;
         i32 exit_code;
 } clean_exit_notify_job_t;
 
-static void clean_exit_notify_fallback_pending(pid_t ppid, pid_t child_pid,
+static void clean_exit_notify_fallback_pending(pid_t ppid,
+                                               linux_proc_resource_t *child,
                                                i32 exit_code);
 
 static void clean_exit_notify_jobs_ensure(void)
@@ -102,21 +89,23 @@ static bool clean_poll_exit_notify_jobs(void)
                         list_entry(pos, clean_exit_notify_job_t, node);
                 linux_proc_try_result_t tr;
 
-                if (!find_task_by_pid(job->ppid)) {
+                if (!find_proc_by_pid(job->ppid)) {
                         /* Parent gone — drop; reparent/orphan paths elsewhere. */
                         clean_exit_notify_job_free(job);
                         continue;
                 }
 
                 tr = linux_proc_try_post_exit_notify(
-                        job->ppid, job->child_pid, job->exit_code);
+                        job->ppid, job->child, job->exit_code);
                 if (tr == LINUX_PROC_TRY_DELIVERED) {
+                        job->child = NULL;
                         clean_exit_notify_job_free(job);
                         continue;
                 }
                 if (tr == LINUX_PROC_TRY_FAIL) {
                         clean_exit_notify_fallback_pending(
-                                job->ppid, job->child_pid, job->exit_code);
+                                job->ppid, job->child, job->exit_code);
+                        job->child = NULL;
                         clean_exit_notify_job_free(job);
                         continue;
                 }
@@ -130,36 +119,36 @@ static bool clean_poll_exit_notify_jobs(void)
  * Alloc/OOM / hard fail: push pending_exits + poke (WAIT_INTERRUPT →
  * try_pending). Must not block listen on wait_port.
  */
-static void clean_exit_notify_fallback_pending(pid_t ppid, pid_t child_pid,
+static void clean_exit_notify_fallback_pending(pid_t ppid,
+                                               linux_proc_resource_t *child,
                                                i32 exit_code)
 {
-        Tcb_Base *parent;
-        linux_proc_append_t *parent_pa;
+        linux_proc_resource_t *parent;
+
+        if (!child)
+                return;
 
         pr_warn("[CLEAN] EXIT_NOTIFY fallback pending+poke ppid=%d child=%d\n",
                 (int)ppid,
-                (int)child_pid);
+                (int)child->pid);
 
-        parent = find_task_by_pid(ppid);
+        parent = find_proc_by_pid(ppid);
         if (!parent)
                 return;
-        parent_pa = linux_proc_append(parent);
-        if (!parent_pa)
-                return;
-        if (!linux_proc_wait_pending_push(parent_pa, child_pid, exit_code)) {
+        if (!linux_proc_wait_pending_push(parent, child, exit_code)) {
                 pr_error(
                         "[clean_server] EXIT_NOTIFY fallback pending_push failed pid=%d\n",
-                        (int)child_pid);
+                        (int)child->pid);
                 return;
         }
         (void)linux_proc_wait_poke(ppid);
 }
 
 /*
- * Link A: try_send EXIT_NOTIFY on listen; park on AGAIN so this thread can
- * still accept TASK_REAP_SYNC. No one-shot worker thread.
+ * Link A: try_send EXIT_NOTIFY with proc* in payload; park on AGAIN.
  */
-static void clean_async_exit_notify(pid_t ppid, pid_t child_pid, i32 exit_code)
+static void clean_async_exit_notify(pid_t ppid, linux_proc_resource_t *child,
+                                    i32 exit_code)
 {
         struct allocator *alloc = percpu(kallocator);
         clean_exit_notify_job_t *job;
@@ -167,79 +156,88 @@ static void clean_async_exit_notify(pid_t ppid, pid_t child_pid, i32 exit_code)
 
         (void)clean_poll_exit_notify_jobs();
 
-        if (ppid <= 0 || child_pid <= 0) {
-                clean_exit_notify_fallback_pending(ppid, child_pid, exit_code);
+        if (ppid <= 0 || !child || child->pid <= 0)
                 return;
-        }
 
-        tr = linux_proc_try_post_exit_notify(ppid, child_pid, exit_code);
+        tr = linux_proc_try_post_exit_notify(ppid, child, exit_code);
         if (tr == LINUX_PROC_TRY_DELIVERED)
                 return;
         if (tr == LINUX_PROC_TRY_FAIL) {
-                clean_exit_notify_fallback_pending(ppid, child_pid, exit_code);
+                clean_exit_notify_fallback_pending(ppid, child, exit_code);
                 return;
         }
 
         if (!alloc || !alloc->m_alloc) {
-                clean_exit_notify_fallback_pending(ppid, child_pid, exit_code);
+                clean_exit_notify_fallback_pending(ppid, child, exit_code);
                 return;
         }
 
         job = (clean_exit_notify_job_t *)alloc->m_alloc(alloc, sizeof(*job));
         if (!job) {
                 pr_error("[clean_server] EXIT_NOTIFY job alloc failed\n");
-                clean_exit_notify_fallback_pending(ppid, child_pid, exit_code);
+                clean_exit_notify_fallback_pending(ppid, child, exit_code);
                 return;
         }
         memset(job, 0, sizeof(*job));
         INIT_LIST_HEAD(&job->node);
         job->ppid = ppid;
-        job->child_pid = child_pid;
+        job->child = child;
         job->exit_code = exit_code;
         clean_exit_notify_jobs_ensure();
         list_add_tail(&job->node, &percpu(clean_exit_notify_jobs));
 }
 
 /*
- * Handshake (EXIT_CLEAN): after THREAD_REAP rendezvous the exitor may be
- * ready but not yet scheduled to store zombie. Promote ready→zombie; only
- * schedule while still blocked on IPC or running on another CPU.
+ * After sync detach: false if other non-exiting threads remain. If sys_exit
+ * hinted exit_last_thread, wait for sibling exitors. When thread_number==0,
+ * set exit_last_thread (authoritative) for wait4.
  */
-static bool clean_wait_exitor_zombie(Thread_Base *target)
+static bool clean_proc_bundle_detached(linux_proc_resource_t *proc)
 {
-        if (!target || !(target->flags & THREAD_FLAG_EXIT_REQUESTED)) {
-                return target
-                       && thread_get_status(target) == thread_status_zombie;
+        if (!proc)
+                return false;
+
+        lock_cas(&proc->thread_list_lock);
+        if (proc->thread_number > 0) {
+                bool last_hint = proc->exit_last_thread;
+
+                unlock_cas(&proc->thread_list_lock);
+                if (!last_hint)
+                        return false;
+                linux_proc_wait_all_threads_detached(proc);
+        } else {
+                unlock_cas(&proc->thread_list_lock);
         }
 
-        for (;;) {
-                u64 st = thread_get_status(target);
-
-                if (st == thread_status_zombie) {
-                        return true;
-                }
-                if (st != thread_status_block_on_send
-                    && st != thread_status_block_on_receive
-                    && st == thread_status_ready) {
-                        (void)thread_set_status(target, thread_status_zombie);
-                        return true;
-                }
-                schedule(percpu(core_tm));
+        lock_cas(&proc->thread_list_lock);
+        if (proc->thread_number != 0) {
+                unlock_cas(&proc->thread_list_lock);
+                return false;
         }
+        proc->exit_last_thread = 1;
+        unlock_cas(&proc->thread_list_lock);
+        return true;
 }
 
+/*
+ * THREAD_REAP handler: exitor sent reap before zombie; promote if needed so
+ * delete_thread can run (send may return before zombie store is visible).
+ */
 static void clean_handle_thread_reap(const kmsg_t *km)
 {
         void *vthread;
         i64 exit_code;
         enum {
                 REAP_NONE = 0,
-                REAP_LINK_B, /* REAPED → claim + delete_task */
-                REAP_LINK_A, /* ZOMBIE → async EXIT_NOTIFY */
+                REAP_LINK_B,
+                REAP_LINK_A,
         } after = REAP_NONE;
-        pid_t task_pid = 0;
-        pid_t ppid = 0;
+        pid_t notify_ppid = 0;
         i32 notify_exit_code = 0;
+        Thread_Base *target;
+        linux_proc_resource_t *proc = NULL;
+        error_t del_e;
+        u64 st;
 
         if (ipc_serial_decode(km->payload,
                               km->hdr.payload_len,
@@ -251,16 +249,13 @@ static void clean_handle_thread_reap(const kmsg_t *km)
                 return;
         }
 
-        Thread_Base *target = (Thread_Base *)vthread;
-        Tcb_Base *task = target ? target->belong_tcb : NULL;
-
+        target = (Thread_Base *)vthread;
         if (!target) {
                 pr_error("[clean_server] THREAD_REAP: NULL thread\n");
                 return;
         }
 
-        Thread_Base *curr = get_cpu_current_thread();
-        if (target == curr) {
+        if (target == get_cpu_current_thread()) {
                 pr_error(
                         "[clean_server] THREAD_REAP: cannot reap current thread\n");
                 return;
@@ -272,20 +267,30 @@ static void clean_handle_thread_reap(const kmsg_t *km)
                 return;
         }
 
-        if (!clean_wait_exitor_zombie(target)) {
+        if (!(target->flags & THREAD_FLAG_EXIT_REQUESTED)
+            && thread_get_status(target) != thread_status_zombie) {
                 pr_error(
                         "[clean_server] THREAD_REAP: not zombie (status=%lu)\n",
                         thread_get_status(target));
                 return;
         }
 
+        st = thread_get_status(target);
+        if (st != thread_status_zombie)
+                (void)thread_set_status(target, thread_status_zombie);
+
+        if (target->vs == &root_vspace) {
+                pr_error(
+                        "[clean_server] THREAD_REAP: user thread must not use root vspace\n");
+                return;
+        }
+
+        proc = linux_proc_of(target);
+        if (proc && !ref_get_not_zero(&proc->refcount))
+                proc = NULL;
+
 #ifdef LINUX_COMPAT_TEST
         {
-                /*
-                 * Path-B PID1 wait cookie (usually /init). Suite ELFs under
-                 * ash run_all are Link A — progress depends on EXIT_NOTIFY,
-                 * not this cookie.
-                 */
                 linux_thread_append_t *ta = linux_thread_append(target);
 
                 if (ta && ta->boot_wait_cookie != 0 && target->tm) {
@@ -296,209 +301,74 @@ static void clean_handle_thread_reap(const kmsg_t *km)
         }
 #endif
 
-        {
-                error_t e = delete_thread(target);
-
-                if (e != REND_SUCCESS) {
-                        pr_error("[clean_server] THREAD_REAP: delete_thread "
-                                 "failed e=%d\n",
-                                 (int)e);
-                        return;
-                }
-        }
-
-        if (!task) {
+        del_e = delete_thread(target);
+        if (del_e != REND_SUCCESS) {
+                pr_error("[clean_server] THREAD_REAP: delete_thread failed e=%d\n",
+                         (int)del_e);
+                if (proc)
+                        (void)linux_proc_put(proc);
                 return;
         }
 
-        {
-                linux_proc_append_t *pa = linux_proc_append(task);
+        if (!proc)
+                return;
 
-                lock_cas(&task->thread_list_lock);
-                if (task->thread_number == 0 && pa) {
-                        if (pa->exit_state == LINUX_EXIT_REAPED) {
-                                /* Link B: orphan / no wait reaper. */
-                                after = REAP_LINK_B;
-                                task_pid = task->pid;
-                        } else if (pa->exit_state == LINUX_EXIT_ZOMBIE
-                                   && !pa->exit_notify_sent) {
-                                /* Candidate Link A; confirm parent unlocked. */
-                                after = REAP_LINK_A;
-                                task_pid = task->pid;
-                                ppid = pa->ppid;
-                                notify_exit_code = pa->exit_code;
-                        }
-                }
-                unlock_cas(&task->thread_list_lock);
+        /*
+         * Sync detach: fini/detach runs on last thread ref, which may lag
+         * delete_thread while this handler still holds the IPC rendezvous ref.
+         */
+        linux_proc_detach_thread(target);
 
-                if (after == REAP_LINK_A) {
-                        /*
-                         * Parent gone since sys_exit → demote to Link B.
-                         * Never set exit_notify_sent then skip notify (zombie
-                         * would be unreapable).
-                         */
-                        if (ppid > 0 && find_task_by_pid(ppid)) {
-                                lock_cas(&task->thread_list_lock);
-                                if (pa->exit_state == LINUX_EXIT_ZOMBIE
-                                    && !pa->exit_notify_sent) {
-                                        pa->exit_notify_sent = 1;
-                                } else {
-                                        after = REAP_NONE;
-                                }
-                                unlock_cas(&task->thread_list_lock);
-                        } else {
-                                lock_cas(&task->thread_list_lock);
-                                if (pa->exit_state == LINUX_EXIT_ZOMBIE) {
-                                        pa->exit_state = LINUX_EXIT_REAPED;
-                                        after = REAP_LINK_B;
-                                } else {
-                                        after = REAP_NONE;
-                                }
-                                unlock_cas(&task->thread_list_lock);
-                        }
-                }
-        }
-
-        if (after == REAP_LINK_B && task_pid > 0) {
-                (void)clean_claim_and_delete_task(task_pid);
+        if (!clean_proc_bundle_detached(proc)) {
+                (void)linux_proc_put(proc);
                 return;
         }
 
-        if (after == REAP_LINK_A && task_pid > 0) {
-                /*
-                 * Must return to listen after spawn — parent wait4 will
-                 * TASK_REAP_SYNC on the shared clean_listen.
-                 */
-                clean_async_exit_notify(ppid, task_pid, notify_exit_code);
+        lock_cas(&proc->thread_list_lock);
+        if (proc->exit_state == LINUX_EXIT_CLAIMED
+            || proc->exit_state == LINUX_EXIT_NOTIFIED) {
+                /* Parent reaping or EXIT_NOTIFY already committed. */
+        } else if (!proc_has_wait_reaper(proc)) {
+                after = REAP_LINK_B;
+        } else if (proc->exit_state == LINUX_EXIT_ZOMBIE) {
+                after = REAP_LINK_A;
+                notify_ppid = proc->ppid;
+                notify_exit_code = proc->exit_code;
         }
+        unlock_cas(&proc->thread_list_lock);
+
+        if (after == REAP_LINK_A) {
+                if (notify_ppid <= 0 || !find_proc_by_pid(notify_ppid)) {
+                        after = REAP_LINK_B;
+                } else {
+                        lock_cas(&proc->thread_list_lock);
+                        if (proc->exit_state == LINUX_EXIT_ZOMBIE)
+                                proc->exit_state = LINUX_EXIT_NOTIFIED;
+                        else
+                                after = REAP_NONE;
+                        unlock_cas(&proc->thread_list_lock);
+                }
+        }
+
+        if (after == REAP_LINK_B) {
+                if (linux_proc_reap(proc) != REND_SUCCESS) {
+                        pr_error("[clean_server] Link B linux_proc_reap failed pid=%d\n",
+                                 (int)proc->pid);
+                }
+                (void)linux_proc_put(proc);
+                return;
+        }
+
+        if (after == REAP_LINK_A)
+                clean_async_exit_notify(notify_ppid, proc, notify_exit_code);
+        (void)linux_proc_put(proc);
 }
 
-static i64 clean_claim_and_delete_task(pid_t pid)
-{
-        Tcb_Base *task;
-        linux_proc_append_t *pa;
-
-        if (pid <= 0)
-                return -LINUX_EINVAL;
-
-        for (;;) {
-                task = find_task_by_pid(pid);
-                if (!task)
-                        return 0;
-
-                pa = linux_proc_append(task);
-                if (!pa)
-                        return -LINUX_ECHILD;
-
-                lock_cas(&task->thread_list_lock);
-                if (task->thread_number != 0) {
-                        unlock_cas(&task->thread_list_lock);
-                        schedule(percpu(core_tm));
-                        continue;
-                }
-                if (pa->exit_state == LINUX_EXIT_TASK_CLAIMED) {
-                        unlock_cas(&task->thread_list_lock);
-                        schedule(percpu(core_tm));
-                        continue;
-                }
-                if (pa->exit_state != LINUX_EXIT_REAPED) {
-                        unlock_cas(&task->thread_list_lock);
-                        return -LINUX_ECHILD;
-                }
-                pa->exit_state = LINUX_EXIT_TASK_CLAIMED;
-                unlock_cas(&task->thread_list_lock);
-                break;
-        }
-
-        if (task->vs == &root_vspace) {
-                pr_error(
-                        "[ Error ] TASK_REAP: user task must not use root vspace\n");
-        }
-
-        {
-                error_t e = delete_task(task);
-
-                if (e != REND_SUCCESS) {
-                        pr_error(
-                                "[clean_server] delete_task failed (task=%p, e=%d)\n",
-                                (void *)task,
-                                (int)e);
-                        return -LINUX_EAGAIN;
-                }
-        }
-        return 0;
-}
-
-static void clean_handle_task_reap(const kmsg_t *km, const char *reply_port,
-                                   bool want_reply)
-{
-        i32 pid;
-        i64 result = 0;
-
-        if (want_reply) {
-                char *rp = NULL;
-
-                if (ipc_serial_decode(km->payload,
-                                      km->hdr.payload_len,
-                                      LINUX_KMSG_FMT_TASK_REAP_SYNC,
-                                      &pid,
-                                      &rp)
-                    != REND_SUCCESS) {
-                        pr_error(
-                                "[clean_server] TASK_REAP_SYNC: decode failed\n");
-                        ipc_rpc_reply(km,
-                                      reply_port,
-                                      clean_server_service_id,
-                                      IPC_RPC_RESP_OPCODE_DEFAULT,
-                                      IPC_RPC_RESP_FMT_DEFAULT,
-                                      -LINUX_EIO);
-                        return;
-                }
-                reply_port = rp;
-        } else if (ipc_serial_decode(km->payload,
-                                     km->hdr.payload_len,
-                                     LINUX_KMSG_FMT_TASK_REAP,
-                                     &pid)
-                   != REND_SUCCESS) {
-                pr_error("[clean_server] TASK_REAP: decode failed\n");
-                return;
-        }
-
-        if (pid <= 0) {
-                pr_error("[clean_server] TASK_REAP: invalid pid=%d\n",
-                         (int)pid);
-                if (want_reply) {
-                        ipc_rpc_reply(km,
-                                      reply_port,
-                                      clean_server_service_id,
-                                      IPC_RPC_RESP_OPCODE_DEFAULT,
-                                      IPC_RPC_RESP_FMT_DEFAULT,
-                                      -LINUX_EINVAL);
-                }
-                return;
-        }
-
-        result = clean_claim_and_delete_task((pid_t)pid);
-        if (result == -LINUX_ECHILD) {
-                pr_error(
-                        "[clean_server] TASK_REAP: pid=%d bad exit_state or append\n",
-                        (int)pid);
-        }
-
-        if (want_reply) {
-                ipc_rpc_reply(km,
-                              reply_port,
-                              clean_server_service_id,
-                              IPC_RPC_RESP_OPCODE_DEFAULT,
-                              IPC_RPC_RESP_FMT_DEFAULT,
-                              result);
-        }
-}
-
-static void clean_handle_message(Message_t *msg)
+static void clean_handle_message(Message_t *msg, u16 service_id)
 {
         const kmsg_t *km;
 
+        (void)service_id;
         (void)clean_poll_exit_notify_jobs();
 
         if (!msg || !msg->data) {
@@ -517,26 +387,13 @@ static void clean_handle_message(Message_t *msg)
                 return;
         }
 
-        switch (km->hdr.opcode) {
-        case KMSG_OP_CLEAN_THREAD_REAP:
+        if (km->hdr.opcode == KMSG_OP_CLEAN_THREAD_REAP) {
                 clean_handle_thread_reap(km);
                 return;
-        case KMSG_OP_CLEAN_TASK_REAP:
-                clean_handle_task_reap(km, NULL, false);
-                return;
-        case KMSG_OP_CLEAN_TASK_REAP_SYNC:
-                clean_handle_task_reap(km, NULL, true);
-                return;
-        default:
-                pr_error("[clean_server] Unknown opcode %u\n",
-                         (unsigned)km->hdr.opcode);
         }
-}
 
-static void clean_server_on_message(Message_t *msg, u16 service_id)
-{
-        (void)service_id;
-        clean_handle_message(msg);
+        pr_error("[clean_server] Unknown opcode %u\n",
+                 (unsigned)km->hdr.opcode);
 }
 
 /*
@@ -601,7 +458,6 @@ static void clean_server_ensure_port(void)
 static bool clean_server_poll_pending(void *ctx)
 {
         (void)ctx;
-        /* Retry parked EXIT_NOTIFY; true → coop_loop yields instead of recv. */
         return clean_poll_exit_notify_jobs();
 }
 
@@ -610,7 +466,7 @@ void clean_server_thread(void)
         clean_server_ensure_port();
         clean_exit_notify_jobs_ensure();
         ipc_server_coop_loop(CLEAN_SERVER_PORT_NAME,
-                             clean_server_on_message,
+                             clean_handle_message,
                              clean_server_poll_pending,
                              NULL);
 }

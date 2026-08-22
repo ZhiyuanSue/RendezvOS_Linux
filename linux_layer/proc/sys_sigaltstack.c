@@ -4,13 +4,14 @@
 #include <common/types.h>
 #include <linux_compat/errno.h>
 #include <linux_compat/linux_mm_radix.h>
+#include <linux_compat/proc_compat.h>
 #include <linux_compat/signal/signal_state.h>
 #include <linux_compat/signal/signal_types.h>
 #include <linux_compat/signal/signal_altstack.h>
 #include <modules/log/log.h>
 #include <rendezvos/error.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <syscall.h>
 
 /*
@@ -105,12 +106,12 @@ static int signal_validate_new_altstack(const stack_t *new_stack)
 i64 sys_sigaltstack(u64 ss_ptr, u64 old_ss_ptr)
 {
         Thread_Base *current_thread = get_cpu_current_thread();
-        Tcb_Base *process;
+        linux_proc_resource_t *process;
         linux_signal_thread_state_t *ts;
         VSpace *vs;
 
-        if (!current_thread || !(process = current_thread->belong_tcb)
-            || !process->vs) {
+        if (!current_thread || !(process = linux_proc_of(current_thread))
+            || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
 
@@ -119,7 +120,7 @@ i64 sys_sigaltstack(u64 ss_ptr, u64 old_ss_ptr)
                 return -LINUX_ENOMEM;
         }
 
-        vs = process->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }

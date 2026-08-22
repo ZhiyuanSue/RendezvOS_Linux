@@ -13,10 +13,11 @@
 #include <rendezvos/mm/vmm_radix_tree.h>
 #include <rendezvos/mm/pmm.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <rendezvos/limits.h>
 #include <linux_compat/fault.h>
 #include <linux_compat/errno.h>
+#include <linux_compat/proc_compat.h>
 #include <linux_compat/signal/signal_deliver.h>
 #include <linux_compat/signal/signal_queue.h>
 #include <linux_compat/signal/signal_types.h>
@@ -24,7 +25,7 @@
 #if defined(_X86_64_)
 #include <arch/x86_64/mm/pmm.h>
 #include <arch/x86_64/boot/arch_setup.h>
-#include <arch/x86_64/tcb_arch.h>
+#include <arch/x86_64/thread_arch.h>
 #elif defined(_AARCH64_)
 #include <arch/aarch64/mm/pmm.h>
 #include <arch/aarch64/boot/arch_setup.h>
@@ -76,7 +77,7 @@ static void linux_pf_log_user_context(struct trap_frame *tf, vaddr fault_addr,
                                       bool is_execute)
 {
         Thread_Base *th = get_cpu_current_thread();
-        Tcb_Base *task = th ? th->belong_tcb : NULL;
+        linux_proc_resource_t *task = th ? linux_proc_of(th) : NULL;
         vaddr user_pc = 0;
         vaddr user_sp = 0;
 
@@ -114,7 +115,7 @@ static void linux_pf_log_user_context(struct trap_frame *tf, vaddr fault_addr,
 static void linux_compat_deliver_segv_or_fatal(struct trap_frame *tf)
 {
         Thread_Base *th = get_cpu_current_thread();
-        Tcb_Base *task = th ? th->belong_tcb : NULL;
+        linux_proc_resource_t *task = th ? linux_proc_of(th) : NULL;
 
         if (task) {
                 (void)linux_queue_signal(task, SIGSEGV, task->pid);

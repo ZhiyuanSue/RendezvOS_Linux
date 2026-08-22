@@ -3,7 +3,7 @@
 
 #include <linux_compat/proc_compat.h>
 
-void linux_signal_init_proc_append(linux_proc_append_t* pa);
+void linux_signal_init_proc_append(linux_proc_resource_t* pa);
 void linux_signal_init_thread_append(linux_thread_append_t* ta);
 void linux_signal_reset_thread_handler_state(linux_thread_append_t* ta);
 

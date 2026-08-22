@@ -1,7 +1,7 @@
 #ifndef _LINUX_COMPAT_TIME_SLEEP_H_
 #define _LINUX_COMPAT_TIME_SLEEP_H_
 
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 /*
  * Per-thread sleep IPC port (linux_layer/time/linux_time_sleep.c).

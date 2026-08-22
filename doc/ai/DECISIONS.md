@@ -5,6 +5,49 @@ Format: Context / Decision / Consequences.
 
 ---
 
+## 2026-08-22 | exit_state: NOTIFIED replaces exit_notify_sent; Link B via proc_has_wait_reaper
+
+- Context: v2 bring-up used `LINUX_EXIT_REAPED` at sys_exit for Link B orphans plus a separate `exit_notify_sent` flag for Link A dedup — two parallel encodings of the same protocol fork.
+- Decision: sys_exit **always** sets `ZOMBIE`. Clean chooses Link A vs B with **`proc_has_wait_reaper(proc)`** at `thread_number==0`. Link A commits notify by transitioning **`ZOMBIE → NOTIFIED`** (replaces `exit_notify_sent`). Parent `wait4` / `linux_proc_reap` accept `ZOMBIE` or `NOTIFIED`. Drop `LINUX_EXIT_REAPED`.
+- Consequences: One fewer field on `linux_proc_resource_t`; `EXIT_CLEAN.md` §3 updated; no behavior change for tested Link A/B paths.
+
+---
+
+## 2026-08-22 | EXIT_CLEAN v2: parent local reap; drop TASK_REAP_SYNC
+
+- Context: Path-B `run_all` hung after `END test_brk`. v1 used `EXIT_NOTIFY` → parent sets `REAPED` → **`TASK_REAP_SYNC` RPC back to `clean_listen`**. That contended with listen's blocking `recv` on the same port; parent also waited for `thread_number==0` before SYNC, while clean needed SYNC before proceeding — classic deadlock. Separately, `thread_number==0` no longer aligns with `delete_thread` return (append `fini`/detach lags EBR/IPC ref retirement).
+- Decision: **Protocol v2** in [`EXIT_CLEAN.md`](../linux_compat/protocols/EXIT_CLEAN.md): clean runs `delete_thread` + **sync `linux_proc_detach_thread`** (+ `wait_all_threads_detached` only when other threads remain); Link A **`EXIT_NOTIFY`** carries **`proc*`**; parent **`linux_proc_reap`** locally — **no** `TASK_REAP*` RPC.
+- Consequences: `clean_ipc.c` = `linux_clean_send_thread_reap` only; `wait4` uses EXIT_NOTIFY `proc*` + `proc_parent_has_unreaped_child` for block/ECHILD; orphan Link B = clean inline reap (no kernel_port notify).
+
+---
+
+## 2026-08-22 | EXIT_CLEAN v2 implementation cleanup (post bring-up)
+
+- Context: Bring-up left v1 paths (`find_zombie_child*`, blocking `linux_proc_post_exit_notify`, kernel_port init reaper), redundant `parent_pa`/`pa` aliases, duplicated exit marking in `sys_exit`/`linux_fatal_user_fault`, and thin wrappers.
+- Decision: Delete dead v1 APIs; consolidate wait pid matching; extract `linux_proc_mark_exiting`; simplify `clean_handle_thread_reap`; **clean gates notify on `thread_number==0`** (fixes concurrent last-two-thread exit); rename `LINUX_EXIT_CLAIMED`; **`NOTIFIED` replaces `exit_notify_sent`**; refresh DATA_MODEL naming (`res` / `linux_proc_resource_t`).
+- Consequences: Smaller `proc_wait_ipc.c` / `sys_wait.c` / `sys_proc_registry.c`; docs updated (EXIT_CLEAN C.2, WAIT4, DATA_MODEL).
+
+---
+
+## 2026-08-18 | Core has no TCB; VSpace lives on the thread
+
+- Context: `Tcb_Base` duplicated lifetime with `Thread_Base` (belong_tcb, task thread list, `delete_task` vs last `delete_thread`, fake `root_task` for kernel threads). That tax showed up in fork/exit/VFS vs lookup and blocked freezing the core model.
+- Decision: Core object model is **thread + address space**. `create_thread` / `copy_thread` require a non-NULL `VSpace*` and take ownership of the caller’s live ref (create/clone/`ref_get`, including an explicit get of `root_vspace` for kernel threads — typically via `gen_thread_from_func`). To share a user AS, the caller `ref_get`s first. `schedule` activates user `thread->vs` only for `THREAD_FLAG_USER`; kernel/idle may leave the last user AS loaded (performance). Linux pid/wait/fd/signal is a heap `linux_proc_resource_t`. Last thread `fini` detaches the proc; `linux_proc_reap` is wait/clean. Runnable attach is `add_thread_to_manager` (no `thread_start` / `thread_join`). Bare-core / incbin harness keeps `gen_thread_from_elf` + `run_elf_program` (Path B); Linux user images still use `load_elf_to_vs` + personality exec.
+- Consequences:
+  - Removed `Tcb_Base`, `get_cpu_current_task`, `new_task_structure` / `delete_task`, `root_task`, task append hooks.
+  - VFS/clean must use `proc->vs` (non-owning cache) or the client thread’s `vs`, never `linux_current_vs()` on a kernel server thread.
+  - Docs: [`task-thread.md`](../../core/docs/task-thread.md), [`APPEND_HOOKS.md`](../linux_compat/APPEND_HOOKS.md), [`DATA_MODEL.md`](../linux_compat/DATA_MODEL.md).
+
+---
+
+## 2026-08-18 | exit/wait under thread+VSpace (no TCB)
+
+- Context: After vs moved onto the thread, Path-B `run_all` hung after `END test_brk`. Old TCB deferred `del_vspace` until `delete_task`/`wait`. New last-thread `delete_thread` drops `thread->vs` while kernel/idle still had the user AS loaded (`current_vspace` / `tlb_cpu_mask`), so `delete_thread` could fail or hang in `del_vspace` and never send Link A `EXIT_NOTIFY`.
+- Decision: Teardown split (unchanged): core `delete_thread` drops `thread->vs` ownership only; personality `linux_proc_reap` does **not** free vs. `schedule` may leave the last user AS loaded on kernel/idle (performance); teardown does **not** switch back to `root_vspace`. **`del_thread_structure` runs `fini` (detach) before the `thread->vs` put**, but detach may lag from the listen thread's perspective — clean uses **sync `linux_proc_detach_thread`** after `delete_thread`, then **`linux_proc_wait_all_threads_detached` only when `exit_last_thread` is set and other threads remain** (multi-thread fallback). **Exit/wait message protocol superseded by EXIT_CLEAN v2 (2026-08-22)** — no `TASK_REAP_SYNC`.
+- Consequences: Kernel threads hold a get on `root_vspace` for their lifetime; physically may keep running with a leftover user CR3/TTBR. Invariant: `current_vspace == user vs` ⇒ this CPU holds that vs’s extra. See [`EXIT_CLEAN.md`](../linux_compat/protocols/EXIT_CLEAN.md) object split, [`INVARIANTS.md`](INVARIANTS.md).
+
+---
+
 ## 2026-08-16 | Multi-zone PMM: weak hook fills `mem_zones` directly
 
 - Context: Need fixed-capacity multi-zone before buddy is up (no early allocator). A parallel `pmm_zone_config` / “slot” table duplicated `MemZone` fields. Initcall / compat is too late for `phy_mm_init`.
@@ -49,7 +92,7 @@ Format: Context / Decision / Consequences.
 ## 2026-07-26 | Link A vs B: only live parent is a wait reaper
 
 - Context: Treating `ppid==0` as link A forced `EXIT_NOTIFY(kernel_port)` on every test exit, pinned per-CPU clean workers, then listen accepted `THREAD_REAP` but could not dispatch (`send done`, no `enter`). Contradicted link B in the same protocol doc.
-- Decision: `proc_has_wait_reaper` is true **only** if `ppid>0` and the parent task exists. Init-adopted / orphan exits use link B (`REAPED` + **only** `THREAD_REAP`; listen claims `delete_task` when last thread). `EXIT_NOTIFY` only to live parent `wait_port`. See [`protocols/EXIT_CLEAN.md`](../linux_compat/protocols/EXIT_CLEAN.md).
+- Decision: `proc_has_wait_reaper` is true **only** if `ppid>0` and the parent proc exists. Init-adopted / orphan exits use **Link B** (clean inline `linux_proc_reap` after detach; no EXIT_NOTIFY). `EXIT_NOTIFY` only to live parent `wait_port`. See [`protocols/EXIT_CLEAN.md`](../linux_compat/protocols/EXIT_CLEAN.md).
 - Consequences: Test/harness exits no longer force EXIT_NOTIFY to kernel_port; clone/wait4 (live parent) still uses link A + async EXIT_NOTIFY.
 
 ---
@@ -82,7 +125,7 @@ Format: Context / Decision / Consequences.
 
 - Context: One-shot EXIT_NOTIFY threads were a transitional escape from blocking listen on `wait_port`. Coop already had try/park; clean still spawned workers.
 - Decision: `linux_proc_try_post_exit_notify` via `ipc_system_try_deliver` (avoids listen `send_msg_queue`). AGAIN → per-CPU park list; `ipc_server_coop_loop` poll returns true → `schedule` instead of blocking `recv_msg`. Alloc/hard fail → pending_exits+poke. No EXIT_NOTIFY `gen_thread`.
-- Consequences: Same-thread coop FSM; TASK_REAP_SYNC can still be accepted on that CPU; fewer threads under ash `run_all`.
+- Consequences: Same-thread coop FSM; v1 `KMSG_OP_CLEAN_TASK_REAP*` removed from tree; fewer threads under ash `run_all`.
 
 ---
 
@@ -159,7 +202,7 @@ Format: Context / Decision / Consequences.
 ## 2026-07-09 | Per-process fd table in compat (scheme B)
 
 - Context: Bootstrap put fd numbers on vfs_server; broke Linux dup2/stdout redirect and mixed process semantics into FS server.
-- Decision: **`linux_proc_append_t.fs`** holds fd 0–31; vfs_server holds **`vfs_handle_t`** open-file state only. IPC carries abs paths (open) or handle ids (I/O). Console write stays local unless fd redirected to VFS.
+- Decision: **`linux_proc_resource_t.fs`** holds fd 0–31; vfs_server holds **`vfs_handle_t`** open-file state only. IPC carries abs paths (open) or handle ids (I/O). Console write stays local unless fd redirected to VFS.
 - Consequences: Removed `vfs_fd.c`; OPEN fmt `siu`; getcwd local. See `doc/linux_compat/FD_TABLE.md`.
 
 ---
@@ -289,11 +332,11 @@ Format: Context / Decision / Consequences.
 ## 2026-07 | Append lifecycle via hook tables (init / copy / fini)
 
 - Context: Linux proc/thread state lived in core append bytes; separate `elf_init_handler` params and `copy_thread` append memcpy caused drift and fork bugs.
-- Decision: Core exposes `task_append_hooks_t` / `thread_append_hooks_t` (`append_info_len` + init/copy/fini). Compat defines static `linux_*_append_hooks`; ELF first load uses `thread.init`; fork/clone use `task.copy` + `thread.copy`; teardown uses `fini`.
+- Decision: Core exposes `thread_append_hooks_t` (`append_info_len` + init/copy/fini). Compat defines static `linux_thread_append_hooks`; ELF first load uses `thread.init`; fork/clone use `linux_proc_*` + `thread.copy`; teardown uses `thread.fini` (detach proc). Superseded for process state by 2026-08-18 (heap `linux_proc`, no task append).
 - Consequences:
-  - Canonical compat doc: [`APPEND_HOOKS.md`](linux_compat/APPEND_HOOKS.md).
-  - `gen_task_from_elf` / `new_task_structure` / `create_thread` take hook table pointers only.
-  - `linux_task_append_clone()` encapsulates CLONE_VM vs fork signal/fs policy for `sys_clone`.
+  - Canonical compat doc: [`APPEND_HOOKS.md`](../linux_compat/APPEND_HOOKS.md).
+  - `gen_thread_from_elf` / `create_thread` take the thread hook table only.
+  - `linux_proc_clone_from()` encapsulates CLONE_VM vs fork signal/fs policy for `sys_clone`.
 
 ---
 

@@ -2,8 +2,9 @@
 #define _LINUX_COMPAT_SIGNAL_QUEUE_H_
 
 #include <common/types.h>
+#include <linux_compat/proc_compat.h>
 #include <linux_compat/signal/signal_types.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 /*
  * Core signal queuing functions (Phase 2B Layer A)
@@ -14,7 +15,7 @@
 
 /**
  * @brief Queue a signal for a process
- * @param target: Target process TCB
+ * @param target: Target process (`linux_proc_resource_t`)
  * @param sig: Signal number (1-64)
  * @param sender_tid: Sender thread ID (for siginfo_t)
  * @return: 0 on success, negative errno on failure
@@ -26,7 +27,7 @@
  * - Wakes up target thread if necessary
  * - Handles default actions for SIG_DFL
  */
-i64 linux_queue_signal(Tcb_Base *target, int sig, pid_t sender_tid);
+i64 linux_queue_signal(linux_proc_resource_t *target, int sig, pid_t sender_tid);
 
 /**
  * @brief Queue a signal for a specific thread (for tgkill)
@@ -44,6 +45,6 @@ i64 linux_queue_signal_thread(Thread_Base *target_thread, int sig,
  * Called when disposition changes to SIG_IGN/SIG_DFL or when a queued signal
  * must not be delivered (Linux: ignored signals do not stay pending).
  */
-void linux_signal_flush_pending(Tcb_Base *target, int sig);
+void linux_signal_flush_pending(linux_proc_resource_t *target, int sig);
 
 #endif /* _LINUX_COMPAT_SIGNAL_QUEUE_H_ */

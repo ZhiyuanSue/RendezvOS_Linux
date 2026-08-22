@@ -25,7 +25,7 @@
 #include <rendezvos/ipc/kmsg.h>
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 #if PAGE_SIZE < 4096u
 #define VFS_COOP_IO_CHUNK PAGE_SIZE
@@ -130,7 +130,7 @@ static ipc_rpc_coop_disp_t vfs_coop_start_rw(ipc_rpc_coop_job_t *job,
                                              vfs_coop_ctx_t *ctx)
 {
         vfs_open_handle_t *file;
-        Tcb_Base *task;
+        linux_proc_resource_t *task;
         error_t e;
         struct allocator *alloc = percpu(kallocator);
 
@@ -219,7 +219,7 @@ static void vfs_coop_resume_rw(ipc_rpc_coop_job_t *job, vfs_coop_ctx_t *ctx,
                                i64 nested_result)
 {
         vfs_open_handle_t *file;
-        Tcb_Base *task;
+        linux_proc_resource_t *task;
         error_t e;
         i64 n = nested_result;
 

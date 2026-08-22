@@ -51,41 +51,29 @@
 #### 2. fork
 - **实现质量**：10/10 ✨
 - **技术约束**：
-  - 需要core/提供COW地址空间复制
-  - 需要core/提供线程拷贝（包括trap_frame）
-- **实现要点**：
+  - 需要 core `clone_vspace`（COW）与 `copy_thread`
+  - syscall 路径上需 `arch_ctx_refresh` / `arch_ctx_merge_from_src`
+- **实现要点**（现行模型：thread + `linux_proc`，无 core 进程对象）：
   ```c
-  /* 完整的fork实现 */
-  i64 sys_fork() {
-      // 1. 创建child task
-      child = new_task_structure(...);
-
-      // 2. COW地址空间复制（使用core/新增API）
-      e = linux_copy_vspace(parent->vs, &child_vs);
-
-      // 3. 拷贝执行流（使用core/新增API）
-      child_thread = copy_thread(parent_thread, child, 0, ...);
-
-      // 4. 添加到调度器
-      add_thread_to_task(child, child_thread);
+  i64 sys_fork(void) {
+      child = linux_proc_alloc();
+      e = linux_copy_vspace(parent_thread->vs, &child_vs);
+      child_thread = copy_thread(parent_thread, child_vs, 0);
+      linux_proc_attach_thread(child, child_thread);
       add_thread_to_manager(percpu(core_tm), child_thread);
-
-      return child->pid;  // 父进程返回子pid
+      return child->pid;
   }
   ```
-- **依赖core/新增API**：
-  - `vspace_clone(VSPACE_CLONE_F_COW_PREP)` - COW地址空间克隆
-  - `copy_thread()` - 线程拷贝（包括trap_frame）
-  - `run_copied_thread()` - 子线程启动
-- **回滚机制**：完整依赖del_vspace清理dst映射
+- **依赖 core API**：`clone_vspace`、`copy_thread`、`run_copied_thread`、`add_thread_to_manager`
+- **回滚**：失败路径由 compat 释放 proc / vs；末 ref 经 `free_vspace_ref` / personality reap
 
 #### 3. getpid
 - **实现质量**：10/10
 - **实现要点**：
   ```c
   i64 sys_getpid(void) {
-      Tcb_Base* tcb = get_cpu_current_task();
-      return tcb->pid;
+      linux_proc_resource_t *proc = linux_current_proc();
+      return proc ? proc->pid : -ESRCH;
   }
   ```
 - **技术约束**：多线程时应返回tgid而非pid
@@ -97,7 +85,7 @@
 #### 1. brk
 - **实现质量**：9/10
 - **技术约束**：
-  - 依赖`linux_proc_append_t`存储堆信息
+  - 依赖`linux_proc_resource_t`存储堆信息
   - 页对齐处理
 - **实现要点**：
   ```c
@@ -298,7 +286,7 @@ error_t map_handler_copy_paddr_range(struct map_handler* handler,
 
 #### `copy_thread()` - 线程拷贝
 ```c
-Thread_Base* copy_thread(Thread_Base* src_thread, Tcb_Base* dst_task,
+Thread_Base* copy_thread(Thread_Base* src_thread, VSpace* child_vs,
                          u64 ret_val, u64 append_bytes);
 ```
 - **功能**：复制线程（包括trap_frame）

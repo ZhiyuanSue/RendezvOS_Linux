@@ -1,7 +1,7 @@
 #include <common/types.h>
 #include <linux_compat/errno.h>
 #include <modules/log/log.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <syscall.h>
 
 #if defined(_X86_64_)

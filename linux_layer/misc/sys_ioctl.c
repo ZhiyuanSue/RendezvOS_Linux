@@ -1,7 +1,8 @@
 #include <linux_compat/errno.h>
 #include <linux_compat/linux_mm_radix.h>
+#include <linux_compat/proc_compat.h>
 #include <rendezvos/error.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <syscall.h>
 
 typedef struct {
@@ -18,15 +19,15 @@ typedef struct {
 
 i64 sys_ioctl(i32 fd, u32 request, u64 user_arg)
 {
-        Tcb_Base *task = get_cpu_current_task();
+        linux_proc_resource_t *task = linux_current_proc();
         VSpace *vs;
         error_t e;
 
-        if (!task || !task->vs) {
+        if (!task || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
 
-        vs = task->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }

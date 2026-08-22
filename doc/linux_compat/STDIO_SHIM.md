@@ -4,7 +4,7 @@
 
 | 项目 | 说明 |
 |------|------|
-| fd 表 | **`linux_proc_append_t.fs`** — 0/1/2 预装 console，`3+` 为 VFS 或空 |
+| fd 表 | **`linux_proc_resource_t.fs`** — 0/1/2 预装 console，`3+` 为 VFS 或空 |
 | `write` | 查 fd 表：`CONSOLE_OUT/ERR` → `sys_write_impl` → `log_put_locked` / UART |
 | `write` 重定向 | `dup2(vfs_fd, 1)` 后 fd 1 为 `LINUX_FD_VFS` → VFS IPC |
 | `read(0)` | bootstrap 返回 **0（EOF）**；无 UART RX |

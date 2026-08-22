@@ -96,16 +96,16 @@ static void linux_signal_thread_free(linux_signal_thread_state_t *ts)
         alloc->m_free(alloc, ts);
 }
 
-error_t linux_signal_proc_attach(Tcb_Base *task)
+error_t linux_signal_proc_attach(linux_proc_resource_t *task)
 {
-        linux_proc_append_t *pa;
+        linux_proc_resource_t *pa;
         linux_signal_proc_state_t *ps;
 
         if (!task) {
                 return -E_IN_PARAM;
         }
 
-        pa = linux_proc_append(task);
+        pa = task;
         if (!pa) {
                 return -E_IN_PARAM;
         }
@@ -124,15 +124,15 @@ error_t linux_signal_proc_attach(Tcb_Base *task)
         return REND_SUCCESS;
 }
 
-void linux_signal_proc_destroy(Tcb_Base *task)
+void linux_signal_proc_destroy(linux_proc_resource_t *task)
 {
-        linux_proc_append_t *pa;
+        linux_proc_resource_t *pa;
 
         if (!task) {
                 return;
         }
 
-        pa = linux_proc_append(task);
+        pa = task;
         if (!pa || !pa->signal) {
                 return;
         }
@@ -141,10 +141,10 @@ void linux_signal_proc_destroy(Tcb_Base *task)
         pa->signal = NULL;
 }
 
-error_t linux_signal_proc_fork(Tcb_Base *child, Tcb_Base *parent)
+error_t linux_signal_proc_fork(linux_proc_resource_t *child, linux_proc_resource_t *parent)
 {
-        linux_proc_append_t *cpa;
-        linux_proc_append_t *ppa;
+        linux_proc_resource_t *cpa;
+        linux_proc_resource_t *ppa;
         linux_signal_proc_state_t *child_ps;
         linux_signal_proc_state_t *parent_ps;
         error_t e;
@@ -153,8 +153,8 @@ error_t linux_signal_proc_fork(Tcb_Base *child, Tcb_Base *parent)
                 return -E_IN_PARAM;
         }
 
-        cpa = linux_proc_append(child);
-        ppa = linux_proc_append(parent);
+        cpa = child;
+        ppa = parent;
         if (!cpa) {
                 return -E_IN_PARAM;
         }
@@ -179,7 +179,7 @@ error_t linux_signal_proc_fork(Tcb_Base *child, Tcb_Base *parent)
         return REND_SUCCESS;
 }
 
-void linux_signal_proc_reset(Tcb_Base *task)
+void linux_signal_proc_reset(linux_proc_resource_t *task)
 {
         linux_signal_proc_state_t *ps = linux_signal_proc_state(task);
         int i;
@@ -290,15 +290,15 @@ error_t linux_signal_thread_fork_inherit(Thread_Base *child,
         return REND_SUCCESS;
 }
 
-linux_signal_proc_state_t *linux_signal_proc_state(Tcb_Base *task)
+linux_signal_proc_state_t *linux_signal_proc_state(linux_proc_resource_t *task)
 {
-        linux_proc_append_t *pa;
+        linux_proc_resource_t *pa;
 
         if (!task) {
                 return NULL;
         }
 
-        pa = linux_proc_append(task);
+        pa = task;
         if (!pa) {
                 return NULL;
         }

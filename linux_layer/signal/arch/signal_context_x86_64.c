@@ -1,12 +1,12 @@
 #if defined(_X86_64_)
 
-#include <arch/x86_64/tcb_arch.h>
+#include <arch/x86_64/thread_arch.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/signal/signal_context.h>
 #include <rendezvos/trap/trap.h>
 
 void linux_signal_arch_save_context(struct trap_frame* tf,
-                                    Arch_Task_Context* ctx,
+                                    Arch_Thread_Context* ctx,
                                     linux_signal_restore_t* rs)
 {
         if (!tf || !rs) {
@@ -35,7 +35,7 @@ void linux_signal_arch_save_context(struct trap_frame* tf,
 }
 
 void linux_signal_arch_restore_context(struct trap_frame* tf,
-                                       Arch_Task_Context* ctx,
+                                       Arch_Thread_Context* ctx,
                                        linux_signal_restore_t* rs,
                                        vaddr user_sp)
 {

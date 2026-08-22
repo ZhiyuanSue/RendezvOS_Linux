@@ -114,7 +114,7 @@ Logged / stub; needs scheduler + job control semantics.
 |------|----------|--------------|
 | Trap frame / syscall ABI | `struct trap_frame`, `ARCH_SYSCALL_*` | deliver + sigreturn |
 | x86 user SP scratch | `percpu(user_rsp_scratch)` | deliver / restore |
-| aarch64 EL0 SP | `Arch_Task_Context.sp_el0`, `msr SP_EL0` | deliver / restore |
+| aarch64 EL0 SP | `Arch_Thread_Context.sp_el0`, `msr SP_EL0` | deliver / restore |
 | Fresh context on fork | `arch_ctx_refresh` (in `copy_thread`) | already used by fork path |
 | Return to user (bootstrap) | `arch_return_to_user` | path B (not wired) |
 | User page access | `have_mapped`, `map_handler` | via `linux_mm_*_user` |

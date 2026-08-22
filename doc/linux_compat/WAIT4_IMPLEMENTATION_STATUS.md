@@ -13,19 +13,14 @@
 
 **功能**: 基于core的name_index机制实现O(1) PID查找
 
-**API接口**:
+**API接口**（现行：堆 `linux_proc_resource_t`，EXIT_CLEAN v2）:
 ```c
-// 基础API
-Tcb_Base* find_task_by_pid(pid_t pid);              // O(1)精确查找
-error_t register_process(Tcb_Base* task);           // 注册进程
-void unregister_process(Tcb_Base* task);            // 注销进程
-
-// 扩展API (wait4专用)
-Tcb_Base* find_zombie_child(pid_t ppid);                   // 查找任意zombie子进程
-Tcb_Base* find_zombie_child_in_pgid(pid_t ppid, pid_t pgid); // 按pgid查找
+linux_proc_resource_t *find_proc_by_pid(pid_t pid);
+bool proc_parent_has_unreaped_child(pid_t ppid, pid_t pgid, bool filter_by_pgid);
+bool proc_has_wait_reaper(linux_proc_resource_t *proc);
 ```
 
-**实现文件**: `linux_layer/proc/proc_registry.c`
+**实现文件**: `linux_layer/proc/sys_proc_registry.c`
 
 ### 2. sys_wait4 - 完整Linux标准实现
 
@@ -33,10 +28,12 @@ Tcb_Base* find_zombie_child_in_pgid(pid_t ppid, pid_t pgid); // 按pgid查找
 
 | pid选项 | 语义 | 实现方式 |
 |---------|------|----------|
-| `pid > 0` | 等待特定PID的子进程 | `find_task_by_pid()` + IPC阻塞等待 |
-| `pid == -1` | 等待任意子进程 | `find_zombie_child()` 直接返回zombie |
-| `pid == 0` | 等待同进程组的子进程 | `find_zombie_child_in_pgid()` + pgid匹配 |
-| `pid < -1` | 等待特定进程组的子进程 | `find_zombie_child_in_pgid()` + 指定pgid |
+| `pid > 0` | 等待特定PID的子进程 | `find_proc_by_pid()` + wait_port 阻塞 |
+| `pid == -1` | 等待任意子进程 | `proc_parent_has_unreaped_child` + EXIT_NOTIFY |
+| `pid == 0` | 等待同进程组的子进程 | 同上 + pgid 过滤 |
+| `pid < -1` | 等待特定进程组的子进程 | 同上 + 指定 pgid |
+
+收尸：**EXIT_NOTIFY 携带 `proc*`** → `linux_proc_reap`（无 registry zombie 扫描）。
 
 **支持的options**:
 - ✅ `WNOHANG` (0x00000001) - 非阻塞模式，子进程运行中立即返回0
@@ -45,62 +42,54 @@ Tcb_Base* find_zombie_child_in_pgid(pid_t ppid, pid_t pgid); // 按pgid查找
 
 **实现文件**: `linux_layer/proc/sys_wait.c`
 
-### 3. IPC阻塞机制
+### 3. IPC 阻塞机制
 
-**架构特点**: 使用IPC作为统一同步机制，替代轮询
+**架构特点**: wait4 阻塞在 parent `wait_port`；**EXIT_NOTIFY** 由 clean listen 在 Link A 投递（非 exitor 直发）。
 
-**实现流程**:
+**Link A 流程**:
 ```
-wait4()调用:
-1. 查找子进程 (proc_registry O(1)查找)
-2. 检查zombie状态 (已退出直接返回)
-3. WNOHANG检查 (非阻塞模式)
-4. 创建wait_port ("wait_port_<parent_pid>")
-5. recv_msg()阻塞等待 (IPC同步)
-6. 收到exit notification (子进程sys_exit发送)
-7. 验证并返回结果
+sys_exit:
+  ZOMBIE + exit_last_thread hint → THREAD_REAP → zombie; schedule
 
-sys_exit()调用:
-1. 设置exit_state=2 (防止clean_server过早删除)
-2. 发送exit notification到父进程wait_port
-3. 设置THREAD_FLAG_EXIT_REQUESTED
-4. 通知clean_server清理
+clean (thread_number==0):
+  delete_thread + sync detach → EXIT_NOTIFY(proc*) → parent wait_port
+
+parent wait4:
+  decode proc* → wstatus → linux_proc_reap (ZOMBIE or NOTIFIED → CLAIMED)
 ```
 
-**消息格式**: kmsg格式 "qi" (i64 child_pid + i32 exit_code)
+**Link B**（orphan / 无活父）：clean inline `linux_proc_reap`，无 EXIT_NOTIFY。
+
+**消息格式**: EXIT_NOTIFY `"q p i"`（pid + proc* + exit_code）；`WAIT_INTERRUPT` 仅 SIGCHLD EINTR 路径。
 
 ### 4. 进程组支持
 
 **数据结构扩展**:
 ```c
-typedef struct linux_proc_append {
+typedef struct linux_proc_resource {
     pid_t ppid;  // 父进程PID
     pid_t pgid;  // 进程组ID (新增)
     // ... 其他字段 ...
-} linux_proc_append_t;
+} linux_proc_resource_t;
 ```
 
 **继承机制**: fork()时子进程继承父进程的pgid
 
 ## 竞态条件修复
 
-### 问题场景
+### 问题场景（旧模型；已移除 core `delete_task`）
 ```
-T1: child发送wait4消息
-T2: child发送clean_server消息
-T3: clean_server处理: delete_thread() -> delete_task()
-T4: parent收到wait4消息，调用find_task_by_pid() -> NULL! 竞态!
+T1: child 发送 wait 通知
+T2: child 请求 clean_server
+T3: 末线程 teardown：delete_thread → fini detach → thread->vs put（vs 可能仍被 CPU extra 钉住）
+T4: parent 若过早假设 vs/proc 已销毁会竞态
 ```
 
-### 解决方案
+### 解决方案（现行）
 ```c
-// sys_exit中设置exit_state=2 (reaped)
-pa->exit_state = 2; // 告诉clean_server: wait4已获得所有信息
-
-// clean_server中检查
-if (pa->exit_state == 2) {
-    // 跳过delete_task，防止竞态
-}
+// sys_exit：设置 exit_state；wait 侧在 reap 前 proc 仍可查
+// clean_server / linux_proc_reap：personality 回收；core 只做 delete_thread
+// 末线程 fini detach 后 thread_number==0；wait 不依赖 del_vspace 完成
 ```
 
 ## 测试结果

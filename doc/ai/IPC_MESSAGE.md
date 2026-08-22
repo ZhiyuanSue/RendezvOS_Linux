@@ -83,10 +83,10 @@ Today, many paths are **one-way** (e.g. clean server reaps a thread; no reply `M
 
 Authoritative protocol: [`doc/linux_compat/protocols/EXIT_CLEAN.md`](../linux_compat/protocols/EXIT_CLEAN.md).
 
-- `linux_layer/proc/clean_ipc.c`: `linux_clean_send_thread_reap`, `linux_clean_task_reap_sync` (wait4/init RPC); one-way `linux_clean_send_task_reap` is legacy only.
-- `sys_exit`: always `THREAD_REAP`; orphans mark `REAPED` and listen finishes `delete_task` inline; waitable children stay `ZOMBIE` until wait.
-- `wait4` / init: `exit_state=REAPED` then `TASK_REAP_SYNC` (reply after `delete_task`).
-- Task delete is claimed by `REAPED→TASK_CLAIMED` so concurrent paths cannot double-`delete_task`.
+- `linux_layer/proc/clean_ipc.c`: **`linux_clean_send_thread_reap` only**.
+- EXIT_NOTIFY wire: **`LINUX_KMSG_FMT_EXIT_NOTIFY "q p i"`** (pid, proc*, exit_code).
+- `wait4` / init reaper: decode **`proc*`**; **`linux_proc_reap`** = fini + ref_put (zombie shell; no RPC).
+- `pending_exits` / init reap queue store **`proc*`** for later consume (no extra ref_get).
 - clean_server: shared `clean_listen`, one `ipc_server_coop_loop` thread per CPU; EXIT_NOTIFY is try_deliver + park (no one-shot thread).
 
 ## Init and layering

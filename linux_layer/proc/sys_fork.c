@@ -11,132 +11,85 @@
 #include <rendezvos/error.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/sync/cas_lock.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/mm/vmm.h>
+#include <rendezvos/task/thread.h>
 #include <syscall.h>
 #if defined(_X86_64_)
-#include <arch/x86_64/tcb_arch.h>
+#include <arch/x86_64/thread_arch.h>
 #elif defined(_AARCH64_)
-#include <arch/aarch64/tcb_arch.h>
+#include <arch/aarch64/thread_arch.h>
 #endif
-
-/*
- * Simplified fork implementation for Linux compatibility.
- *
- * Append lifecycle: see doc/linux_compat/APPEND_HOOKS.md
- * - new_task_structure(&linux_task_append_hooks)
- * - memset + static proc fields on child_pa, then task.append_hooks->copy
- * - copy_thread (core calls thread.append_hooks->copy; no append memcpy)
- *
- * This implements basic fork() semantics:
- * - Creates child process with copied address space
- * - Child returns 0, parent returns child PID
- * - File descriptor table: linux_fs_proc_fork (page_slice clone + handle
- * RETAIN)
- * - Does NOT implement:
- *   - COW (full page table copy instead)
- *   - Signal handler inheritance (partial via append copy hook)
- *   - Resource limits
- *
- * Limitations:
- * - Only supports single-threaded processes calling fork
- * - No thread-safety guarantees for multi-threaded parents
- * - Copy-on-write not implemented (higher memory usage)
- */
 
 i64 sys_fork(void)
 {
-        Tcb_Base *parent = get_cpu_current_task();
-        Tcb_Base *child = NULL;
+        linux_proc_resource_t *parent;
+        linux_proc_resource_t *child = NULL;
+        VSpace *parent_vs;
         VSpace *child_vs = NULL;
-        Thread_Base *parent_thread = NULL;
+        Thread_Base *parent_thread;
         Thread_Base *child_thread = NULL;
         i64 ret = -LINUX_ENOMEM;
         error_t e;
 
-        if (!parent || !parent->vs) {
+        parent_thread = get_cpu_current_thread();
+        parent = linux_proc_of(parent_thread);
+        parent_vs = parent_thread ? parent_thread->vs : NULL;
+        if (!parent || !parent_vs) {
                 pr_error("[PROC] fork: Invalid parent task\n");
                 return -LINUX_ESRCH;
         }
 
-        if (!linux_vspace_is_user_table(parent->vs)) {
+        if (!linux_vspace_is_user_table(parent_vs)) {
                 pr_error(
                         "[PROC] fork: Parent has no user vspace (radix/page tables)\n");
                 return -LINUX_EINVAL;
         }
 
-        /* Create child task structure */
-        child = new_task_structure(percpu(kallocator),
-                                   &linux_task_append_hooks);
+        child = linux_proc_alloc();
         if (!child) {
-                pr_error(
-                        "[PROC] fork: Failed to create child task structure\n");
-                ret = -LINUX_ENOMEM;
-                goto out;
+                pr_error("[PROC] fork: Failed to create child proc\n");
+                return -LINUX_ENOMEM;
         }
 
-        /* Copy parent's vspace */
-        e = linux_copy_vspace(parent->vs, &child_vs);
+        e = linux_copy_vspace(parent_vs, &child_vs);
         if (e != REND_SUCCESS) {
                 pr_error("[PROC] fork: Failed to copy vspace: %d\n", (int)e);
                 ret = -LINUX_ENOMEM;
-                goto out_free_task;
+                goto out_free_proc;
         }
 
-        child->vs = child_vs;
-        child->pid = get_new_id(&pid_manager);
-
-        /* Initialize child proc append (do not memcpy pending_exits / exit). */
-        linux_proc_append_t *parent_pa = linux_proc_append(parent);
-        linux_proc_append_t *child_pa = linux_proc_append(child);
-        if (child_pa) {
-                memset(child_pa, 0, sizeof(*child_pa));
-                child_pa->ppid = parent->pid;
-                child_pa->exit_code = 0;
-                child_pa->exit_state = LINUX_EXIT_RUNNING;
-                INIT_LIST_HEAD(&child_pa->pending_exits);
-                if (parent_pa) {
-                        child_pa->start_brk = parent_pa->brk;
-                        child_pa->brk = parent_pa->brk;
-                        child_pa->mmap_hint = parent_pa->mmap_hint;
-                        child_pa->pgid = parent_pa->pgid ? parent_pa->pgid :
-                                                           parent->pid;
-                        child_pa->uid = parent_pa->uid;
-                        child_pa->gid = parent_pa->gid;
-                        child_pa->euid = parent_pa->euid;
-                        child_pa->egid = parent_pa->egid;
-                }
-                if (child->append_hooks && child->append_hooks->copy
-                    && child->append_hooks->copy(child, parent)
-                               != REND_SUCCESS) {
-                        ret = -LINUX_ENOMEM;
-                        goto out_free_vspace;
-                }
-        }
-
-        /* Add child to task manager */
-        e = add_task_to_manager(percpu(core_tm), child);
-        if (e != REND_SUCCESS) {
-                pr_error(
-                        "[PROC] fork: Failed to add child task to task manager: %d\n",
-                        (int)e);
-                ret = -LINUX_EAGAIN;
+        child->ppid = parent->pid;
+        child->exit_code = 0;
+        child->exit_state = LINUX_EXIT_RUNNING;
+        child->start_brk = parent->brk;
+        child->brk = parent->brk;
+        child->mmap_hint = parent->mmap_hint;
+        child->pgid = parent->pgid ? parent->pgid : parent->pid;
+        child->uid = parent->uid;
+        child->gid = parent->gid;
+        child->euid = parent->euid;
+        child->egid = parent->egid;
+        if (linux_proc_copy_from(child, parent) != REND_SUCCESS) {
+                ret = -LINUX_ENOMEM;
                 goto out_free_vspace;
         }
 
-        parent_thread = get_cpu_current_thread();
-
-        child_thread = copy_thread(parent_thread, child, 0);
+        child_thread = copy_thread(parent_thread, child_vs, 0);
         if (!child_thread) {
                 pr_error("[PROC] fork: Failed to create child thread\n");
                 ret = -LINUX_ENOMEM;
-                goto out_del_from_manager;
+                goto out_free_proc;
+        }
+
+        if (linux_proc_attach_thread(child, child_thread) != REND_SUCCESS) {
+                ret = -LINUX_ENOMEM;
+                goto out_free_thread;
         }
 
         e = add_thread_to_manager(percpu(core_tm), child_thread);
         if (e != REND_SUCCESS) {
-                pr_error(
-                        "[PROC] fork: Failed to add child thread to scheduler: %d\n",
-                        (int)e);
+                pr_error("[PROC] fork: Failed to start child thread: %d\n",
+                         (int)e);
                 ret = -LINUX_EAGAIN;
                 goto out_free_thread;
         }
@@ -147,29 +100,19 @@ i64 sys_fork(void)
                         (int)e);
         }
 
-        /*
-         * Eagerly private the parent's stack page(s). Seen in busybox run_all:
-         * child runs, parent wait returns, then #PF at a non-.text PC — classic
-         * smashed user return address when COW stack pages stayed shared.
-         */
         linux_mm_cow_break_user_stack(
-                parent->vs, arch_get_thread_user_sp(&parent_thread->ctx));
+                parent_vs, arch_get_thread_user_sp(&parent_thread->ctx));
 
         return (i64)child->pid;
 
 out_free_thread:
         delete_thread(child_thread);
-out_del_from_manager:
-        del_task_from_manager(child);
+        child_thread = NULL;
+        goto out_free_proc;
 out_free_vspace:
-        if (child_vs) {
-                child->vs = NULL;
-                ref_put(&child_vs->refcount, free_vspace_ref);
-        }
-out_free_task:
-        if (child) {
-                delete_task(child);
-        }
-out:
+        if (child_vs && child_vs != &root_vspace)
+                (void)ref_put(&child_vs->refcount, free_vspace_ref);
+out_free_proc:
+        (void)linux_proc_put(child);
         return ret;
 }

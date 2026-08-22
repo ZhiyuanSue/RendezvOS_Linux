@@ -6,7 +6,7 @@
 #include <rendezvos/error.h>
 #include <rendezvos/mm/page_slice.h>
 #include <rendezvos/mm/vmm.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 /* Linux uapi auxv (include/uapi/linux/auxvec.h). */
 #define LINUX_AT_NULL   0

@@ -4,7 +4,7 @@
 #include <rendezvos/ipc/kmsg_system.h>
 #include <rendezvos/ipc/message.h>
 #include <rendezvos/ipc/port.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 /*
  * Generic recv_msg block interrupt (RPC reply ports, etc.).

@@ -297,7 +297,7 @@ When a new bug pattern appears during review/debug:
   Checklist: §0 (layer boundary discipline) + Pattern Log.
 
 - 2026-03: **Cross-CPU teardown vs per-CPU `Task_Manager`:** freeing or unlinking
-  a `Thread_Base` / `Tcb_Base` from another CPU’s scheduler lists without
+  a `Thread_Base` from another CPU’s scheduler lists without
   synchronization races `schedule()` on the owner CPU. Fix: owner-CPU execution,
   per-TM lock, or quiesce scheduler. Checklist: §2 + `INVARIANTS.md` (Task_Manager).
 
@@ -315,6 +315,24 @@ When a new bug pattern appears during review/debug:
 
 - 2026-04: **Wrapper refcount symmetry:** finalizer `ref_put(T)` implies creator
   must `ref_get_not_zero(T)` at bind time. Checklist: §3.
+
+- 2026-08: **Two kernel objects for one lifetime:** a process/task object plus
+  a thread list duplicates teardown (last thread vs object fini, belong-to
+  back pointers, fake root task for kernel threads). Prefer one schedulable
+  object (`Thread_Base`) that holds the address space; personality process
+  state is a heap object with its own refcount. `create_thread` / `copy_thread`
+  **take ownership** of the caller’s `VSpace` ref (no separate bind) so
+  personalities do not juggle a creator ref plus a bind ref. Share an AS
+  by `ref_get` then pass that extra. Last
+  thread must not leave a dangling non-owning `vs` cache. Checklist: §3 + §5.
+
+- 2026-08: **Leftover user AS (schedule + teardown):** kernel/idle may keep
+  the last user AS loaded (no CR3/TTBR to root). Teardown only drops
+  `thread->vs` ownership; do **not** switch to root or drop the CPU extra
+  there — extra pins the AS until a later switch to another user AS. Rely on
+  `current_vspace == user vs` ⇒ CPU extra. Personality `fini` still runs
+  before ownership put. Checklist: §3 + §5 + `INVARIANTS.md` (current_vspace)
+  + EXIT_CLEAN object split.
 
 - 2026-04: **Intent survives state changes:** teardown/exit intent must not be
   representable only by a status enum that IPC can overwrite. Checklist: §6.
@@ -571,7 +589,7 @@ When a new bug pattern appears during review/debug:
   - Cause: parking THREAD_REAP zombie wait without guaranteed
     `delete_thread`+`EXIT_NOTIFY`; also `schedule()` inside coop poll.
   - Fix: zombie wait stays inline (EXIT_CLEAN); Link A only if live parent
-    else demote REAPED+`delete_task`; poll only non-blocking EXIT_NOTIFY
+    else demote REAPED+`linux_proc_reap`; poll only non-blocking EXIT_NOTIFY
     worker teardown.
   - Checklist: §0 + EXIT_CLEAN Link A/B.
 
@@ -617,3 +635,26 @@ When a new bug pattern appears during review/debug:
   - Reply-aware coop: `ipc_rpc_coop_queue` / `nested_call` /
     `ipc_rpc_coop_server_loop`; listen send slot serialized (`send_owner`).
     VFS not switched yet.
+
+- 2026-08-22: **EXIT_CLEAN v2 — local parent reap, no TASK_REAP_SYNC:**
+  - Symptom: `END test_brk` then hang; clean delivered EXIT_NOTIFY but parent blocked on
+    `TASK_REAP_SYNC` while listen blocked on `recv` (port contention + detach wait deadlock).
+  - Cause: v1 assumed TCB-era ordering (`delete_task` + sync detach). Thread model runs
+    `delete_thread` in THREAD_REAP while append `fini`/detach lags (EBR/IPC ref).
+  - Fix (protocol v2): `exit_last_thread` at `sys_exit`; clean **sync detach** after
+    `delete_thread` (+ `wait_all_threads_detached` only when `exit_last_thread && tn>0`);
+    parent **`linux_proc_reap` locally** after EXIT_NOTIFY; remove
+    `TASK_REAP_SYNC` / one-way `TASK_REAP`. Link A: `ZOMBIE`→`NOTIFIED`→parent reap.
+  - Docs: `EXIT_CLEAN.md` v2 + Appendix A; `WAIT_AND_SIGCHLD.md`; `DATA_MODEL.md`.
+  - Checklist: §0; parent must not wait detach; clean must not RPC parent reap.
+
+- 2026-08-22: **wait4 ECHILD + THREAD_REAP block_on_send deadlock (run_all):**
+  - Symptom: `[EXIT] wait4 ECHILD parent=1 want=-1` before tests finish; after chdir PASS,
+    `sys_exit` with no `THREAD_REAP enter` / notify; parent stuck in `wait4 block`.
+  - Cause (1): `proc_parent_has_unreaped_child` only counted **ZOMBIE**, not **RUNNING** —
+    shell `wait4(-1)` returned `-ECHILD` while child still alive (v2 A8 regression).
+  - Cause (2): `clean_wait_exitor_zombie` spun on `block_on_send` while exitor blocked in
+    `send_msg(THREAD_REAP)` before `thread_set_status(zombie)` — same-CPU livelock.
+  - Fix: wait eligibility = `RUNNING || ZOMBIE`; promote `block_on_send`/`block_on_receive`
+    (and `ready`) → zombie once THREAD_REAP message is in the listen handler.
+  - Checklist: §0 + EXIT_CLEAN; do not gate block decision on ZOMBIE only.

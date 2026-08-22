@@ -12,7 +12,7 @@
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/mm/page_slice.h>
 #include <rendezvos/task/initcall.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 #define VFS_BLKDEV_PSEUDO_SIZE (64u * 1024u)
 

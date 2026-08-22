@@ -3,7 +3,7 @@
 #include <rendezvos/error.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/smp/smp.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 #include "../../servers/fs/vfs_backend.h"
 #include "../../servers/fs/vfs_root.h"

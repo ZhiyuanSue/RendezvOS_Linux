@@ -2,7 +2,7 @@
 #include <linux_compat/errno.h>
 #include <linux_compat/proc_compat.h>
 #include <modules/log/log.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <syscall.h>
 
 /*

@@ -3,11 +3,12 @@
 #include <rendezvos/error.h>
 #include <rendezvos/mm/allocator.h>
 #include <rendezvos/mm/vmm.h>
+#include <common/refcount.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/system/powerd.h>
 #include <rendezvos/task/id.h>
 #include <rendezvos/task/initcall.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <rendezvos/task/thread_loader.h>
 #include <rendezvos/time.h>
 
@@ -21,9 +22,9 @@
 #include <linux_compat/proc_registry.h>
 
 #if defined(_X86_64_)
-#include <arch/x86_64/tcb_arch.h>
+#include <arch/x86_64/thread_arch.h>
 #elif defined(_AARCH64_)
-#include <arch/aarch64/tcb_arch.h>
+#include <arch/aarch64/thread_arch.h>
 #endif
 
 #ifdef LINUX_COMPAT_TEST
@@ -124,18 +125,15 @@ static i64 linux_boot_resolve_argv(const char *const **argv_out)
         return argc;
 }
 
-static void linux_boot_release_task(Tcb_Base *task)
+static void linux_boot_release_spawn(Thread_Base *thr, linux_proc_resource_t *proc,
+                                     VSpace *vs)
 {
-        if (!task) {
-                return;
-        }
-        if (task->vs && task->vs != task->vs->root_vs) {
-                VSpace *vs = task->vs;
-
-                task->vs = NULL;
-                ref_put(&vs->refcount, free_vspace_ref);
-        }
-        (void)delete_task(task);
+        if (thr)
+                del_thread_structure(thr);
+        if (vs && vs != &root_vspace)
+                (void)ref_put(&vs->refcount, free_vspace_ref);
+        if (proc)
+                (void)linux_proc_put(proc);
 }
 
 /*
@@ -145,7 +143,7 @@ static void linux_boot_release_task(Tcb_Base *task)
 static void linux_run_init_exec(void)
 {
         Thread_Base *self = get_cpu_current_thread();
-        Tcb_Base *task = get_cpu_current_task();
+        linux_proc_resource_t *task = linux_proc_of(self);
         vaddr entry = 0;
         vaddr sp = 0;
         i64 ret;
@@ -153,7 +151,7 @@ static void linux_run_init_exec(void)
         const char *const *argv;
         struct trap_frame drop_tf;
 
-        if (!self || !task || !task->vs) {
+        if (!self || !task || !self->vs) {
                 pr_error("[ LINUX BOOT ] init exec: missing task/thread\n");
                 goto hang;
         }
@@ -198,14 +196,15 @@ hang:
 }
 
 /*
- * Create empty user task/thread. Stamps boot_wait_cookie before thread_join
- * so exit cannot race the waiter.
+ * Create empty user thread + proc. Stamps boot_wait_cookie before
+ * add_thread_to_manager so exit cannot race the waiter.
  */
 static error_t linux_spawn_init_task(Thread_Base **out_thr, u64 *cookie_out)
 {
-        Tcb_Base *task;
+        linux_proc_resource_t *proc;
         Thread_Base *thr;
         linux_thread_append_t *ta;
+        VSpace *vs;
         error_t e;
         u64 cookie;
 
@@ -216,46 +215,44 @@ static error_t linux_spawn_init_task(Thread_Base **out_thr, u64 *cookie_out)
                 *cookie_out = 0;
         }
 
-        task = new_task_structure(percpu(kallocator), &linux_task_append_hooks);
-        if (!task) {
+        proc = linux_proc_alloc();
+        if (!proc) {
                 return -E_RENDEZVOS;
         }
 
-        task->pid = get_new_id(&pid_manager);
-        task->vs = create_vspace(root_vspace.pmm);
-        if (!task->vs) {
-                (void)delete_task(task);
+        vs = create_vspace(root_vspace.pmm);
+        if (!vs) {
+                (void)linux_proc_put(proc);
                 return -E_RENDEZVOS;
         }
 
-        e = register_vspace(task->vs, &root_vspace, task->pid);
+        e = register_vspace(vs, &root_vspace);
         if (e != REND_SUCCESS) {
-                linux_boot_release_task(task);
-                return e;
-        }
-
-        e = add_task_to_manager(percpu(core_tm), task);
-        if (e != REND_SUCCESS) {
-                linux_boot_release_task(task);
+                linux_boot_release_spawn(NULL, proc, vs);
                 return e;
         }
 
         thr = create_thread((void *)linux_run_init_exec,
                             &linux_thread_append_hooks,
+                            vs,
                             true,
                             0);
         if (!thr) {
-                (void)del_task_from_manager(task);
-                linux_boot_release_task(task);
+                linux_boot_release_spawn(NULL, proc, vs);
+                return -E_RENDEZVOS;
+        }
+        vs = NULL;
+
+        thread_set_flags(thr, THREAD_FLAG_USER);
+
+        if (linux_proc_attach_thread(proc, thr) != REND_SUCCESS) {
+                linux_boot_release_spawn(thr, proc, NULL);
                 return -E_RENDEZVOS;
         }
 
-        thread_set_flags(thr, THREAD_FLAG_USER);
         ta = linux_thread_append(thr);
         if (!ta) {
-                del_thread_structure(thr);
-                (void)del_task_from_manager(task);
-                linux_boot_release_task(task);
+                linux_boot_release_spawn(thr, proc, NULL);
                 return -E_RENDEZVOS;
         }
 
@@ -266,12 +263,9 @@ static error_t linux_spawn_init_task(Thread_Base **out_thr, u64 *cookie_out)
         ta->boot_wait_cookie = cookie;
         g_boot_wait_cookie = 0;
 
-        e = thread_join(task, thr);
+        e = add_thread_to_manager(percpu(core_tm), thr);
         if (e != REND_SUCCESS) {
-                del_thread_from_manager(thr);
-                del_thread_structure(thr);
-                (void)del_task_from_manager(task);
-                linux_boot_release_task(task);
+                linux_boot_release_spawn(thr, proc, NULL);
                 return e;
         }
 
@@ -298,15 +292,19 @@ static error_t linux_spawn_and_wait_init(void)
                 return e ? e : -E_RENDEZVOS;
         }
 
-        if (thr->belong_tcb) {
-                boot_pid = thr->belong_tcb->pid;
+        {
+                linux_proc_resource_t *proc = linux_proc_of(thr);
+
+                if (proc) {
+                        boot_pid = proc->pid;
+                }
         }
 
         while (g_boot_wait_cookie != cookie)
                 schedule(percpu(core_tm));
 
         if (boot_pid > 0) {
-                while (find_task_by_pid(boot_pid) != NULL)
+                while (find_proc_by_pid(boot_pid) != NULL)
                         schedule(percpu(core_tm));
         }
 

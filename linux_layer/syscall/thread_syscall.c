@@ -12,7 +12,7 @@
 #include <rendezvos/ipc/message.h>
 #include <rendezvos/ipc/port.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <linux_compat/ipc/exit_protocol.h>
 #include <linux_compat/proc/clean_ipc.h>
 #include <linux_compat/proc/wait_ipc.h>
@@ -20,160 +20,112 @@
 #include <linux_compat/time/linux_time_sleep.h>
 #include <linux_compat/fault.h>
 
+/*
+ * Mark resource bundle for exit (EXIT_CLEAN.md). Returns true for Link A
+ * (live parent wait reaper), false for Link B (clean inline reap).
+ */
+static bool linux_proc_mark_exiting(linux_proc_resource_t *proc, i64 exit_code)
+{
+        proc->exit_code = (i32)(exit_code & 0xff);
+        proc->exit_state = LINUX_EXIT_ZOMBIE;
+        lock_cas(&proc->thread_list_lock);
+        proc->exit_last_thread = (proc->thread_number == 1);
+        unlock_cas(&proc->thread_list_lock);
+        return proc_has_wait_reaper(proc);
+}
+
+static void linux_proc_queue_sigchld(linux_proc_resource_t *proc)
+{
+        linux_proc_resource_t *parent;
+
+        if (!proc || proc->ppid <= 0)
+                return;
+        parent = find_proc_by_pid(proc->ppid);
+        if (!parent)
+                return;
+
+        linux_signal_proc_state_t *parent_ps = linux_signal_proc_state(parent);
+        sigaction_t *chld_disp;
+
+        if (!parent_ps)
+                return;
+        chld_disp = &parent_ps->dispositions[SIGCHLD - 1];
+        if (chld_disp->sa_flags & SA_NOCLDWAIT)
+                return;
+        (void)linux_queue_signal(parent, SIGCHLD, proc->pid);
+}
+
+static void linux_thread_exit_rendezvous(Thread_Base *self, i64 exit_code)
+{
+        u64 st;
+
+        thread_or_flags(self, THREAD_FLAG_EXIT_REQUESTED);
+
+        st = thread_get_status(self);
+        if (st == thread_status_block_on_receive
+            || st == thread_status_block_on_send)
+                thread_set_status(self, thread_status_running);
+
+        (void)linux_clean_send_thread_reap(self, exit_code);
+        (void)thread_set_status(self, thread_status_zombie);
+}
+
 void sys_exit(i64 exit_code)
 {
-        Thread_Base* self = get_cpu_current_thread();
-        Tcb_Base* task = get_cpu_current_task();
+        Thread_Base *self = get_cpu_current_thread();
+        linux_proc_resource_t *proc = linux_current_proc();
 
         if (!self)
                 goto out;
 
-        if (task) {
-                linux_fs_proc_release_for_exit(task);
-        }
+        if (proc)
+                linux_fs_proc_release_for_exit(proc);
 
         linux_time_sleep_port_teardown(self);
 
-        if (task && task->vs) {
-                linux_thread_append_t* ta = linux_thread_append(self);
+        if (proc && linux_current_vs()) {
+                linux_thread_append_t *ta = linux_thread_append(self);
 
                 if (ta && ta->clear_tid
-                    && linux_vspace_is_user_table(task->vs)) {
+                    && linux_vspace_is_user_table(linux_current_vs())) {
                         i32 zero = 0;
 
-                        /*
-                         * Best-effort CLEARTID (musl set_tid_address). Failure
-                         * is common on partial maps; must not be mistaken for
-                         * the hang point — THREAD_REAP / wait follows this.
-                         */
                         (void)linux_mm_store_to_user(
-                                task->vs, ta->clear_tid, &zero, sizeof(zero));
+                                linux_current_vs(), ta->clear_tid, &zero, sizeof(zero));
                         ta->clear_tid = 0;
                 }
         }
 
-        /*
-         * Protocol: doc/linux_compat/protocols/EXIT_CLEAN.md
-         * Default ZOMBIE so wait4 can collect; orphans upgraded to REAPED
-         * below.
-         */
-        if (task) {
-                linux_proc_append_t* pa = linux_proc_append(task);
-                if (pa) {
-                        /* Linux exit status is 8-bit (see wait4 WEXITSTATUS).
-                         */
-                        pa->exit_code = (i32)(exit_code & 0xff);
-                        pa->exit_state = LINUX_EXIT_ZOMBIE;
-                }
-        }
-        bool reaper_exists = false;
-        if (task && task->pid > 0) {
-                linux_proc_append_t* pa = linux_proc_append(task);
-
-                reaper_exists = proc_has_wait_reaper(pa);
-                if (reaper_exists && pa && pa->ppid > 0) {
-                        Tcb_Base* parent_task = find_task_by_pid(pa->ppid);
-
-                        if (parent_task) {
-                                linux_signal_proc_state_t* parent_ps =
-                                        linux_signal_proc_state(parent_task);
-                                sigaction_t* chld_disp;
-
-                                if (parent_ps) {
-                                        chld_disp =
-                                                &parent_ps->dispositions[SIGCHLD
-                                                                         - 1];
-                                        if (!(chld_disp->sa_flags
-                                              & SA_NOCLDWAIT)) {
-                                                (void)linux_queue_signal(
-                                                        parent_task,
-                                                        SIGCHLD,
-                                                        task->pid);
-                                        }
-                                }
-                        }
-                }
+        if (proc) {
+                if (linux_proc_mark_exiting(proc, exit_code))
+                        linux_proc_queue_sigchld(proc);
         }
 
-        /* Link B: REAPED; listen THREAD_REAP finishes delete_task when last. */
-        if (task && !reaper_exists) {
-                linux_proc_append_t* pa = linux_proc_append(task);
-                if (pa) {
-                        pa->exit_state = LINUX_EXIT_REAPED;
-                }
-        }
-
-        thread_or_flags(self, THREAD_FLAG_EXIT_REQUESTED);
-
-        /*
-         * If we were parked on IPC, get to a known state before send. Do NOT
-         * mark zombie yet — THREAD_REAP send must finish first or clean_server
-         * can delete_thread while we still sit in send_msg.
-         */
-        {
-                u64 st = thread_get_status(self);
-
-                if (st == thread_status_block_on_receive
-                    || st == thread_status_block_on_send) {
-                        thread_set_status(self, thread_status_running);
-                }
-        }
-
-        (void)linux_clean_send_thread_reap(self, exit_code);
-
-        /*
-         * Link B: do not send a separate TASK_REAP from the exiting thread.
-         * That raced THREAD_REAP (listen can run TASK_REAP before
-         * delete_thread). Protocol: THREAD_REAP listen finishes
-         * claim+delete_task when REAPED.
-         */
-
-        /*
-         * Unconditional zombie: after send_msg the status is often "ready"
-         * not "running", so "if running → zombie" skipped and clean_server
-         * spun forever on EXIT_REQUESTED. Then a tight for(;;) starved the
-         * same-CPU worker.
-         */
-        (void)thread_set_status(self, thread_status_zombie);
+        linux_thread_exit_rendezvous(self, exit_code);
 
 out:
-        /*
-         * Keep yielding until delete_thread reaps us. A bare for(;;) after
-         * schedule returns burns the CPU and can block same-CPU clean workers.
-         */
+        if (!self) {
+                for (;;)
+                        schedule(percpu(core_tm));
+        }
         for (;;)
                 schedule(percpu(core_tm));
 }
 
 void linux_fatal_user_fault(i64 exit_code)
 {
-        Thread_Base* self = get_cpu_current_thread();
-        Tcb_Base* task = get_cpu_current_task();
-        bool reaper_exists = false;
+        Thread_Base *self = get_cpu_current_thread();
+        linux_proc_resource_t *proc = linux_current_proc();
 
-        if (task) {
-                linux_proc_append_t* pa = linux_proc_append(task);
-                if (pa) {
-                        pa->exit_code = (i32)(exit_code & 0xff);
-                        pa->exit_state = LINUX_EXIT_ZOMBIE;
-                        reaper_exists = proc_has_wait_reaper(pa);
-                }
-        }
-        if (task && !reaper_exists) {
-                linux_proc_append_t* pa = linux_proc_append(task);
-                if (pa) {
-                        pa->exit_state = LINUX_EXIT_REAPED;
-                }
-        }
-        if (self) {
-                thread_or_flags(self, THREAD_FLAG_EXIT_REQUESTED);
-        }
-
-        (void)linux_clean_send_thread_reap(self, exit_code);
-        /* Link B: task delete is chained from THREAD_REAP when REAPED. */
+        if (proc)
+                (void)linux_proc_mark_exiting(proc, exit_code);
 
         if (self)
-                (void)thread_set_status(self, thread_status_zombie);
+                linux_thread_exit_rendezvous(self, exit_code);
+        else {
+                for (;;)
+                        schedule(percpu(core_tm));
+        }
 
         for (;;)
                 schedule(percpu(core_tm));
@@ -181,41 +133,26 @@ void linux_fatal_user_fault(i64 exit_code)
 
 void sys_exit_group(i64 exit_code)
 {
-        Tcb_Base* task = get_cpu_current_task();
-        if (!task) {
+        linux_proc_resource_t *proc = linux_current_proc();
+        struct list_entry *pos;
+        struct list_entry *next;
+
+        if (!proc) {
                 pr_error("[PROC] exit_group: No current task\n");
                 return;
         }
 
-        /*
-         * Kill all threads in the task except the current one.
-         * We iterate through the task's thread list directly.
-         */
-        struct list_entry* pos;
-        struct list_entry* next;
-
-        lock_cas(&task->thread_list_lock);
-
-        /*
-         * Save next pointer before setting flags, as thread might
-         * be removed from list by other CPU.
-         */
-        list_for_each_safe(pos, next, &task->thread_head_node)
+        lock_cas(&proc->thread_list_lock);
+        list_for_each_safe(pos, next, &proc->thread_head_node)
         {
-                Thread_Base* thread =
-                        container_of(pos, Thread_Base, thread_list_node);
+                linux_thread_append_t *ta = container_of(
+                        pos, linux_thread_append_t, res_thread_node);
+                Thread_Base *thread = linux_thread_from_append(ta);
 
-                /* Skip current thread - we kill it last */
-                if (thread == get_cpu_current_thread()) {
-                        continue;
-                }
-
-                /* Set exit flag for this thread */
-                thread_or_flags(thread, THREAD_FLAG_EXIT_REQUESTED);
+                if (thread != get_cpu_current_thread())
+                        thread_or_flags(thread, THREAD_FLAG_EXIT_REQUESTED);
         }
+        unlock_cas(&proc->thread_list_lock);
 
-        unlock_cas(&task->thread_list_lock);
-
-        /* Finally kill current thread */
         sys_exit(exit_code);
 }

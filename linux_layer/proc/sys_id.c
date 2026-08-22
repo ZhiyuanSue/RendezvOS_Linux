@@ -1,18 +1,18 @@
 #include <linux_compat/errno.h>
 #include <linux_compat/proc_compat.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <syscall.h>
 
-static linux_proc_append_t *linux_current_proc_append(void)
+static linux_proc_resource_t *linux_current_proc_append(void)
 {
-        Tcb_Base *t = get_cpu_current_task();
+        linux_proc_resource_t *t = linux_current_proc();
 
-        return t ? linux_proc_append(t) : NULL;
+        return t ? t : NULL;
 }
 
 i64 sys_getuid(void)
 {
-        linux_proc_append_t *pa = linux_current_proc_append();
+        linux_proc_resource_t *pa = linux_current_proc_append();
 
         if (!pa) {
                 return -LINUX_ESRCH;
@@ -22,7 +22,7 @@ i64 sys_getuid(void)
 
 i64 sys_getgid(void)
 {
-        linux_proc_append_t *pa = linux_current_proc_append();
+        linux_proc_resource_t *pa = linux_current_proc_append();
 
         if (!pa) {
                 return -LINUX_ESRCH;
@@ -32,7 +32,7 @@ i64 sys_getgid(void)
 
 i64 sys_setuid(u32 uid)
 {
-        linux_proc_append_t *pa = linux_current_proc_append();
+        linux_proc_resource_t *pa = linux_current_proc_append();
 
         if (!pa) {
                 return -LINUX_ESRCH;
@@ -47,7 +47,7 @@ i64 sys_setuid(u32 uid)
 
 i64 sys_setgid(u32 gid)
 {
-        linux_proc_append_t *pa = linux_current_proc_append();
+        linux_proc_resource_t *pa = linux_current_proc_append();
 
         if (!pa) {
                 return -LINUX_ESRCH;

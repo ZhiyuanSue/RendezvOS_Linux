@@ -3,12 +3,12 @@
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/proc_registry.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <syscall.h>
 
 i64 sys_getpid(void)
 {
-        Tcb_Base* t = get_cpu_current_task();
+        linux_proc_resource_t* t = linux_current_proc();
         if (!t)
                 return -LINUX_ESRCH;
         return (i64)t->pid;
@@ -29,13 +29,13 @@ i64 sys_gettid(void)
 
 i64 sys_getppid(void)
 {
-        Tcb_Base* t = get_cpu_current_task();
-        linux_proc_append_t* pa = NULL;
+        linux_proc_resource_t* t = linux_current_proc();
+        linux_proc_resource_t* pa = NULL;
 
         if (!t)
                 return -LINUX_ESRCH;
 
-        pa = linux_proc_append(t);
+        pa = t;
         if (!pa)
                 return -(i64)LINUX_ESRCH;
 

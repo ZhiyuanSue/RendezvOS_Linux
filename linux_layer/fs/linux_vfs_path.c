@@ -7,10 +7,11 @@
 #include <linux_compat/errno.h>
 #include <linux_compat/fs/fs_ipc.h>
 #include <linux_compat/fs/vfs_protocol.h>
+#include <linux_compat/proc_compat.h>
 
 #include <common/string.h>
 
-i64 linux_vfs_resolve_path(Tcb_Base *task, i32 dirfd, const char *path,
+i64 linux_vfs_resolve_path(linux_proc_resource_t *task, i32 dirfd, const char *path,
                            char *out, u64 out_cap)
 {
         linux_fs_state_t *fs;

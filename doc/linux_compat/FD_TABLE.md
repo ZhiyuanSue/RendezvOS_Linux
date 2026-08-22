@@ -19,12 +19,12 @@ Bootstrap 阶段 fd 编号表在 `vfs_server`，不符合 Linux per-process fd �
 | Linux | RendezvOS |
 |-------|-----------|
 | `struct file` | `vfs_open_handle_t`（server） |
-| `files_struct->fd[]` | `linux_proc_append_t.fs` → **`page_slice` 表** |
+| `files_struct->fd[]` | `linux_proc_resource_t.fs` → **`page_slice` 表** |
 | `dup` / `dup2` | compat 改 fd 槽；VFS **RETAIN** handle |
 | `fork` | **`page_slice_clone`** fd 表 + 每唯一 handle **RETAIN** |
-| `execve` / exit | release handles；exec **重建** 0/1/2；exit **不重建** slice（TASK_REAP fini 销毁） |
+| `execve` / exit | release handles；exec **重建** 0/1/2；exit **不重建** slice（`linux_proc_reap` / fini 销毁） |
 
-**Per-process**：fd 表在线程组（`Tcb_Base` / `linux_proc_append_t`）间共享，不按 tid 索引。
+**Per-process**：fd 表在线程组（堆 `linux_proc_resource_t`）间共享，不按 tid 索引。
 
 ---
 
@@ -32,7 +32,7 @@ Bootstrap 阶段 fd 编号表在 `vfs_server`，不符合 Linux per-process fd �
 
 ```text
 linux_layer
-  linux_proc_append_t.fs → linux_fs_state_t { page_slice *table }
+  linux_proc_resource_t.fs → linux_fs_state_t { page_slice *table }
   sys_openat: resolve abs path → IPC OPEN → linux_fd_alloc
   sys_read/write/close: linux_fd_get → CONSOLE / PIPE / VFS IPC
         ↕ IPC (handle + path)
@@ -91,15 +91,15 @@ typedef struct linux_fd_entry {
 
 | 事件 | fd 表 / slice |
 |------|----------------|
-| `gen_task_from_elf` / attach | `linux_fs_table_create`：预映射 slice 页，写 hdr + fd 0/1/2 |
+| `gen_task_from_elf` / attach（已删） | 现：`linux_fs_proc_attach` / exec / fork 路径创建 fd 表 |
 | `fork` | `page_slice_clone` 整表 + 唯一 handle/pipe **RETAIN**（不再 attach→init→destroy→clone） |
 | `execve` | `linux_fs_proc_reset`：release + **重建** slice |
 | `sys_exit` | `linux_fs_proc_release_for_exit`：**仅** release 资源，**不** insert/rebuild slice |
-| `delete_task` fini | `linux_fs_proc_destroy`：release + `page_slice_destroy` |
+| `linux_proc_reap` / proc fini | `linux_fs_proc_destroy`：release + `page_slice_destroy` |
 
 **page_slice_insert_page 何时出现？**  
 - 新进程 attach / exec 重建 / fd 表扩容 — **不是** exit 路径。  
-测例 harness 若在 THREAD_REAP cookie 后立即 spawn 下一 ELF，可能与上一进程 `del_vspace` **并发**；runner 已加 `find_task_by_pid` 等待 task 消失。
+测例 harness 若在 THREAD_REAP cookie 后立即 spawn 下一 ELF，可能与上一进程 `del_vspace` **并发**；runner 已加 `find_proc_by_pid` 等待 proc 消失。
 
 ---
 

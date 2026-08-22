@@ -8,7 +8,7 @@
 #include <rendezvos/ipc/kmsg.h>
 #include <rendezvos/ipc/kmsg_system.h>
 #include <rendezvos/ipc/message.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 bool linux_ipc_kmsg_is_port_closed(Message_Port_t *port, const Message_t *msg)
 {

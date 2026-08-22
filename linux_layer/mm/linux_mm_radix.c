@@ -16,10 +16,10 @@
 #include <rendezvos/smp/percpu.h>
 #if defined(_X86_64_)
 #include <arch/x86_64/boot/arch_setup.h>
-#include <arch/x86_64/tcb_arch.h>
+#include <arch/x86_64/thread_arch.h>
 #elif defined(_AARCH64_)
 #include <arch/aarch64/boot/arch_setup.h>
-#include <arch/aarch64/tcb_arch.h>
+#include <arch/aarch64/thread_arch.h>
 #endif
 
 static bool linux_mm_user_vspace_ok(const VSpace* vs)

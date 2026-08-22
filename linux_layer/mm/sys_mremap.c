@@ -6,7 +6,7 @@
 #include <linux_compat/linux_mm_radix.h>
 #include <rendezvos/mm/map_handler.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <syscall.h>
 
 #include "linux_mm_flags.h"
@@ -76,15 +76,15 @@ i64 sys_mremap(u64 old_address, u64 old_size, u64 new_size, u64 flags,
         if (!linux_user_va_range_ok(old_address, old_size_aligned))
                 return -LINUX_EINVAL;
 
-        Tcb_Base* tcb = get_cpu_current_task();
-        if (!tcb || !tcb->vs || !linux_vspace_is_user_table(tcb->vs))
+        linux_proc_resource_t* tcb = linux_current_proc();
+        if (!tcb || !linux_current_vs() || !linux_vspace_is_user_table(linux_current_vs()))
                 return -LINUX_ESRCH;
 
-        linux_proc_append_t* pa = linux_proc_append(tcb);
+        linux_proc_resource_t* pa = tcb;
         if (!pa)
                 return -LINUX_EFAULT;
 
-        if (!linux_mm_range_mapped(tcb->vs, old_address, old_size_aligned))
+        if (!linux_mm_range_mapped(linux_current_vs(), old_address, old_size_aligned))
                 return -LINUX_EINVAL;
 
         if (new_size_aligned < old_size_aligned) {
@@ -92,7 +92,7 @@ i64 sys_mremap(u64 old_address, u64 old_size, u64 new_size, u64 flags,
                 u64 unmap_size = old_size_aligned - new_size_aligned;
 
                 error_t e = linux_mm_unmap_user_range(
-                        tcb->vs,
+                        linux_current_vs(),
                         (vaddr)unmap_addr,
                         (size_t)(unmap_size / PAGE_SIZE));
                 if (e != REND_SUCCESS)
@@ -108,7 +108,7 @@ i64 sys_mremap(u64 old_address, u64 old_size, u64 new_size, u64 flags,
         vaddr expand_addr = (vaddr)(old_address + old_size_aligned);
 
         void* new_pages = linux_mm_map_user_range(
-                tcb->vs,
+                linux_current_vs(),
                 expand_addr,
                 (size_t)(expand_size / PAGE_SIZE),
                 PAGE_ENTRY_USER | PAGE_ENTRY_VALID | PAGE_ENTRY_WRITE
@@ -122,7 +122,7 @@ i64 sys_mremap(u64 old_address, u64 old_size, u64 new_size, u64 flags,
 
         vaddr search = (vaddr)ROUND_UP(pa->brk, PAGE_SIZE) + (vaddr)PAGE_SIZE;
         void* new_mapping = linux_mm_map_user_range_search(
-                tcb->vs,
+                linux_current_vs(),
                 search,
                 (size_t)(new_size_aligned / PAGE_SIZE),
                 PAGE_ENTRY_USER | PAGE_ENTRY_VALID | PAGE_ENTRY_WRITE
@@ -133,16 +133,16 @@ i64 sys_mremap(u64 old_address, u64 old_size, u64 new_size, u64 flags,
                 return -LINUX_ENOMEM;
 
         if (linux_mremap_copy_mapped(
-                    tcb->vs, (vaddr)old_address, (vaddr)new_mapping, old_size)
+                    linux_current_vs(), (vaddr)old_address, (vaddr)new_mapping, old_size)
             != REND_SUCCESS) {
                 (void)linux_mm_unmap_user_range(
-                        tcb->vs,
+                        linux_current_vs(),
                         (vaddr)new_mapping,
                         (size_t)(new_size_aligned / PAGE_SIZE));
                 return -LINUX_EFAULT;
         }
 
-        (void)linux_mm_unmap_user_range(tcb->vs,
+        (void)linux_mm_unmap_user_range(linux_current_vs(),
                                         (vaddr)old_address,
                                         (size_t)(old_size_aligned / PAGE_SIZE));
 

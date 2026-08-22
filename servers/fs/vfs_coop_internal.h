@@ -8,7 +8,7 @@
 #include <linux_compat/fs/vfs_path.h>
 #include <linux_compat/ipc/port_naming.h>
 #include <linux_compat/ipc/rpc.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 typedef enum {
         VFS_COOP_KIND_NONE = 0,

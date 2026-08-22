@@ -3,8 +3,8 @@
 
 #include <common/stdbool.h>
 #include <common/types.h>
+#include <linux_compat/proc_compat.h>
 #include <rendezvos/error.h>
-#include <rendezvos/task/tcb.h>
 
 #define LINUX_EXEC_MAX_PATH 256
 #define LINUX_EXEC_MAX_ARGS 128
@@ -13,7 +13,7 @@
 /*
  * Shared image replace for sys_execve and kernel PID1 boot.
  *
- * Loads @filename from initramfs/VFS into @task->vs, builds the standard
+ * Loads @filename from initramfs/VFS into the thread's VSpace, builds the standard
  * Linux user stack (argv + auxv via linux_exec_build_initial_stack), resets
  * proc/thread exec state. Does not touch trap_frame / return-to-user.
  *
@@ -23,7 +23,7 @@
  *
  * On success: *entry_out / *sp_out set; returns 0.
  */
-i64 linux_exec_replace_image(Tcb_Base *task, Thread_Base *thread,
+i64 linux_exec_replace_image(linux_proc_resource_t *task, Thread_Base *thread,
                              const char *filename, i64 argc,
                              const char *const kargv[],
                              bool may_abort_after_clear, vaddr *entry_out,
@@ -33,6 +33,6 @@ i64 linux_exec_replace_image(Tcb_Base *task, Thread_Base *thread,
  * Attach Linux proc/thread state for a brand-new user task (PID1).
  * Does not load an ELF or build a user stack.
  */
-error_t linux_user_task_prepare_new(Tcb_Base *task, Thread_Base *thread);
+error_t linux_user_task_prepare_new(linux_proc_resource_t *task, Thread_Base *thread);
 
 #endif /* _LINUX_COMPAT_PROC_LINUX_EXEC_H_ */

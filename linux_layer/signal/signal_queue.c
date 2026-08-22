@@ -13,7 +13,7 @@
 #include <modules/log/log.h>
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/sync/cas_lock.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 /*
  * Phase 2B: Signal Queue Implementation (Layer A)
@@ -27,12 +27,10 @@ static inline bool signal_is_uncatchable(int sig)
         return sig == SIGKILL || sig == SIGSTOP;
 }
 
-static Thread_Base* signal_select_thread_helper(Tcb_Base* process, int sig)
+static Thread_Base* signal_select_thread_helper(linux_proc_resource_t* process, int sig)
 {
         Thread_Base* current_thread;
         Thread_Base* pick = NULL;
-        Thread_Base* th;
-        Thread_Base* tmp;
 
         (void)sig;
 
@@ -41,43 +39,37 @@ static Thread_Base* signal_select_thread_helper(Tcb_Base* process, int sig)
         }
 
         current_thread = get_cpu_current_thread();
-        if (current_thread && current_thread->belong_tcb == process) {
+        if (current_thread && linux_proc_of(current_thread) == process) {
                 return current_thread;
         }
 
         lock_cas(&process->thread_list_lock);
-        /* Manually expanded list_for_each_entry_safe to avoid typeof issues */
-        for (th = container_of((process->thread_head_node.next),
-                               Thread_Base,
-                               thread_list_node),
-            tmp = container_of(
-                    (th->thread_list_node.next), Thread_Base, thread_list_node);
-             &th->thread_list_node != &process->thread_head_node;
-             th = tmp,
-            tmp = container_of((tmp->thread_list_node.next),
-                               Thread_Base,
-                               thread_list_node)) {
-                pick = th;
-                break;
+        {
+                struct list_entry *pos;
+
+                list_for_each(pos, &process->thread_head_node)
+                {
+                        linux_thread_append_t *ta = container_of(
+                                pos, linux_thread_append_t, res_thread_node);
+
+                        pick = linux_thread_from_append(ta);
+                        break;
+                }
         }
         unlock_cas(&process->thread_list_lock);
 
         return pick;
 }
 
-void linux_signal_flush_pending(Tcb_Base* target, int sig)
+void linux_signal_flush_pending(linux_proc_resource_t* target, int sig)
 {
-        linux_proc_append_t* proc_append;
         linux_signal_proc_state_t* ps;
-        Thread_Base* th;
-        Thread_Base* tmp;
 
         if (!target || sig < 1 || sig > NSIG) {
                 return;
         }
 
-        proc_append = linux_proc_append(target);
-        ps = proc_append ? proc_append->signal : NULL;
+        ps = target->signal;
         if (!ps) {
                 return;
         }
@@ -85,26 +77,27 @@ void linux_signal_flush_pending(Tcb_Base* target, int sig)
         sigdelset(&ps->pending_signals, sig);
 
         lock_cas(&target->thread_list_lock);
-        for (th = container_of((target->thread_head_node.next),
-                               Thread_Base,
-                               thread_list_node),
-            tmp = container_of(
-                    (th->thread_list_node.next), Thread_Base, thread_list_node);
-             &th->thread_list_node != &target->thread_head_node;
-             th = tmp,
-            tmp = container_of((tmp->thread_list_node.next),
-                               Thread_Base,
-                               thread_list_node)) {
-                linux_signal_thread_state_t* ts = linux_signal_thread_state(th);
+        {
+                struct list_entry *pos;
+                struct list_entry *next;
 
-                if (ts) {
-                        sigdelset(&ts->pending_signals, sig);
+                list_for_each_safe(pos, next, &target->thread_head_node)
+                {
+                        linux_thread_append_t *ta = container_of(
+                                pos, linux_thread_append_t, res_thread_node);
+                        Thread_Base *th = linux_thread_from_append(ta);
+                        linux_signal_thread_state_t *ts =
+                                linux_signal_thread_state(th);
+
+                        if (ts) {
+                                sigdelset(&ts->pending_signals, sig);
+                        }
                 }
         }
         unlock_cas(&target->thread_list_lock);
 }
 
-static i64 signal_queue_on_thread_helper(Tcb_Base* target,
+static i64 signal_queue_on_thread_helper(linux_proc_resource_t* target,
                                          Thread_Base* target_thread, int sig)
 {
         linux_signal_proc_state_t* ps;
@@ -163,7 +156,7 @@ static i64 signal_queue_on_thread_helper(Tcb_Base* target,
         return 0;
 }
 
-i64 linux_queue_signal(Tcb_Base* target, int sig, pid_t sender_tid)
+i64 linux_queue_signal(linux_proc_resource_t* target, int sig, pid_t sender_tid)
 {
         sigaction_t* disp;
         Thread_Base* target_thread;
@@ -201,7 +194,7 @@ i64 linux_queue_signal(Tcb_Base* target, int sig, pid_t sender_tid)
 i64 linux_queue_signal_thread(Thread_Base* target_thread, int sig,
                               pid_t sender_tid)
 {
-        Tcb_Base* process;
+        linux_proc_resource_t* process;
         sigaction_t* disp;
         linux_signal_proc_state_t* ps;
 
@@ -211,7 +204,7 @@ i64 linux_queue_signal_thread(Thread_Base* target_thread, int sig,
                 return -LINUX_ESRCH;
         }
 
-        process = target_thread->belong_tcb;
+        process = linux_proc_of(target_thread);
         if (!process) {
                 return -LINUX_ESRCH;
         }

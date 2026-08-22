@@ -1,6 +1,6 @@
 # 路径 A：syscall 用户返回与 execve 接线
 
-本文说明 core 中 `arch_syscall_*` 三个 API 的语义、与信号/exec 的关系，以及 **execve** 在 linux_layer 的推荐实现顺序。声明位于各架构 `core/include/arch/<arch>/tcb_arch.h`，实现在 `core/arch/<arch>/task/arch_thread.c`。
+本文说明 core 中 `arch_syscall_*` 三个 API 的语义、与信号/exec 的关系，以及 **execve** 在 linux_layer 的推荐实现顺序。声明位于各架构 `core/include/arch/<arch>/thread_arch.h`，实现在 `core/arch/<arch>/task/arch_thread.c`。
 
 相关文档：
 
@@ -40,7 +40,7 @@
 
 - **PC / syscall 返回值**：只从 `trap_frame` 读（与 syscall 压栈/出口一致）。
 - **用户 SP（x86）**：只从 **`percpu(user_rsp_scratch)`** 读，**不**读 `ctx->user_rsp`。  
-  原因：在 syscall 处理过程中，权威的用户栈指针在入口路径写入 scratch；`Arch_Task_Context::user_rsp` 主要在 **上下文切换** 时更新，可能**落后于** scratch（与 fork 文档中的「陈旧 ctx」同类问题）。
+  原因：在 syscall 处理过程中，权威的用户栈指针在入口路径写入 scratch；`Arch_Thread_Context::user_rsp` 主要在 **上下文切换** 时更新，可能**落后于** scratch（与 fork 文档中的「陈旧 ctx」同类问题）。
 - **用户 SP（aarch64）**：从 `trap_frame->SP` 读（与 `el0_trap_exit` 一致）；`ctx` 同样未使用。
 
 ### 2.2 为何签名仍带 `ctx`
@@ -63,7 +63,7 @@
 ## 3. `arch_syscall_set_user_return`
 
 ```c
-void arch_syscall_set_user_return(struct trap_frame *tf, Arch_Task_Context *ctx,
+void arch_syscall_set_user_return(struct trap_frame *tf, Arch_Thread_Context *ctx,
                                   vaddr user_pc, vaddr user_sp, u64 syscall_ret);
 ```
 
@@ -128,7 +128,7 @@ arch_syscall_set_user_int_arg(tf, 0, (u64)sig);
 
 | 项 | 选择 |
 |----|------|
-| 地址空间 | **原地**：同一 `Tcb_Base` / `VSpace` / ASID；**不** `create_vspace` / `del_vspace` |
+| 地址空间 | **原地**：同一 `linux_proc` / `VSpace` / ASID（线程 `thread->vs` 不变）；**不** `create_vspace` / `del_vspace` |
 | 清映射 | `vspace_clear_user_mappings(vs, &percpu(Map_Handler), true)` |
 | 加载 | `load_elf_to_vs` |
 | 栈映射 | `generate_user_stack`（`thread_loader.h`） |
@@ -159,7 +159,7 @@ arch_syscall_set_user_int_arg(tf, 0, (u64)sig);
 
 ### 5.3 首次 spawn vs exec（append hook）
 
-| | 首次 `gen_task_from_elf` | exec |
+| | 首次 spawn（`linux_boot` / `gen_thread_from_elf` harness） | exec |
 |--|--------------------------|------|
 | `register_process` | 是（`thread.init`） | **否**（同 pid） |
 | MM | 新 `create_vspace` | `vspace_clear` + `load_elf_to_vs` |

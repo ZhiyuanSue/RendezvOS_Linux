@@ -76,9 +76,8 @@ If a change breaks or modifies an invariant, update this file in the same commit
 
 ## Task_Manager / teardown (SMP)
 
-- `Task_Manager` is **per CPU** (`percpu(core_tm)`). `thread->tm` / `task->tm`
-  point at the manager that owns `sched_thread_list` / `sched_task_list` for
-  that thread/task.
+- `Task_Manager` is **per CPU** (`percpu(core_tm)`). `thread->tm` points at the
+  manager that owns `sched_thread_list` for that thread.
 - `schedule()` walks `sched_thread_list` without a lock. Any path that
   **removes** a thread/task from those lists or mutates `current_thread` must
   not run concurrently with the **owner CPU’s** scheduler
@@ -90,8 +89,9 @@ If a change breaks or modifies an invariant, update this file in the same commit
   exit_requested→zombie handshake with the owner `Task_Manager`; do not rely on
   kmem routing alone.
 
-- **Teardown split:** logical unlink (task list + scheduler ring) happens before
-  dropping the last ref; final free drains owned resources and frees the object.
+- **Teardown split:** logical unlink (scheduler ring) happens before
+  dropping the last ref; final free drains owned resources (including
+  `thread->vs`) and then runs append `fini`.
 
 - **Intent survives IPC:** exit/teardown intent uses a monotonic flag (not a
   transient status) so IPC/blocking cannot erase it; owner CPU proves quiescence
@@ -114,17 +114,20 @@ If a change breaks or modifies an invariant, update this file in the same commit
   console output only inside `syscall_entry.c`—keep `sys_write` as the
   extension point (see `doc/linux_compat/STDIO_SHIM.md`).
 
-- **`current_thread` / `belong_tcb` / vspace:** The runnable identity is
-  `current_thread`; the logical task is **`get_cpu_current_task()`** =
-  `current_thread->belong_tcb` when set, else `root_task` (covers threads
-  detached from a task but still current briefly). There is no separate
-  `Task_Manager::current_task` field. After each successful switch to a
-  **user** thread, `schedule` updates CR3 / `current_vspace` when
-  `prev_tcb != next_tcb`; when the **next** thread is **kernel-only**, if the
-  **previous** thread was user, drop the active vspace ref and point
-  `current_vspace` at `root_vspace`. Without dropping user vspace on kernel
-  idle, kernel code can keep a user CR3. `gen_thread_from_func` attaches new
-  kernel threads to `root_task` when present, else `get_cpu_current_task()`.
+- **`current_thread` / vspace:** The runnable identity is `current_thread`.
+  Every thread has `thread->vs`: create/copy take ownership of a non-NULL
+  caller-held ref (user create/clone/`ref_get`, or kernel get of
+  `&root_vspace` via `gen_thread_from_func` / explicit get). Put on teardown
+  (boot keeps `ref_init(1)` on root). After each
+  successful switch to a **user** thread, `schedule` updates CR3 /
+  `current_vspace` when the next thread’s `vs` differs. When the **next**
+  thread is **kernel-only**, leave `current_vspace` unchanged (often the last
+  user AS) — do not pay CR3/TTBR to enter root. Teardown likewise only drops
+  ownership; it does not unload a leftover user AS (CPU extra pins it until a
+  later user switch). `linux_current_proc()` /
+  `linux_current_vs()` are personality helpers. Kernel servers that copy to a
+  client AS must use the looked-up process’s `vs` cache (or the client
+  thread’s `vs`), not `linux_current_vs()`.
 
 - **`vspace_clear_user_mappings`:** Caller must quiesce other threads on this
   `vs` (compat policy). Core TLB check via `allow_self_use`: exec passes
@@ -134,15 +137,15 @@ If a change breaks or modifies an invariant, update this file in the same commit
   **`del_vspace`** (after `unregister_vspace`): same clear with `allow_self_use=false`, then
   `vmm_radix_tree_delete`, `vspace_free_root_page`, free `VSpace`/ASID.
 
-- **User `VSpace` teardown vs SMP (CR3 / `current_vspace`):** `delete_task` may
-  call `del_vspace`, which tears down page tables. No CPU may still execute with
-  that task’s page tables loaded: if another CPU faults while `CR3` (or the
-  kernel’s `current_vspace` / map-handler view) still targets a `VSpace` that
-  is already being freed, you can get `CR2 ≈ RIP` and recursive `#PF` / triple
-  fault. Moving only the clean-server CPU to `root_task` is **not** sufficient;
-  cross-CPU quiescence (e.g. remote threads stopped, IPI + switch all CPUs to a
-  safe kernel vspace, or a vspace refcount / deferred free) must be designed
-  explicitly.
+- **User `VSpace` teardown vs SMP (CR3 / `current_vspace`):** last-ref
+  `del_vspace` tears down page tables. No CPU may still execute with that AS
+  loaded. Invariant: `current_vspace == user vs` ⇒ that CPU holds an extra
+  ref (and mask bit). Thread ownership put does **not** unload leftover AS;
+  the extra pins the object until `schedule` switches to another **user** AS
+  (switch first, then put old). Another CPU still running that vs likewise
+  keeps last-ref from firing until it leaves. Personality wait (`EXIT_NOTIFY`
+  / `linux_proc_reap`) keys off `thread_number==0` after `fini` detach, not
+  off `del_vspace` completing.
 
 ## Maintenance Rule
 

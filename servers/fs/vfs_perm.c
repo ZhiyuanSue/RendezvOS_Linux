@@ -3,7 +3,7 @@
 #include <linux_compat/errno.h>
 #include <linux_compat/proc_compat.h>
 #include <linux_compat/proc_registry.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 static vfs_req_cred_t vfs_req_cred;
 
@@ -25,14 +25,14 @@ void vfs_perm_get_request(u32 *uid_out, u32 *gid_out)
 
 bool vfs_perm_task_cred(pid_t pid, u32 *uid_out, u32 *gid_out)
 {
-        Tcb_Base *task = find_task_by_pid(pid);
-        linux_proc_append_t *pa;
+        linux_proc_resource_t *task = find_proc_by_pid(pid);
+        linux_proc_resource_t *pa;
 
         if (!task) {
                 return false;
         }
 
-        pa = linux_proc_append(task);
+        pa = task;
         if (!pa) {
                 return false;
         }

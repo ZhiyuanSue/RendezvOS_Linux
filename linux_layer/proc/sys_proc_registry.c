@@ -3,31 +3,13 @@
 #include <linux_compat/initcall.h>
 #include <rendezvos/registry/name_index.h>
 #include <rendezvos/ipc/port.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <rendezvos/task/initcall.h>
 #include <rendezvos/sync/cas_lock.h>
 #include <common/string.h>
 #include <modules/log/log.h>
 
 extern struct Port_Table* global_port_table;
-
-static bool proc_child_zombie_ready(Tcb_Base* child, linux_proc_append_t* pa,
-                                    pid_t ppid, pid_t pgid, bool filter_pgid)
-{
-        bool ready;
-
-        if (!child || !pa || pa->ppid != ppid
-            || pa->exit_state != LINUX_EXIT_ZOMBIE) {
-                return false;
-        }
-        if (filter_pgid && pa->pgid != pgid) {
-                return false;
-        }
-        lock_cas(&child->thread_list_lock);
-        ready = (child->thread_number == 0);
-        unlock_cas(&child->thread_list_lock);
-        return ready;
-}
 
 size_t proc_format_pid(char* buf, size_t bufsize, pid_t pid)
 {
@@ -106,7 +88,7 @@ static name_index_t pid_index;
 static const char* task_get_name(void* value)
 {
         static char name_buf[16];
-        Tcb_Base* task = (Tcb_Base*)value;
+        linux_proc_resource_t* task = (linux_proc_resource_t*)value;
 
         if (task->pid == INVALID_ID) {
                 return NULL;
@@ -119,7 +101,7 @@ static const char* task_get_name(void* value)
 /* name_index hold: core has no Tcb refcount; pin is registry lifetime only. */
 static bool proc_task_hold_helper(void* value)
 {
-        Tcb_Base* task = (Tcb_Base*)value;
+        linux_proc_resource_t* task = (linux_proc_resource_t*)value;
 
         return task != NULL && task->pid > 0;
 }
@@ -191,7 +173,7 @@ void proc_registry_init(void)
  * name_index_register does not replace an existing name; stale rows must be
  * cleared explicitly (unregister_process used to pass row_idx=0 and no-op).
  */
-static void proc_registry_evict_pid(pid_t pid, Tcb_Base* only_task)
+static void proc_registry_evict_pid(pid_t pid, linux_proc_resource_t* only_task)
 {
         char name_buf[16];
 
@@ -203,7 +185,7 @@ static void proc_registry_evict_pid(pid_t pid, Tcb_Base* only_task)
 
         for (;;) {
                 name_index_token_t tok;
-                Tcb_Base* existing = (Tcb_Base*)name_index_lookup(
+                linux_proc_resource_t* existing = (linux_proc_resource_t*)name_index_lookup(
                         &pid_index, name_buf, &tok);
                 if (!existing
                     || tok.row_index == NAME_INDEX_ROW_INDEX_INVALID) {
@@ -225,13 +207,13 @@ static void proc_registry_evict_pid(pid_t pid, Tcb_Base* only_task)
         }
 }
 
-error_t register_process(Tcb_Base* task)
+error_t register_process(linux_proc_resource_t* task)
 {
         if (!task) {
                 return -LINUX_EINVAL;
         }
 
-        if (task->pid == INVALID_ID) {
+        if (task->pid == INVALID_ID || task->pid <= 0) {
                 pr_error("[proc] Cannot register task with invalid PID\n");
                 return -LINUX_EINVAL;
         }
@@ -250,7 +232,7 @@ error_t register_process(Tcb_Base* task)
         return REND_SUCCESS;
 }
 
-Tcb_Base* find_task_by_pid(pid_t pid)
+linux_proc_resource_t* find_proc_by_pid(pid_t pid)
 {
         if (pid <= 0) {
                 return NULL;
@@ -259,16 +241,15 @@ Tcb_Base* find_task_by_pid(pid_t pid)
         char name_buf[16];
         proc_format_pid(name_buf, sizeof(name_buf), pid);
 
-        return (Tcb_Base*)name_index_lookup(&pid_index, name_buf, NULL);
+        return (linux_proc_resource_t*)name_index_lookup(&pid_index, name_buf, NULL);
 }
 
-void unregister_process(Tcb_Base* task)
+void unregister_process(linux_proc_resource_t* proc)
 {
-        if (!task || task->pid == INVALID_ID) {
+        if (!proc || proc->pid == INVALID_ID)
                 return;
-        }
 
-        proc_registry_evict_pid(task->pid, task);
+        proc_registry_evict_pid(proc->pid, proc);
 }
 
 void proc_reparent_children(pid_t old_ppid, pid_t new_ppid)
@@ -280,100 +261,33 @@ void proc_reparent_children(pid_t old_ppid, pid_t new_ppid)
         }
 
         for (candidate = 1; candidate < (pid_t)PROC_PID_SCAN_MAX; candidate++) {
-                Tcb_Base* child = find_task_by_pid(candidate);
-                linux_proc_append_t* child_pa;
+                linux_proc_resource_t* child = find_proc_by_pid(candidate);
 
-                if (!child) {
+                if (!child || child->ppid != old_ppid)
                         continue;
-                }
-                child_pa = linux_proc_append(child);
-                if (!child_pa || child_pa->ppid != old_ppid) {
-                        continue;
-                }
-                child_pa->ppid = new_ppid;
+                child->ppid = new_ppid;
         }
 }
 
-bool proc_has_wait_reaper(linux_proc_append_t* pa)
+bool proc_has_wait_reaper(linux_proc_resource_t* proc)
 {
-        if (!pa) {
+        if (!proc)
                 return false;
-        }
         /*
          * Link A only when a live parent owns wait_port. Init-adopted (ppid 0)
-         * and orphaned-with-dead-parent use link B — see
-         * protocols/EXIT_CLEAN.md.
+         * and orphaned-with-dead-parent use link B — see EXIT_CLEAN.md.
          */
-        if (pa->ppid > 0 && find_task_by_pid(pa->ppid)) {
-                return true;
-        }
-        return false;
+        return proc->ppid > 0 && find_proc_by_pid(proc->ppid) != NULL;
 }
 
-/*
- * Find a zombie child by parent PID.
- * This implements the lookup needed for wait4(pid == -1).
- *
- * Strategy: Try PID ranges sequentially until we find a zombie child.
- * This is O(N) in the number of PIDs, but N is typically small.
- * TODO: Optimize with reverse index if needed.
- */
-Tcb_Base* find_zombie_child(pid_t ppid)
+static bool proc_child_counts_for_wait(const linux_proc_resource_t *proc)
 {
-        if (ppid <= 0) {
-                return NULL;
-        }
-
-        /* Try a reasonable range of PIDs (assuming PIDs are allocated
-         * sequentially) */
-        for (pid_t candidate = ppid + 1; candidate < ppid + 1000; candidate++) {
-                Tcb_Base* child = find_task_by_pid(candidate);
-                if (!child) {
-                        continue;
-                }
-
-                linux_proc_append_t* pa = linux_proc_append(child);
-                if (!pa) {
-                        continue;
-                }
-
-                /* Zombie with all threads detached (THREAD_REAP done). */
-                if (proc_child_zombie_ready(child, pa, ppid, 0, false)) {
-                        return child;
-                }
-        }
-
-        return NULL;
-}
-
-/*
- * Find a zombie child in the same process group.
- * This implements the lookup needed for wait4(pid == 0) and wait4(pid < -1).
- */
-Tcb_Base* find_zombie_child_in_pgid(pid_t ppid, pid_t pgid)
-{
-        if (ppid <= 0 || pgid <= 0) {
-                return NULL;
-        }
-
-        /* Try a reasonable range of PIDs */
-        for (pid_t candidate = ppid + 1; candidate < ppid + 1000; candidate++) {
-                Tcb_Base* child = find_task_by_pid(candidate);
-                if (!child) {
-                        continue;
-                }
-
-                linux_proc_append_t* pa = linux_proc_append(child);
-                if (!pa) {
-                        continue;
-                }
-
-                if (proc_child_zombie_ready(child, pa, ppid, pgid, true)) {
-                        return child;
-                }
-        }
-
-        return NULL;
+        if (!proc)
+                return false;
+        /* Running or unreaped zombie; not reaped / mid-reap. */
+        return proc->exit_state == LINUX_EXIT_RUNNING
+               || proc->exit_state == LINUX_EXIT_ZOMBIE
+               || proc->exit_state == LINUX_EXIT_NOTIFIED;
 }
 
 bool proc_parent_has_unreaped_child(pid_t ppid, pid_t pgid, bool filter_by_pgid)
@@ -386,21 +300,13 @@ bool proc_parent_has_unreaped_child(pid_t ppid, pid_t pgid, bool filter_by_pgid)
         }
 
         for (pid_t candidate = ppid + 1; candidate < ppid + 1000; candidate++) {
-                Tcb_Base* child = find_task_by_pid(candidate);
-                linux_proc_append_t* pa;
+                linux_proc_resource_t* child = find_proc_by_pid(candidate);
 
-                if (!child) {
+                if (!child || child->ppid != ppid
+                    || !proc_child_counts_for_wait(child))
                         continue;
-                }
-
-                pa = linux_proc_append(child);
-                if (!pa || pa->ppid != ppid
-                    || pa->exit_state >= LINUX_EXIT_REAPED) {
+                if (filter_by_pgid && child->pgid != pgid)
                         continue;
-                }
-                if (filter_by_pgid && pa->pgid != pgid) {
-                        continue;
-                }
                 return true;
         }
 

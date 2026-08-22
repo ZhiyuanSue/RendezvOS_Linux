@@ -14,9 +14,10 @@
 #include <linux_compat/fs/linux_pipe.h>
 #include <linux_compat/fs/vfs_protocol.h>
 #include <linux_compat/linux_mm_radix.h>
+#include <linux_compat/proc_compat.h>
 #include <modules/log/log.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <syscall.h>
 
 static i64 sys_fs_load_pathname(VSpace *vs, u64 user_pathname, char *pathname,
@@ -48,19 +49,19 @@ static i32 linux_open_flags_normalize(i32 flags)
         return out;
 }
 
-static Tcb_Base *sys_fs_current(void)
+static linux_proc_resource_t *sys_fs_current(void)
 {
-        return get_cpu_current_task();
+        return linux_current_proc();
 }
 
 i64 sys_getcwd(u64 user_buf, u64 size)
 {
-        Tcb_Base *current = sys_fs_current();
+        linux_proc_resource_t *current = sys_fs_current();
         linux_fs_state_t *fs;
         VSpace *vs;
         error_t e;
 
-        if (!current || !current->vs) {
+        if (!current || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
 
@@ -72,7 +73,7 @@ i64 sys_getcwd(u64 user_buf, u64 size)
                 return -LINUX_EINVAL;
         }
 
-        vs = current->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }
@@ -96,7 +97,7 @@ i64 sys_getcwd(u64 user_buf, u64 size)
 
 i64 sys_dup(i32 fd)
 {
-        Tcb_Base *current = sys_fs_current();
+        linux_proc_resource_t *current = sys_fs_current();
         i32 newfd;
 
         newfd = linux_fd_lowest_free(current);
@@ -114,7 +115,7 @@ i64 sys_dup2(i32 oldfd, i32 newfd)
 
 i64 sys_openat(i32 dirfd, u64 user_pathname, i32 flags, u64 mode)
 {
-        Tcb_Base *current = sys_fs_current();
+        linux_proc_resource_t *current = sys_fs_current();
         VSpace *vs;
         char pathname[LINUX_VFS_PATH_MAX];
         char abs[LINUX_VFS_PATH_MAX];
@@ -123,11 +124,11 @@ i64 sys_openat(i32 dirfd, u64 user_pathname, i32 flags, u64 mode)
         i32 fd;
         i64 ret;
 
-        if (!current || !current->vs) {
+        if (!current || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
 
-        vs = current->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }
@@ -182,7 +183,7 @@ i64 sys_close(i32 fd)
 
 i64 sys_read(i32 fd, u64 user_buf, u64 count)
 {
-        Tcb_Base *current = sys_fs_current();
+        linux_proc_resource_t *current = sys_fs_current();
         linux_fd_entry_t *ent;
         i64 ret;
 
@@ -234,7 +235,7 @@ i64 sys_read(i32 fd, u64 user_buf, u64 count)
 
 i64 sys_write(i32 fd, u64 user_buf, u64 count)
 {
-        Tcb_Base *current = sys_fs_current();
+        linux_proc_resource_t *current = sys_fs_current();
         linux_fd_entry_t *ent;
 
         ent = linux_fd_get(current, fd);
@@ -266,7 +267,7 @@ i64 sys_write(i32 fd, u64 user_buf, u64 count)
 
 i64 sys_fstat(i32 fd, u64 user_statbuf)
 {
-        Tcb_Base *current = sys_fs_current();
+        linux_proc_resource_t *current = sys_fs_current();
         linux_fd_entry_t *ent;
 
         ent = linux_fd_get(current, fd);
@@ -293,7 +294,7 @@ i64 sys_stat(u64 user_pathname, u64 user_statbuf)
 
 i64 sys_lseek(i32 fd, i64 offset, i32 whence)
 {
-        Tcb_Base *current = sys_fs_current();
+        linux_proc_resource_t *current = sys_fs_current();
         linux_fd_entry_t *ent;
 
         ent = linux_fd_get(current, fd);
@@ -314,14 +315,14 @@ i64 sys_lseek(i32 fd, i64 offset, i32 whence)
 
 i64 sys_chdir(u64 user_pathname)
 {
-        Tcb_Base *current = sys_fs_current();
+        linux_proc_resource_t *current = sys_fs_current();
         linux_fs_state_t *fs;
         VSpace *vs;
         char pathname[LINUX_VFS_PATH_MAX];
         char abs[LINUX_VFS_PATH_MAX];
         i64 ret;
 
-        if (!current || !current->vs) {
+        if (!current || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
 
@@ -330,7 +331,7 @@ i64 sys_chdir(u64 user_pathname)
                 return -LINUX_ESRCH;
         }
 
-        vs = current->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }
@@ -371,7 +372,7 @@ i64 sys_unlink(u64 user_pathname)
 
 i64 sys_getdents64(i32 fd, u64 user_dirp, u64 count)
 {
-        Tcb_Base *current = sys_fs_current();
+        linux_proc_resource_t *current = sys_fs_current();
         linux_fd_entry_t *ent;
 
         ent = linux_fd_get(current, fd);
@@ -402,17 +403,17 @@ i64 sys_pipe2(u64 user_pipefd, i32 flags)
 
 i64 sys_mkdirat(i32 dirfd, u64 user_pathname, u32 mode)
 {
-        Tcb_Base *current = sys_fs_current();
+        linux_proc_resource_t *current = sys_fs_current();
         VSpace *vs;
         char pathname[LINUX_VFS_PATH_MAX];
         char abs[LINUX_VFS_PATH_MAX];
         i64 ret;
 
-        if (!current || !current->vs) {
+        if (!current || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
 
-        vs = current->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }
@@ -435,17 +436,17 @@ i64 sys_mkdirat(i32 dirfd, u64 user_pathname, u32 mode)
 
 i64 sys_unlinkat(i32 dirfd, u64 user_pathname, i32 flags)
 {
-        Tcb_Base *current = sys_fs_current();
+        linux_proc_resource_t *current = sys_fs_current();
         VSpace *vs;
         char pathname[LINUX_VFS_PATH_MAX];
         char abs[LINUX_VFS_PATH_MAX];
         i64 ret;
 
-        if (!current || !current->vs) {
+        if (!current || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
 
-        vs = current->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }
@@ -469,7 +470,7 @@ i64 sys_unlinkat(i32 dirfd, u64 user_pathname, i32 flags)
 i64 sys_renameat(i32 olddirfd, u64 user_oldpath, i32 newdirfd, u64 user_newpath,
                  u32 flags)
 {
-        Tcb_Base *current = sys_fs_current();
+        linux_proc_resource_t *current = sys_fs_current();
         VSpace *vs;
         char oldpath[LINUX_VFS_PATH_MAX];
         char newpath[LINUX_VFS_PATH_MAX];
@@ -477,11 +478,11 @@ i64 sys_renameat(i32 olddirfd, u64 user_oldpath, i32 newdirfd, u64 user_newpath,
         char new_abs[LINUX_VFS_PATH_MAX];
         i64 ret;
 
-        if (!current || !current->vs) {
+        if (!current || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
 
-        vs = current->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }
@@ -518,7 +519,7 @@ i64 sys_renameat(i32 olddirfd, u64 user_oldpath, i32 newdirfd, u64 user_newpath,
 i64 sys_linkat(i32 olddirfd, u64 user_oldpath, i32 newdirfd, u64 user_newpath,
                i32 flags)
 {
-        Tcb_Base *current = sys_fs_current();
+        linux_proc_resource_t *current = sys_fs_current();
         VSpace *vs;
         char oldpath[LINUX_VFS_PATH_MAX];
         char newpath[LINUX_VFS_PATH_MAX];
@@ -528,11 +529,11 @@ i64 sys_linkat(i32 olddirfd, u64 user_oldpath, i32 newdirfd, u64 user_newpath,
 
         (void)flags;
 
-        if (!current || !current->vs) {
+        if (!current || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
 
-        vs = current->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }
@@ -568,17 +569,17 @@ i64 sys_linkat(i32 olddirfd, u64 user_oldpath, i32 newdirfd, u64 user_newpath,
 
 i64 sys_newfstatat(i32 dirfd, u64 user_pathname, u64 user_statbuf, i32 flags)
 {
-        Tcb_Base *current = sys_fs_current();
+        linux_proc_resource_t *current = sys_fs_current();
         VSpace *vs;
         char pathname[LINUX_VFS_PATH_MAX];
         char abs[LINUX_VFS_PATH_MAX];
         i64 ret;
 
-        if (!current || !current->vs) {
+        if (!current || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
 
-        vs = current->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }
@@ -604,17 +605,17 @@ i64 sys_newfstatat(i32 dirfd, u64 user_pathname, u64 user_statbuf, i32 flags)
 
 i64 sys_readlinkat(i32 dirfd, u64 user_pathname, u64 user_buf, u64 bufsiz)
 {
-        Tcb_Base *current = sys_fs_current();
+        linux_proc_resource_t *current = sys_fs_current();
         VSpace *vs;
         char pathname[LINUX_VFS_PATH_MAX];
         char abs[LINUX_VFS_PATH_MAX];
         i64 ret;
 
-        if (!current || !current->vs) {
+        if (!current || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
 
-        vs = current->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }
@@ -640,17 +641,17 @@ i64 sys_readlinkat(i32 dirfd, u64 user_pathname, u64 user_buf, u64 bufsiz)
 
 i64 sys_faccessat(i32 dirfd, u64 user_pathname, i32 mode, i32 flags)
 {
-        Tcb_Base *current = sys_fs_current();
+        linux_proc_resource_t *current = sys_fs_current();
         VSpace *vs;
         char pathname[LINUX_VFS_PATH_MAX];
         char abs[LINUX_VFS_PATH_MAX];
         i64 ret;
 
-        if (!current || !current->vs) {
+        if (!current || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
 
-        vs = current->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }
@@ -676,7 +677,7 @@ i64 sys_faccessat(i32 dirfd, u64 user_pathname, i32 mode, i32 flags)
 
 i64 sys_dup3(i32 oldfd, i32 newfd, i32 flags)
 {
-        Tcb_Base *current = sys_fs_current();
+        linux_proc_resource_t *current = sys_fs_current();
         linux_fd_entry_t *ent;
         i64 ret;
 

@@ -1,6 +1,6 @@
 #ifndef _SYSCALL_ENTRY_
 #define _SYSCALL_ENTRY_
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 
 #include <rendezvos/trap/trap.h>
 

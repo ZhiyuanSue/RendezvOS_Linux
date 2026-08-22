@@ -4,7 +4,7 @@
 #include <common/types.h>
 
 #include <linux_compat/fs/linux_user_stat.h>
-#include <rendezvos/task/tcb.h>
+#include <linux_compat/proc_compat.h>
 
 #include "vfs_backend_ops.h"
 
@@ -53,7 +53,7 @@ void linux_user_stat_from_kstat(const vfs_kstat_t *in, linux_user_stat_t *out);
 u64 vfs_path_to_ino(const char *path);
 
 /* inode → linux_user_stat → user buffer. Returns 0 or -errno. */
-i64 vfs_store_inode_stat(Tcb_Base *task, u64 user_statbuf,
+i64 vfs_store_inode_stat(linux_proc_resource_t *task, u64 user_statbuf,
                          const vfs_inode_t *ino);
 
 #endif /* _VFS_KSTAT_H_ */

@@ -74,7 +74,7 @@ pid_t getppid(void)
     Tcb_Base* task = get_cpu_current_task();
     if (!task) return -1;
     
-    linux_proc_append_t* pa = linux_proc_append(task);
+    linux_proc_resource_t* pa = linux_proc_append(task);
     return pa ? pa->ppid : -1;
 }
 ```
@@ -352,7 +352,7 @@ kmsg_format: "qi"  // i64 child_pid + i32 exit_code
 
 **数据结构**:
 ```c
-typedef struct linux_proc_append {
+typedef struct linux_proc_resource {
     u64 start_brk;
     u64 brk;
     pid_t ppid;    // 父进程PID
@@ -360,7 +360,7 @@ typedef struct linux_proc_append {
     i32 exit_code;
     i32 exit_state; // 0=running, 1=zombie, 2=reaped
     struct list_entry wait_queue;
-} linux_proc_append_t;
+} linux_proc_resource_t;
 ```
 
 **继承机制**:

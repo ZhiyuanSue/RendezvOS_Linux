@@ -1,22 +1,23 @@
 #include <linux_compat/errno.h>
 #include <linux_compat/linux_mm_radix.h>
+#include <linux_compat/proc_compat.h>
 #include <linux_compat/time/linux_time_types.h>
 #include <rendezvos/error.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <rendezvos/time.h>
 #include <syscall.h>
 
 i64 sys_times(u64 user_buf)
 {
-        Tcb_Base *task = get_cpu_current_task();
+        linux_proc_resource_t *task = linux_current_proc();
         VSpace *vs;
         linux_tms_t tms;
         error_t e;
 
-        if (!task || !task->vs) {
+        if (!task || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
-        vs = task->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }

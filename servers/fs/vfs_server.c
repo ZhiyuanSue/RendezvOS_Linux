@@ -11,7 +11,7 @@
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/task/initcall.h>
 #include <rendezvos/ipc/port.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <rendezvos/task/thread_loader.h>
 
 #include "vfs_coop.h"

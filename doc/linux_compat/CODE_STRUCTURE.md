@@ -48,7 +48,6 @@ linux_layer/
 │   └── thread_syscall.c
 ├── init/
 │   ├── linux_boot.c           # PID1: exec /init → run_all.sh
-│   ├── linux_init_kernel_port.c
 │   └── linux_init_main.c
 ├── proc/
 │   ├── linux_exec.c           # shared replace_image (syscall + boot)

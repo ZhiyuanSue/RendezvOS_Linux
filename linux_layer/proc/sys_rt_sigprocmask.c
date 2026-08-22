@@ -7,7 +7,7 @@
 #include <linux_compat/signal/signal_uapi.h>
 #include <rendezvos/error.h>
 #include <rendezvos/smp/percpu.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <syscall.h>
 
 static void signal_mask_sanitize_helper(sigset_t* set)
@@ -19,14 +19,14 @@ static void signal_mask_sanitize_helper(sigset_t* set)
 i64 sys_rt_sigprocmask(i64 how_i, u64 set_ptr, u64 oldset_ptr, u64 sigsetsize)
 {
         Thread_Base* current_thread = get_cpu_current_thread();
-        Tcb_Base* current = get_cpu_current_task();
+        linux_proc_resource_t* current = linux_current_proc();
         linux_signal_thread_state_t* ts;
         VSpace* vs;
         int how = (int)how_i;
         sigset_t new_set;
         error_t e;
 
-        if (!current_thread || !current || !current->vs) {
+        if (!current_thread || !current || !linux_current_vs()) {
                 return -LINUX_ESRCH;
         }
 
@@ -35,7 +35,7 @@ i64 sys_rt_sigprocmask(i64 how_i, u64 set_ptr, u64 oldset_ptr, u64 sigsetsize)
                 return -LINUX_ENOMEM;
         }
 
-        vs = current->vs;
+        vs = linux_current_vs();
         if (!linux_vspace_is_user_table(vs)) {
                 return -LINUX_EFAULT;
         }

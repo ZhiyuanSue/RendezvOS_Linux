@@ -10,7 +10,7 @@
 #include <linux_compat/signal/signal_state.h>
 #include <rendezvos/error.h>
 #include <rendezvos/mm/vmm.h>
-#include <rendezvos/task/tcb.h>
+#include <rendezvos/task/thread.h>
 #include <rendezvos/trap/trap.h>
 #include <syscall.h>
 #include <syscall_entry.h>
@@ -247,7 +247,7 @@ static bool signal_install_return_path(VSpace *vs, struct trap_frame *tf,
 
 bool linux_signal_thread_has_deliverable_pending(Thread_Base *thread)
 {
-        Tcb_Base *process;
+        linux_proc_resource_t *process;
         linux_signal_thread_state_t *ts;
         linux_signal_proc_state_t *ps;
 
@@ -255,7 +255,7 @@ bool linux_signal_thread_has_deliverable_pending(Thread_Base *thread)
                 return false;
         }
 
-        process = thread->belong_tcb;
+        process = linux_proc_of(thread);
         if (!process) {
                 return false;
         }
@@ -271,7 +271,7 @@ bool linux_signal_thread_has_deliverable_pending(Thread_Base *thread)
 
 bool linux_signal_wait4_should_return_eintr(Thread_Base *thread)
 {
-        Tcb_Base *process;
+        linux_proc_resource_t *process;
         linux_signal_thread_state_t *ts;
         linux_signal_proc_state_t *ps;
         int sig;
@@ -280,7 +280,7 @@ bool linux_signal_wait4_should_return_eintr(Thread_Base *thread)
                 return false;
         }
 
-        process = thread->belong_tcb;
+        process = linux_proc_of(thread);
         if (!process) {
                 return false;
         }
@@ -328,7 +328,7 @@ bool linux_signal_has_deliverable_pending(void)
 bool linux_deliver_pending_signals(struct trap_frame *tf)
 {
         Thread_Base *current_thread = get_cpu_current_thread();
-        Tcb_Base *current_process;
+        linux_proc_resource_t *current_process;
         linux_signal_thread_state_t *ts;
         linux_signal_proc_state_t *ps;
         int sig;
@@ -343,7 +343,7 @@ bool linux_deliver_pending_signals(struct trap_frame *tf)
                 return false;
         }
 
-        current_process = current_thread->belong_tcb;
+        current_process = linux_proc_of(current_thread);
         if (!current_process) {
                 return false;
         }
