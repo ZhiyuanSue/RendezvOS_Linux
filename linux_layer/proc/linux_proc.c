@@ -1,5 +1,6 @@
 #include <linux_compat/append_hooks.h>
 #include <linux_compat/clone_flags.h>
+#include <linux_compat/initcall.h>
 #include <linux_compat/fs/linux_fd_table.h>
 #include <linux_compat/fs/vfs_protocol.h>
 #include <linux_compat/ipc/clean_protocol.h>
@@ -18,7 +19,21 @@
 #include <rendezvos/smp/percpu.h>
 #include <rendezvos/sync/cas_lock.h>
 #include <rendezvos/task/id.h>
+#include <rendezvos/task/initcall.h>
 #include <rendezvos/task/thread.h>
+
+static Id_Manager linux_pid_manager;
+static bool linux_pid_id_inited;
+
+static void linux_pid_id_init(void)
+{
+        if (!linux_init_bsp_once(&linux_pid_id_inited))
+                return;
+        init_id_manager(&linux_pid_manager);
+        linux_init_bsp_mark_done(&linux_pid_id_inited);
+}
+
+DEFINE_INIT(linux_pid_id_init);
 
 static error_t linux_proc_free_ref(ref_count_t *ref)
 {
@@ -47,12 +62,11 @@ linux_proc_resource_t *linux_proc_alloc(void)
         memset(proc, 0, sizeof(*proc));
         ref_init(&proc->refcount);
         /*
-         * pid_manager starts at 0. Linux user pids must be > 0: 0 is
+         * linux_pid_manager starts at 0. Linux user pids must be > 0: 0 is
          * LINUX_INIT_REAP_PPID / wait_port and vfs_cli reject pid<=0.
-         * (Previously root_task consumed id 0; that object is gone.)
          */
         do {
-                proc->pid = get_new_id(&pid_manager);
+                proc->pid = get_new_id(&linux_pid_manager);
         } while (proc->pid == 0);
         if (proc->pid == INVALID_ID) {
                 alloc->m_free(alloc, proc);

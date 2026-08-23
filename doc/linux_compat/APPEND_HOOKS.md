@@ -38,6 +38,8 @@ Linux 静态表（[`linux_layer/loader/linux_elf_init.c`](../../linux_layer/load
 | clone 拷 signal/fs | `linux_proc_clone_from` |
 | wait/clean 收尸 | `linux_proc_reap`（`thread_number==0` 后 fini + put 分配 ref） |
 
+**PID 分配（非 hook）：** core 提供 `Id_Manager` + `get_new_id`；Linux pid 由 compat 自有 `linux_pid_manager`（[`linux_proc.c`](../../linux_layer/proc/linux_proc.c)），`DEFINE_INIT` 在 BSP 初始化。core 仅保留 `tid_manager`（`init_core_thread_ids`）。
+
 ---
 
 ## 2. core 何时调用 hook
