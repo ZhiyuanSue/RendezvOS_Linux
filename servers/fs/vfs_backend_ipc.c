@@ -300,7 +300,7 @@ error_t vfs_backend_ipc_server_spawn(const char *port_name,
                 return -E_IN_PARAM;
         }
 
-        port = create_message_port(port_name);
+        port = create_message_port(port_name, NULL);
         if (!port) {
                 return -E_REND_NO_MEM;
         }

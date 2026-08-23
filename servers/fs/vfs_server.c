@@ -103,7 +103,7 @@ static void vfs_server_init(void)
         pr_info("[VFS] server thread init on CPU %llu\n",
                 (u64)percpu(cpu_number));
 
-        port = create_message_port(VFS_SERVER_PORT_NAME);
+        port = create_message_port(VFS_SERVER_PORT_NAME, NULL);
         if (!port) {
                 pr_error("[VFS] create_message_port failed\n");
                 return;

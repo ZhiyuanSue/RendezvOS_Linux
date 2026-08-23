@@ -190,7 +190,7 @@ Message_Port_t* ipc_rpc_port_lookup_or_create(const char* port_name)
                 return port;
         }
 
-        port = create_message_port(port_name);
+        port = create_message_port(port_name, NULL);
         if (!port) {
                 return NULL;
         }

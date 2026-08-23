@@ -423,7 +423,7 @@ static void clean_server_ensure_port(void)
                 return;
         }
 
-        port = create_message_port(CLEAN_SERVER_PORT_NAME);
+        port = create_message_port(CLEAN_SERVER_PORT_NAME, NULL);
         if (!port) {
                 pr_error("[clean_server] failed to create message port\n");
                 return;

@@ -129,7 +129,7 @@ Message_Port_t* proc_get_or_create_wait_port(pid_t pid)
                 return port;
         }
 
-        port = create_message_port(port_name);
+        port = create_message_port(port_name, NULL);
         if (!port) {
                 return NULL;
         }
