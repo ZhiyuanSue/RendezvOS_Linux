@@ -81,10 +81,10 @@
 
 权威列表（中文条列）：[`core/docs/TODO.md`](../../core/docs/TODO.md)。
 
-和上层交叉多的几条：
+和上层交叉多的几条（**2026-08-25**：getc + **创建时线程 affinity** 已关，见 core DONE #68/#72；IRQ affinity 仍为 core `TODO.md` B.1，**不**挡 freeze；IOAPIC 远期 DONE #14）：
 
-- 平台：UART getc；TLB IPI（软 IPI 已有）；x86 IOAPIC / 外设 IRQ 为**远期**（非冻结）  
-- 37、38、46：日志前后端与 IPC 输出；交接说明见 `core/docs/log.md`  
+- 平台：TLB IPI（软 IPI 已有）；线程绑核 → core `USING_CORE.md` §3.12；IRQ 绑核 → core `TODO.md` B.1；x86 IOAPIC **远期**
+- 日志 / console：**维持** sync `uart_putc` + compat `log_put_locked`；`uart_getc` 已为轮询；log server / uart_server → 本文 §3  
 - 42：Linux argv 归兼容层，别塞回 core  
 - 52：系统化 call→IPC wrapper 偏上层；core 留 port 原语  
 - 内存：boot 栈已结（见 core TODO_DONE #58）；多 zone **骨架**已结（#60，`configure_pmm_zones_hook`）；第二 DMA 池等有硬件约束再加。fork/COW / mmap 后续仍可能动 MM  
