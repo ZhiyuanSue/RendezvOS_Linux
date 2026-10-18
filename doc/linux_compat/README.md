@@ -22,7 +22,7 @@
 | [`SYSCALLS.md`](SYSCALLS.md) | **实现顺序**与文件清单 |
 | [`MM_AND_COW.md`](MM_AND_COW.md) | Radix 虚存真源、COW、页故障 |
 | [`protocols/README.md`](protocols/README.md) | **通信协议合集入口**（port / RPC / exit-clean / VFS） |
-| [`PORT_NAMING.md`](protocols/PORT_NAMING.md) | **全局 port 表命名约定**（`service` + `cpu` + worker / `cli`） |
+| [`PORT_NAMING.md`](protocols/PORT_NAMING.md) | **全局 port 注册表命名约定**（`service` + `cpu` + worker / `cli`） |
 | [`IPC_RPC_FRAMEWORK.md`](protocols/IPC_RPC_FRAMEWORK.md) | RPC / one-way server 模板 |
 | [`EXIT_CLEAN.md`](protocols/EXIT_CLEAN.md) | **exit / wait4 / clean_server 权威协议** |
 | [`WAIT_AND_SIGCHLD.md`](protocols/WAIT_AND_SIGCHLD.md) | **wait4 ↔ SIGCHLD ↔ Layer B**（与 EXIT_CLEAN 配套） |

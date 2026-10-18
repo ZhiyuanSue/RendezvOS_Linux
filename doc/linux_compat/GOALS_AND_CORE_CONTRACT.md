@@ -125,7 +125,7 @@ compat **假定** core 已提供下列机制；**不要求** core 理解 Linux�
 | `register_fixed_trap(PAGE_FAULT)` | COW / lazy / SIGSEGV | `trap.md` |
 | `create_thread` / `copy_thread` / `register_vspace` | fork、boot、server 线程 | `THREAD_AND_VSPACE.md`, `task-thread.md` |
 | `schedule` / 线程状态 | 阻塞、exit、server 循环 | `task-thread.md` |
-| `send_msg` / `recv_msg` / port 表 | wait、RPC、clean | `ipc.md` |
+| `send_msg` / `recv_msg` / port 注册表 | wait、RPC、clean | `ipc.md` |
 | 弱符号 `syscall(trap_frame*)` | 全部分发 | `trap.md` |
 | `arch_syscall_*` | exec、sigreturn | `SYSCALL_USER_RETURN_AND_EXECVE.md` |
 

@@ -7,7 +7,7 @@ If a change breaks or modifies an invariant, update this file in the same commit
 
 - `Port_Table.by_name.lock` protects all index mutations (`rows`, `ht`, `live`, freelist).
 - `port_table_lookup` / `port_table_resolve_token` success returns with one valid ref (`ref_get_not_zero`).
-- Row reuse must bump `row.gen` before the row is recycled.
+- Row reuse must increment `row.gen` before the row is recycled.
 - Freelist empty sentinel must be type-consistent with `free_head` (`u64`).
 - Token invalidation must be type-consistent with `name_index_token_t` / `name_index_token_t` (`row_index` is `u32`).
 - `unregister` path must: remove hash mapping, unlink value, clear row, decrement live count, recycle row.

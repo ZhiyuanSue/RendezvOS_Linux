@@ -9,19 +9,16 @@ This repository uses in-kernel server threads that communicate via the lock-free
 - `Msg_Data_t.data`: points to one allocated `kmsg_t` buffer (`hdr` + `payload`)
 - `Msg_Data_t.free_data`: `free_msgdata_ref_default` (frees the `kmsg_t` buffer and the `Msg_Data_t`)
 
-Header (`kmsg_hdr_t`) — slim, no in-band version field (layout changes bump `KMSG_MAGIC` and all producers/consumers together):
+Header (`kmsg_hdr_t`) — slim fixed prefix:
 
-- `magic`: `KMSG_MAGIC` (`0x47534d4c`, ASCII `LMSG` in little-endian byte order) — distinguishes this wire shape from older experiments.
+- `magic`: `KMSG_MAGIC` (`0x47534d4c`, ASCII `LMSG` in little-endian byte order) — buffer identity check only (`kmsg_from_msg` rejects a mismatch); not a layout generation / version.
 - `module`: **service id** bound to the destination `Message_Port_t` (fast validation only)
 - `opcode`: operation within that module (e.g. `KMSG_OP_CLEAN_THREAD_REAP` on clean_server)
 - `payload_len`: bytes of TLV payload after the fixed header prefix (`offsetof(kmsg_t, payload)` through end of buffer)
 
 Sender identity / reply routing is **not** duplicated in the header: use TLV (e.g. `t` = reply port name) when an opcode needs a reply endpoint.
 
-## Versioning
-
-- There is **no** `version` field in the header. Changing `kmsg_hdr_t` requires a new **`KMSG_MAGIC`** (or coordinated roll) and updating `kmsg_from_msg` + all encoders.
-- `(module, opcode)` identifies which **TLV schema** (format string) receivers apply.
+`(module, opcode)` identifies which **TLV schema** (format string) receivers apply.
 
 ## TLV payload (single encapsulation for `kmsg` data)
 

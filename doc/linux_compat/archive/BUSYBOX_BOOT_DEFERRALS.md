@@ -89,7 +89,7 @@
 ### 子项 2 说明：为什么说「unregister 时就要 clean」，会不会「每次减 ref 都 clean」？
 
 **不是**「无论何时、每次 `ref_put` 都调用 `port_clean_thread_queue`」。  
-**是**：「**unregister（从全局名表摘掉 = 协议上关闭该 port）时** 就必须 drain 等待队列」，**不要等到** refcount 归零才 clean。
+**是**：「**unregister（从全局 port 注册表摘掉 = 协议上关闭该 port）时** 就必须 drain 等待队列」，**不要等到** refcount 归零才 clean。
 
 **修复前**的楔形（为何不能绑 `ref_put→0`）：
 
@@ -103,7 +103,7 @@ ref_put → 0      →  delete → port_clean       ← 旧：只在最后 free
 | 问题 | 答案 |
 |------|------|
 | clean 绑在什么事件上？ | **unregister / close（语义关闭）一次**，不是每个 `ref_put` |
-| 为什么不能等 refcount==0？ | 归零只表示「没有指针还握着结构体」；**关闭名表项**时等待者就该醒，哪怕还有 in-flight lookup |
+| 为什么不能等 refcount==0？ | 归零只表示「没有指针还握着结构体」；**关闭 port 注册表项**时等待者就该醒，哪怕还有 in-flight lookup |
 | 多次 `ref_put` 会多次 clean 吗？ | **不会**——clean 在 `unregister_port`（每注册生命周期至多一次）；`delete` 再 drain 一次只是幂等空转 |
 
 **已落地（ops gate，命名以源码为准）**：

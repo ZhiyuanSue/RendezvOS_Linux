@@ -33,7 +33,7 @@ BUSYBOX_AUTO_FETCH="${BUSYBOX_AUTO_FETCH:-0}"
 # Set BUSYBOX_FULL=0 for the old small demo set.
 BUSYBOX_FULL="${BUSYBOX_FULL:-1}"
 FORCE_BUSYBOX="${FORCE_BUSYBOX:-${BUSYBOX_REBUILD:-0}}"
-# Stamp schema; bump when install/config policy changes in a way that must rebuild.
+# Stamp schema; increment when install/config policy changes in a way that must rebuild.
 BUSYBOX_STAMP_REV="2"
 
 fetch_busybox_source() {

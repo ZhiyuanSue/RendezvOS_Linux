@@ -81,7 +81,7 @@ typedef struct linux_proc_resource {
 ```
 T1: child 发送 wait 通知
 T2: child 请求 clean_server
-T3: 末线程 teardown：delete_thread → fini detach → thread->vs put（vs 可能仍被 CPU extra 钉住）
+T3: 末线程 teardown：delete_thread → fini detach → thread->vs put（vs 可能仍被 CPU extra 拖住）
 T4: parent 若过早假设 vs/proc 已销毁会竞态
 ```
 

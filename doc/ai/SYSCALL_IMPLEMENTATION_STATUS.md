@@ -26,7 +26,7 @@
 | **内存管理** | brk | ✅ 实现 | 9/10 | `linux_layer/mm/sys_brk.c` | 堆增长/收缩，依赖proc_append |
 | **内存管理** | mmap | ✅ 实现 | 8/10 | `linux_layer/mm/sys_mmap.c` | **仅匿名映射**，简单地址搜索 |
 | **内存管理** | munmap | ✅ 实现 | ?/10 | `linux_layer/mm/sys_munmap.c` | 待审阅 |
-| **内存管理** | mprotect | ✅ 实现 | 9/10 | `linux_layer/mm/sys_mprotect.c` | 批量flags更新，使用nexus API |
+| **内存管理** | mprotect | ✅ 实现 | 9/10 | `linux_layer/mm/sys_mprotect.c` | 批量 flags；经 `linux_mm_update_range_flags` |
 | **内存管理** | mremap | ⚠️ 实现 | 6/10 | `linux_layer/mm/sys_mremap.c` | **使用逐字节拷贝**，待改进 |
 | **I/O** | write | ⚠️ 实现 | 6/10 | `linux_layer/io/sys_write.c` | **仅fd 1/2**，直接memcpy用户内存 |
 
@@ -141,26 +141,20 @@
 #### 3. mprotect
 - **实现质量**：9/10
 - **技术约束**：
-  - 批量更新nexus节点和页表项
-  - 支持ABSOLUTE和DELTA模式
+  - 批量更新 radix 影子标志与页表项（旧 nexus API 已废除）
+  - 兼容层封装：`linux_mm_update_range_flags`
 - **实现要点**：
   ```c
   i64 sys_mprotect(u64 addr, u64 length, i64 prot) {
       ENTRY_FLAGS_t eflags = linux_prot_to_page_flags(prot);
-      error_t e = nexus_update_range_flags(
-          percpu(nexus_root),
-          tcb->vs,
-          (vaddr)addr,
-          len_aligned,
-          NEXUS_RANGE_FLAGS_ABSOLUTE,
-          eflags,
-          0);
+      error_t e = linux_mm_update_range_flags(
+          linux_current_vs(), (vaddr)addr, len_aligned, eflags);
       return (e == REND_SUCCESS) ? 0 : -LINUX_EINVAL;
   }
   ```
-- **依赖core/能力**：
-  - `nexus_update_range_flags()` - 批量flags更新
-  - `nexus_update_flags_list_locked()` - 原子性批量更新+回滚
+- **依赖 core/能力**：
+  - `mm_user_utils_set_range_flags()` / radix `change_*`（经 linux_mm 封装）
+  - 模式常量现为 `MM_USER_RANGE_FLAGS_*`（非 `NEXUS_RANGE_FLAGS_*`）
 
 #### 4. mremap
 - **实现质量**：6/10 ⚠️ **需要改进**
@@ -232,35 +226,29 @@
 
 ### 1. 地址空间管理
 
-#### `vspace_clone()` - 地址空间克隆
+#### `clone_vspace()` - 地址空间克隆
 ```c
-error_t vspace_clone(VSpace* src_vs, VSpace** dst_vs_out,
-                     vspace_clone_flags_t flags, struct nexus_node* nexus_root);
+error_t clone_vspace(VSpace* src_vs, VSpace** dst_vs_out, u64 flags);
 ```
 - **模式**：
   - `VSPACE_CLONE_F_COW_PREP`：COW准备（共享物理页+引用计数）
   - `VSPACE_CLONE_F_COPY_PAGES`：完全拷贝（私有物理页）
+  - 通常还需 `VSPACE_CLONE_F_USER_4K_ONLY`
 - **实现要点**：
-  - 两阶段算法：收集节点 → 批量更新
-  - 完整回滚机制：goto级联回滚
-  - COW模式：父进程只读化
+  - 用户半占用 interval 扫描 + radix INSERT / PTE 处理
+  - 失败路径恢复源侧标志并 `del_vspace` dst
+  - COW 模式：父子 PTE 只读化，radix 打 COW
 
-#### `nexus_update_range_flags()` - 批量flags更新
+#### `mm_user_utils_set_range_flags()` - 批量 flags 更新
 ```c
-error_t nexus_update_range_flags(struct nexus_node* nexus_root,
-                                 VSpace* vs,
-                                 vaddr start,
-                                 u64 size,
-                                 u64 mode,
-                                 ENTRY_FLAGS_t flags,
-                                 ENTRY_FLAGS_t mask);
+error_t mm_user_utils_set_range_flags(VSpace* vs, vaddr range_start, ...,
+                                      mm_user_range_flags_mode_t mode, ...);
 ```
 - **模式**：
-  - `NEXUS_RANGE_FLAGS_ABSOLUTE`：设置为指定flags
-  - `NEXUS_RANGE_FLAGS_DELTA`：增删flags
-- **实现要点**：
-  - 原子性批量更新
-  - 完整回滚机制
+  - `MM_USER_RANGE_FLAGS_ABSOLUTE`：设置为指定 flags
+  - `MM_USER_RANGE_FLAGS_DELTA`：增删 flags
+  - `MM_USER_RANGE_FLAGS_DELTA_PTE_ONLY`：只改 PTE（fork COW 常用）
+- **说明**：旧 `nexus_update_range_flags` / `NEXUS_RANGE_FLAGS_*` 已随 nexus 废除；compat 侧常见入口为 `linux_mm_update_range_flags`。
 
 ### 2. 物理内存管理
 

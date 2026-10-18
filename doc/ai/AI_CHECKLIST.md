@@ -350,7 +350,7 @@ When a new bug pattern appears during review/debug:
   passing `data_len` to `create_message_data`, and validating
   `payload_len` in `kmsg_from_msg`; do not assume `sizeof(kmsg_t)` equals that
   prefix on all toolchains. Slim header has no `version` field: changing
-  `kmsg_hdr_t` requires bumping `KMSG_MAGIC` and updating all encoders/decoders.
+  `kmsg_hdr_t` requires changing `KMSG_MAGIC` and updating all encoders/decoders.
   Checklist: §7 + `doc/ai/IPC_MESSAGE.md`.
 
 - 2026-04: **IPC serialization format vs `va_list`:** pack and unpack must use the same

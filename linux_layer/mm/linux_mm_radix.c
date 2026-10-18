@@ -142,7 +142,7 @@ static ENTRY_FLAGS_t linux_mm_leaf_pte_flags(ENTRY_FLAGS_t leaf_flags)
  * on Page::rmap_list (see radix_leaf_link_rmap); after COW there may be several
  * leaves, so leaf->rmap_list.next is not always the Page head.
  *
- * phy_Page_ppn() returns a physical address (misnamed); callers must PPN().
+ * phy_Page_first_addr() returns a physical address (misnamed); callers must PPN().
  */
 static Page* linux_mm_page_from_leaf_rmap(Radix_node_t* leaf)
 {
@@ -216,7 +216,7 @@ error_t linux_mm_reinstall_user_pte(VSpace* vs, vaddr page_va)
                 page = linux_mm_page_from_leaf_rmap(leaf);
                 if (!page)
                         goto out_unlock;
-                ppn = (ppn_t)PPN(phy_Page_ppn(page));
+                ppn = (ppn_t)PPN(phy_Page_first_addr(page));
                 if (invalid_ppn(ppn))
                         goto out_unlock;
         }
