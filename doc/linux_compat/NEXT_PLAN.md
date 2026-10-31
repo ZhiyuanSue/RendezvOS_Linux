@@ -63,7 +63,7 @@
 ### 现状缺口（compat + platform）
 
 - 用户态 console：无真 UART RX；`read(0)` / CONSOLE_IN 偏 EOF/`POLLHUP`  
-- 驱动侧常见：16550 `IER=0`、PL011 RX 未接 handler、x86 APIC 路径 IOAPIC 空等  
+- 驱动侧常见：16550 `IER=0`、PL011 RX 未接 handler、x86 IOAPIC **RTE/设备路由未做**（GSI 表已 bring-up）等  
 - core **已有** `register_irq_handler` + IRQ→IPC（timer 模式可对齐）
 
 ### 建议方向（待设计拍板后再动 core）
@@ -81,9 +81,9 @@
 
 权威列表（中文条列）：[`core/docs/TODO.md`](../../core/docs/TODO.md)。
 
-和上层交叉多的几条（**2026-08-25**：getc + **创建时线程 affinity** 已关，见 core DONE #68/#72；IRQ affinity 仍为 core `TODO.md` B.1，**不**挡 freeze；IOAPIC 远期 DONE #14）：
+和上层交叉多的几条（**2026-08-25**：getc + **创建时线程 affinity** 已关，见 core DONE #68/#72；IRQ affinity 仍为 core `TODO.md` B.1，**不**挡 freeze；IOAPIC bring-up 已接、RTE 仍远期）：
 
-- 平台：TLB IPI（软 IPI 已有）；线程绑核 → core `USING_CORE.md` §3.12；IRQ 绑核 → core `TODO.md` B.1；x86 IOAPIC **远期**
+- 平台：TLB IPI（软 IPI 已有）；线程绑核 → core `USING_CORE.md` §3.12；IRQ 绑核 → core `TODO.md` B.1；x86 IOAPIC **RTE / 设备路由**仍远期
 - 日志 / console：**维持** sync `uart_putc` + compat `log_put_locked`；`uart_getc` 已为轮询；log server / uart_server → 本文 §3  
 - 42：Linux argv 归兼容层，别塞回 core  
 - 52：系统化 call→IPC wrapper 偏上层；core 留 port 原语  

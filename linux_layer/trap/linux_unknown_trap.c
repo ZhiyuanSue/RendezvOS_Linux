@@ -110,10 +110,10 @@ static void linux_unknown_class_trap_handler(struct trap_frame *tf)
 
 void linux_unknown_trap_init(void)
 {
-        register_fixed_trap(TRAP_CLASS_ILLEGAL_INSTR,
+        arch_register_fixed_trap(TRAP_CLASS_ILLEGAL_INSTR,
                             linux_illegal_instr_trap_handler,
                             IRQ_NO_ATTR);
-        register_fixed_trap(TRAP_CLASS_UNKNOWN,
+        arch_register_fixed_trap(TRAP_CLASS_UNKNOWN,
                             linux_unknown_class_trap_handler,
                             IRQ_NO_ATTR);
 

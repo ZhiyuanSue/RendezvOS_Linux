@@ -44,7 +44,7 @@
  * - lazy anonymous allocation (range exists but not filled)
  * - COW write faults
  *
- * Note: We use register_fixed_trap() with TRAP_CLASS_PAGE_FAULT instead of
+ * Note: We use arch_register_fixed_trap() with TRAP_CLASS_PAGE_FAULT instead of
  * architecture-specific trap IDs. This maps to:
  * - x86_64: #PF (vector 14)
  * - aarch64: data abort (EC 0x24) and instruction abort (EC 0x20)
@@ -182,7 +182,8 @@ static void linux_trap_pf_handler(struct trap_frame *tf)
 
         ENTRY_FLAGS_t pt_flags = 0;
         int level = 0;
-        ppn_t ppn = have_mapped(vs, VPN(aligned), &pt_flags, &level, handler);
+        ppn_t ppn = have_mapped(
+                vs, VPN(aligned), &pt_flags, &level, false, handler);
 
         vaddr nstart = 0;
         ENTRY_FLAGS_t nflags = 0;
@@ -338,7 +339,7 @@ unhandled_fault:
 }
 
 /*
- * Register compat page-fault handler. register_irq_handler fans out to all
+ * Register compat page-fault handler via arch_register_fixed_trap (per-CPU local
  * percpu slots; APs still run this initcall (idempotent) after local trap init.
  */
 static void linux_page_fault_irq_init(void)
@@ -351,7 +352,7 @@ static void linux_page_fault_irq_init(void)
          * - x86_64: vector 14 (#PF)
          * - aarch64: EC 0x20 (instruction abort) and EC 0x24 (data abort)
          */
-        register_fixed_trap(
+        arch_register_fixed_trap(
                 TRAP_CLASS_PAGE_FAULT, linux_trap_pf_handler, IRQ_NO_ATTR);
 }
 

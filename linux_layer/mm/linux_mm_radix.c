@@ -72,8 +72,12 @@ static void linux_mm_unmap_prefix_pages(VSpace *vs, vaddr hint,
                 vaddr page_va = hint + done * PAGE_SIZE;
                 ENTRY_FLAGS_t pte_flags = 0;
                 int pte_level = 3;
-                ppn_t ppn = have_mapped(
-                        vs, VPN(page_va), &pte_flags, &pte_level, handler);
+                ppn_t ppn = have_mapped(vs,
+                                        VPN(page_va),
+                                        &pte_flags,
+                                        &pte_level,
+                                        false,
+                                        handler);
 
                 if (!invalid_ppn(ppn)) {
                         (void)mm_user_utils_clean_range_and_unfill(
@@ -87,7 +91,8 @@ static bool linux_mm_page_is_reserved(VSpace* vs, vaddr va)
         struct map_handler* handler = &percpu(Map_Handler);
         ENTRY_FLAGS_t pte_flags = 0;
         int level = 0;
-        ppn_t ppn = have_mapped(vs, VPN(va), &pte_flags, &level, handler);
+        ppn_t ppn = have_mapped(
+                vs, VPN(va), &pte_flags, &level, false, handler);
 
         if (!invalid_ppn(ppn) && (pte_flags & PAGE_ENTRY_VALID))
                 return true;
@@ -211,7 +216,7 @@ error_t linux_mm_reinstall_user_pte(VSpace* vs, vaddr page_va)
          * is often another leaf; bogus ppn then fails map as
          * old=0x7db5000 new=0x7db5000000 (PADDR applied to a paddr).
          */
-        ppn = have_mapped(vs, VPN(page_va), &pt_flags, NULL, handler);
+        ppn = have_mapped(vs, VPN(page_va), &pt_flags, NULL, false, handler);
         if (invalid_ppn(ppn) || !(pt_flags & PAGE_ENTRY_VALID)) {
                 page = linux_mm_page_from_leaf_rmap(leaf);
                 if (!page)
@@ -324,15 +329,21 @@ error_t linux_mm_copy_user_range(VSpace* vs, u64 dst_user_va, u64 src_user_va,
                         chunk = len - done;
                 }
 
-                sppn = have_mapped(vs, VPN(sp), &sf, &sl, handler);
-                dppn = have_mapped(vs, VPN(dp), &df, &dl, handler);
-                if (invalid_ppn(sppn) || invalid_ppn(dppn) || sl != 3
-                    || dl != 3) {
+                sppn = have_mapped(vs, VPN(sp), &sf, &sl, true, handler);
+                if (invalid_ppn(sppn) || sl != 3) {
+                        return -E_RENDEZVOS;
+                }
+                dppn = have_mapped(vs, VPN(dp), &df, &dl, true, handler);
+                if (invalid_ppn(dppn) || dl != 3) {
+                        (void)vs->pmm->pmm_free(vs->pmm, sppn, 1);
                         return -E_RENDEZVOS;
                 }
 
                 e = map_handler_copy_data_range(
                         handler, PADDR(dppn) + doff, PADDR(sppn) + so, chunk);
+                /* Unpin even on copy failure (ownership shares from pin). */
+                (void)vs->pmm->pmm_free(vs->pmm, dppn, 1);
+                (void)vs->pmm->pmm_free(vs->pmm, sppn, 1);
                 if (e != REND_SUCCESS) {
                         return e;
                 }
@@ -424,20 +435,19 @@ error_t linux_mm_unmap_user_range(VSpace* vs, vaddr start, size_t page_num)
                 vaddr page_va = start + done * PAGE_SIZE;
                 ENTRY_FLAGS_t pte_flags = 0;
                 int pte_level = 3;
-                ppn_t run_ppn = have_mapped(
-                        vs, VPN(page_va), &pte_flags, &pte_level, handler);
+                ppn_t run_ppn = have_mapped(vs,
+                                            VPN(page_va),
+                                            &pte_flags,
+                                            &pte_level,
+                                            false,
+                                            handler);
                 size_t run = 1;
                 error_t err;
 
-                if ((i64)run_ppn < 0) {
-                        (void)vmm_radix_tree_unlock_range_big(
-                                vs, l0_lo, range_end);
-                        return (error_t)run_ppn;
-                }
                 if (invalid_ppn(run_ppn)) {
                         (void)vmm_radix_tree_unlock_range_big(
                                 vs, l0_lo, range_end);
-                        return -E_REND_NOFOUND;
+                        return (error_t)run_ppn;
                 }
 
                 while (done + run < page_num) {
@@ -445,7 +455,7 @@ error_t linux_mm_unmap_user_range(VSpace* vs, vaddr start, size_t page_num)
                         ENTRY_FLAGS_t nf = 0;
                         int nl = 3;
                         ppn_t next_ppn = have_mapped(
-                                vs, VPN(next_va), &nf, &nl, handler);
+                                vs, VPN(next_va), &nf, &nl, false, handler);
 
                         if (invalid_ppn(next_ppn)
                             || next_ppn != run_ppn + (ppn_t)run) {
@@ -528,31 +538,45 @@ error_t linux_mm_cow_split_page(VSpace* vs, vaddr page_va)
         pmm = vs->pmm;
         page_va = ROUND_DOWN(page_va, PAGE_SIZE);
 
-        old_ppn = have_mapped(vs, VPN(page_va), &pt_flags, NULL, handler);
+        /*
+         * Pin while we copy: have_mapped drops vspace_lock before
+         * map_handler_copy_page touches the frame.
+         */
+        old_ppn = have_mapped(
+                vs, VPN(page_va), &pt_flags, NULL, true, handler);
         if (invalid_ppn(old_ppn) || !(pt_flags & PAGE_ENTRY_VALID))
                 return REND_SUCCESS; /* unmapped: nothing to split */
 
-        if (pt_flags & PAGE_ENTRY_WRITE)
+        if (pt_flags & PAGE_ENTRY_WRITE) {
+                (void)pmm->pmm_free(pmm, old_ppn, 1);
                 return REND_SUCCESS; /* already private writable */
+        }
 
         e = linux_mm_query_vaddr(vs, page_va, &nstart, &radix_flags);
-        if (e != REND_SUCCESS)
+        if (e != REND_SUCCESS) {
+                (void)pmm->pmm_free(pmm, old_ppn, 1);
                 return e;
+        }
         /*
          * Contract after clone_vspace(COW_PREP): PTE is RO, radix keeps
          * write intent (+ PAGE_ENTRY_COW). Split only when radix says
          * writable — never promote a true RO mapping.
          */
-        if (!(radix_flags & PAGE_ENTRY_WRITE))
+        if (!(radix_flags & PAGE_ENTRY_WRITE)) {
+                (void)pmm->pmm_free(pmm, old_ppn, 1);
                 return -E_IN_PARAM;
+        }
 
         new_ppn = pmm->pmm_alloc(pmm, 1, &alloced);
-        if (invalid_ppn(new_ppn) || alloced != 1)
+        if (invalid_ppn(new_ppn) || alloced != 1) {
+                (void)pmm->pmm_free(pmm, old_ppn, 1);
                 return -E_RENDEZVOS;
+        }
 
         e = map_handler_copy_page(handler, new_ppn, old_ppn);
         if (e != REND_SUCCESS) {
                 pmm->pmm_free(pmm, new_ppn, 1);
+                (void)pmm->pmm_free(pmm, old_ppn, 1);
                 return e;
         }
 
@@ -565,6 +589,8 @@ error_t linux_mm_cow_split_page(VSpace* vs, vaddr page_va)
                     | PAGE_ENTRY_WRITE | PAGE_ENTRY_READ;
 
         e = linux_mm_remap_user_leaf(vs, page_va, new_ppn, new_flags, old_ppn);
+        /* Drop pin share regardless of remap outcome. */
+        (void)pmm->pmm_free(pmm, old_ppn, 1);
         if (e != REND_SUCCESS) {
                 pmm->pmm_free(pmm, new_ppn, 1);
                 return e;

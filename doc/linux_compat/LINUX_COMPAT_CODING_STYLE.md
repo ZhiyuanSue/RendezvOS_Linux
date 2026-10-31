@@ -258,14 +258,15 @@ if (e != REND_SUCCESS) {
     return -LINUX_EFAULT;
 }
 
-✅ 正确（map_handler 读/写一页内字段）：
-ppn_t user_ppn = have_mapped(vs, user_vpn, NULL, NULL, handler);
-if (user_ppn <= 0) {
+✅ 正确（map_handler 读/写一页内字段；用页内容则 pin，用完 pmm_free）：
+ppn_t user_ppn = have_mapped(vs, user_vpn, NULL, NULL, true, handler);
+if (invalid_ppn(user_ppn)) {
     return -LINUX_EFAULT;
 }
 vaddr kva = map_handler_map_slot(handler, 0, user_ppn);
 // ... 仅访问该页映射窗口 ...
 map_handler_unmap_slot(handler, 0);
+(void)vs->pmm->pmm_free(vs->pmm, user_ppn, 1);
 
 ❌ 错误：
 memcpy(user_ptr, &act, sizeof(act));           /* user_ptr 未映射 */
